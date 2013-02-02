@@ -1,0 +1,5 @@
+C:\Users\steven\Documents\GitHub\Adventures-In-Odyssey-Downloader\odysseyDownloader\bin\Debug\odysseyDownloader.exe
+C:\Users\steven\Documents\GitHub\Adventures-In-Odyssey-Downloader\odysseyDownloader\bin\Debug\odysseyDownloader.pdb
+C:\Users\steven\Documents\GitHub\Adventures-In-Odyssey-Downloader\odysseyDownloader\obj\x86\Debug\odysseyDownloader.csprojResolveAssemblyReference.cache
+C:\Users\steven\Documents\GitHub\Adventures-In-Odyssey-Downloader\odysseyDownloader\obj\x86\Debug\odysseyDownloader.exe
+C:\Users\steven\Documents\GitHub\Adventures-In-Odyssey-Downloader\odysseyDownloader\obj\x86\Debug\odysseyDownloader.pdb

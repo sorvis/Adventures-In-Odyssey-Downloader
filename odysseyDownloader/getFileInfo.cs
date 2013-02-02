@@ -1,4 +1,5 @@
 ﻿using System;
+using System.IO;
 
 
 namespace Odyssey_Downloader
@@ -33,9 +34,19 @@ namespace Odyssey_Downloader
         {
             return fullTitle;
         }
-        public string getNewFileName()
+        public string FileName
         {
-            return newFileName;
+            get
+            {
+                return filterOutInvalidFileNameChars(newFileName);
+            }
+        }
+
+        private static string filterOutInvalidFileNameChars(string fileName)
+        {
+            string invalidChars = System.Text.RegularExpressions.Regex.Escape(new string(System.IO.Path.GetInvalidFileNameChars()));
+            string invalidReStr = string.Format(@"([{0}]*\.+$)|([{0}]+)", invalidChars);
+            return System.Text.RegularExpressions.Regex.Replace(fileName, invalidReStr, "_");
         }
 
         private string getPageSource(string URL)

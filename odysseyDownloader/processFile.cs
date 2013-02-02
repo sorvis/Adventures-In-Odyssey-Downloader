@@ -21,7 +21,7 @@ namespace Odyssey_Downloader
         {
             if (!checkFileList(file.getFullTitle()))
             {
-                string filePath = fullPath + file.getNewFileName();
+                string filePath = fullPath + file.FileName;
                 getFile(file.getFileUrl(), filePath);
                 writeToIndex(file.getFullTitle());
                 return true;
