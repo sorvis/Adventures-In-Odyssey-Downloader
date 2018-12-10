@@ -79,13 +79,13 @@ namespace Odyssey_Downloader
             var targetDate = returnDate(dayOffset, settings.DateFormat);
             if (!contentsPage.Contains(targetDate)) return;
 
-            var targetSection = findElement(contentsPage, targetDate, "href=\"");
-            var targetUrl = "https" + findElement(targetSection.Replace(".html",".html_END_"), "_END_", "https");
+            var contentsTargetSection = findElement(contentsPage, targetDate, "href=\"");
+            var targetUrl = "https" + findElement(contentsTargetSection.Replace(".html",".html_END_"), "_END_", "https");
 
             var targetPage = getPageSource(targetUrl);
             fileUrl = findElement(targetPage, ".mp3", "encodedFileUrl: '") + ".mp3";
             episodeNumber = findElement(targetPage, ",\r\n        encodedFileUrl", "episodeId: ");
-            title = findElement(targetPage, $"</h2>\r\n                <div class=\"liveDate\">{targetDate}", "<h2>");
+            title = findElement(contentsTargetSection, "</div>\r\n                            <div class=\"date\">", "title dotdotdot\">");
 
             fullTitle = "Episode " + episodeNumber + ": " + title;
             var fileName = episodeNumber + "#-" + title.Replace(" ", "_")+settings.FileExtension;
