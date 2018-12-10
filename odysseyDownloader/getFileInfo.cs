@@ -1,10 +1,9 @@
 ﻿using System;
-using System.IO;
 
 
 namespace Odyssey_Downloader
 {
-    class getFileInfo
+    internal class GetFileInfo
     {
         private string pageSource;
         private string fileUrl;
@@ -14,26 +13,31 @@ namespace Odyssey_Downloader
         private string newFileName;
 		CGWebClient webClient = new CGWebClient();
 
-        public string getPageSource()
+        public string GetPageSource()
         {
             return pageSource;
         }
-        public string getFileUrl()
+
+        public string GetFileUrl()
         {
             return fileUrl;
         }
-        public string getTitle()
+
+        public string GetTitle()
         {
             return title;
         }
-        public string getEpisodeNumber()
+
+        public string GetEpisodeNumber()
         {
             return episodeNumber;
         }
-        public string getFullTitle()
+
+        public string GetFullTitle()
         {
             return fullTitle;
         }
+
         public string FileName
         {
             get
@@ -49,39 +53,39 @@ namespace Odyssey_Downloader
             return System.Text.RegularExpressions.Regex.Replace(fileName, invalidReStr, "_");
         }
 
-        private string getPageSource(string URL)
+        private string getPageSource(string url)
         {
             try
 			{
 				//System.Net.WebClient webClient = new System.Net.WebClient();
 				//webClient.Headers.Add ("user-agent", "Mozilla/4.0 (compatible; MSIE 6.0; Windows NT 5.2; .NET CLR 1.0.3705;)");
-	            string strSource = webClient.DownloadString(URL);
+	            string strSource = webClient.DownloadString(url);
 	            webClient.Dispose();
-				
+
 				return strSource;
 			}
 			catch (Exception e)
 			{
 				string except =  e.Message;
-				return getPageSource(URL);
+				return getPageSource(url);
 			}
         }
 
-        public getFileInfo(config settings, int dayOffset)
+        public GetFileInfo(Config settings, int dayOffset)
         {
-            string currentURL = (settings.getUrl()).Replace("$DATE", returnDate(dayOffset, settings.getDateFormat()));
+            string currentURL = (settings.Url).Replace("$DATE", returnDate(dayOffset, settings.DateFormat));
             pageSource = getPageSource(currentURL);
-            fileUrl = "http://" + findElement(pageSource, settings.getFileExtension(), "http://") + settings.getFileExtension();
-            title = (findElement(pageSource, settings.getTitleEnd(), settings.getTitleStart())).Trim();
-            episodeNumber = findElement(fileUrl, settings.getFileExtension(), "_");
+            fileUrl = "http://" + findElement(pageSource, settings.FileExtension, "http://") + settings.FileExtension;
+            title = (findElement(pageSource, settings.TitleEnd, settings.TitleStart)).Trim();
+            episodeNumber = findElement(fileUrl, settings.FileExtension, "_");
             fullTitle = "Episode " + episodeNumber + ": " + title;
-            newFileName = episodeNumber + "#-" + title.Replace(" ", "_")+settings.getFileExtension();
+            newFileName = episodeNumber + "#-" + title.Replace(" ", "_")+settings.FileExtension;
         }
 
         private string returnDate(int dayOffset, string dateFormat)
         {
             DateTime dt = DateTime.Today.AddDays(-dayOffset);
-            string date = String.Format("{0:" + dateFormat+"}", dt);
+            string date = string.Format("{0:" + dateFormat+"}", dt);
             return date;
         }
 
@@ -96,6 +100,7 @@ namespace Odyssey_Downloader
 
             return Source;
         }
+
         private static string ReverseString(string s)
         {
             char[] arr = s.ToCharArray();

@@ -12,7 +12,7 @@ namespace Odyssey_Downloader
 
         // Constructor
 
-        public Arguments(string[] Args)
+        public Arguments(string[] arguments)
         {
             Parameters = new StringDictionary();
             Regex Spliter = new Regex(@"^-{1,2}|^/|=|:",
@@ -34,13 +34,13 @@ namespace Odyssey_Downloader
 
             //   /param4=happy -param5 '--=nice=--'
 
-            foreach (string Txt in Args)
+            foreach (string item in arguments)
             {
                 // Look for new parameters (-,/ or --) and a
 
                 // possible enclosed value (=,:)
 
-                parts = Spliter.Split(Txt, 3);
+                parts = Spliter.Split(item, 3);
 
                 switch (parts.Length)
                 {

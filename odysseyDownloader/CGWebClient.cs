@@ -1,58 +1,40 @@
 using System;
-using System.Configuration;
-using System.Web;
 using System.Net;
 using System.Collections.Generic;
 
 namespace Odyssey_Downloader
 {
-	public class CGWebClient : WebClient
+    public class CGWebClient : WebClient
 	{
-		private System.Net.CookieContainer cookieContainer;
-		private string userAgent;
-		private int timeout;
-	
-		public System.Net.CookieContainer CookieContainer
+        public CookieContainer CookieContainer { get; set; }
+
+        public string UserAgent { get; set; }
+
+        public int Timeout { get; set; }
+
+        public CGWebClient()
 		{
-			get { return cookieContainer; }
-			set { cookieContainer = value; }
-		}
-	
-		public string UserAgent
-		{
-			get { return userAgent; }
-			set { userAgent = value; }
-		}
-	
-		public int Timeout
-		{
-			get { return timeout; }
-			set { timeout = value; }
-		}
-	
-		public CGWebClient()
-		{
-			timeout = -1;
-			userAgent = "Mozilla/4.0 (compatible; MSIE 7.0; Windows NT 5.1; .NET CLR 2.0.50727)";
-			cookieContainer = new CookieContainer();
+			Timeout = -1;
+			UserAgent = "Mozilla/4.0 (compatible; MSIE 7.0; Windows NT 5.1; .NET CLR 2.0.50727)";
+			CookieContainer = new CookieContainer();
 			//cookieContainer.Add(new Cookie("example", "example_value"));
 		}
-	
+
 		protected override WebRequest GetWebRequest(Uri address)
 		{
 			WebRequest request = base.GetWebRequest(address);
 			//RefreshUserAgent();
-	
+
 			if (request.GetType() == typeof(HttpWebRequest))
 			{
-				((HttpWebRequest)request).CookieContainer = cookieContainer;
-				((HttpWebRequest)request).UserAgent = userAgent;
-				((HttpWebRequest)request).Timeout = timeout;
+				((HttpWebRequest)request).CookieContainer = CookieContainer;
+				((HttpWebRequest)request).UserAgent = UserAgent;
+				((HttpWebRequest)request).Timeout = Timeout;
 			}
-	
+
 			return request;
 		}
-	
+
 		private void RefreshUserAgent()
 		{
 			List<string> UserAgents = new List<string>();
@@ -74,12 +56,12 @@ namespace Odyssey_Downloader
 			UserAgents.Add("Mozilla/5.0 (Windows; U; Windows NT 5.1; en) AppleWebKit/526.9 (KHTML, like Gecko) Version/4.0dp1 Safari/526.8");
 			UserAgents.Add("Mozilla/5.0 (Windows; U; Windows NT 6.0; ru-RU) AppleWebKit/528.16 (KHTML, like Gecko) Version/4.0 Safari/528.16");
 			UserAgents.Add("Opera/9.64 (X11; Linux x86_64; U; en) Presto/2.1.1");
-	
+
 			Random r = new Random();
 			this.UserAgent  = UserAgents[r.Next(0, UserAgents.Count)];
-	
+
 			UserAgents = null;
 		}
-	
+
 	}
 }

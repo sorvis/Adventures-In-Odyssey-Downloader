@@ -3,19 +3,19 @@
 
 namespace Odyssey_Downloader
 {
-    class multiDownload
+    class MultiDownload
     {
-        public multiDownload(config settings, ref processFile downloadAndSave, int limit)
+        public MultiDownload(Config settings, ref ProcessFile downloadAndSave, int limit)
         {
             int counter = 0;
             bool runLoop = true;
             while (runLoop)
             {
-                getFileInfo currentFile = new getFileInfo(settings, counter);
-                if (currentFile.getFileUrl() != "" && counter < limit)
+                GetFileInfo currentFile = new GetFileInfo(settings, counter);
+                if (currentFile.GetFileUrl() != "" && counter < limit)
                 {
-                    Console.WriteLine("Downloading: "+currentFile.getFullTitle());
-                    downloadAndSave.download(currentFile);
+                    Console.WriteLine("Downloading: "+currentFile.GetFullTitle());
+                    downloadAndSave.Download(currentFile);
                 }
                 else
                 {

@@ -6,24 +6,24 @@ using System.Net;
 
 namespace Odyssey_Downloader
 {
-    class processFile
+    class ProcessFile
     {
         protected string fullPath;
         protected string indexFileName;
 
-        public processFile(config settings)
+        public ProcessFile(Config settings)
         {
-            fullPath = settings.getFullPathToFiles();
-            indexFileName = settings.getIndexFileName();
+            fullPath = settings.FullPathToFiles;
+            indexFileName = settings.IndexFileName;
         }
 
-        public bool download(getFileInfo file)
+        public bool Download(GetFileInfo file)
         {
-            if (!checkFileList(file.getFullTitle()))
+            if (!checkFileList(file.GetFullTitle()))
             {
                 string filePath = fullPath + file.FileName;
-                getFile(file.getFileUrl(), filePath);
-                writeToIndex(file.getFullTitle());
+                getFile(file.GetFileUrl(), filePath);
+                writeToIndex(file.GetFullTitle());
                 return true;
             }
             else

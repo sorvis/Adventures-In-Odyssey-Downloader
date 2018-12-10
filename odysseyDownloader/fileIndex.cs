@@ -5,18 +5,18 @@ using System;
 
 namespace Odyssey_Downloader
 {
-    class fileIndex
+    internal class FileIndex
     {
         protected string fullPath;
         protected string indexFileName;
         protected string fileExtension;
 
-        public fileIndex(config settings)
+        public FileIndex(Config settings)
         {
-            fullPath = settings.getFullPathToFiles();
-            indexFileName = settings.getIndexFileName();
-            fileExtension = settings.getFileExtension();
-            
+            fullPath = settings.FullPathToFiles;
+            indexFileName = settings.IndexFileName;
+            fileExtension = settings.FileExtension;
+
             checkForIndexFile();
         }
 
@@ -32,12 +32,12 @@ namespace Odyssey_Downloader
             {
                 File.Create(path).Dispose();
                 Console.WriteLine("Found no index file so rebuilding it.");
-                rebuildIndex();
+                RebuildIndex();
             }
         }
 
-        public void rebuildIndex()
-        {            
+        public void RebuildIndex()
+        {
             List<string> titleList = new List<string>();
             foreach (string item in getFileNamesInDir(fullPath, fileExtension))
             {
@@ -59,19 +59,20 @@ namespace Odyssey_Downloader
 
             return Source;
         }
-        private static string ReverseString(string s)
+
+        private static string ReverseString(string text)
         {
-            char[] arr = s.ToCharArray();
-            Array.Reverse(arr);
-            return new string(arr);
+            char[] array = text.ToCharArray();
+            Array.Reverse(array);
+            return new string(array);
         }
+
         private List<string> getFileNamesInDir(string dir, string extension)
         {
             List<string> list = new List<string>();
 
             // Process the list of files found in the directory. 
-            string[] fileEntries = Directory.GetFiles(dir);
-            foreach (string fileName in fileEntries)
+            foreach (string fileName in Directory.GetFiles(dir))
             {
                 // do something with fileName
                 if (fileName.Contains(extension))

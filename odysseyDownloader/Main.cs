@@ -11,30 +11,30 @@ namespace Odyssey_Downloader
             Arguments CommandLine = new Arguments(args);
 
             // load config file
-            config settings = new config();
-			
+            Config settings = new Config();
+
 			if (CommandLine["config"] != null)
             {
-                settings.setConfigPath(Convert.ToString(CommandLine["config"]));
+                settings.SetConfigPath(Convert.ToString(CommandLine["config"]));
             }
 			else
 			{
-				settings.setConfigPath("config.xml");
+				settings.SetConfigPath("config.xml");
 			}
-			
+
 			
             // create or update index file
-            fileIndex setIndex = new fileIndex(settings);
+            FileIndex setIndex = new FileIndex(settings);
 
             // create file downloader
-            processFile downloadAndSave = new processFile(settings);
+            ProcessFile downloadAndSave = new ProcessFile(settings);
 
 
             //***********************************************************
-			
+
 			if (CommandLine["rebuild-index"] != null || CommandLine["build-index"] != null)
             {
-                setIndex.rebuildIndex();
+                setIndex.RebuildIndex();
             }
 
             if (CommandLine["defaults"] != null)
@@ -56,12 +56,12 @@ namespace Odyssey_Downloader
                 if (CommandLine["c"] == "1")
                 {
                     //download just today
-                    getFileInfo todaysFile = new getFileInfo(settings, 0);
-                    downloadAndSave.download(todaysFile);
+                    GetFileInfo todaysFile = new GetFileInfo(settings, 0);
+                    downloadAndSave.Download(todaysFile);
                 }
                 else if (Convert.ToInt16(CommandLine["c"]) > 1)
                 {
-                    multiDownload download = new multiDownload(settings, ref downloadAndSave, 
+                    MultiDownload download = new MultiDownload(settings, ref downloadAndSave,
                         Convert.ToInt16(CommandLine["c"]));
                 }
                 else
@@ -73,15 +73,16 @@ namespace Odyssey_Downloader
             else if (CommandLine["all"] != null)
             {
                 // 35 does whole three weeks
-                multiDownload download35 = new multiDownload(settings, ref downloadAndSave, 35);
+                MultiDownload download35 = new MultiDownload(settings, ref downloadAndSave, 35);
             }
             else
             {
                 // normal mode
-                multiDownload downloadNormal = new multiDownload(settings, ref downloadAndSave, 
-                    settings.getNormalMode());
+                MultiDownload downloadNormal = new MultiDownload(settings, ref downloadAndSave,
+                    settings.NormalMode);
             }
         }
+
         static void showHelp()
         {
             Console.WriteLine(" -?               This Help.");
