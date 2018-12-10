@@ -19,17 +19,21 @@ namespace Odyssey_Downloader
 
         public bool Download(GetFileInfo file)
         {
-            if (!checkFileList(file.GetFullTitle()))
+            if (checkFileList(file.GetFullTitle()))
+            {
+                Console.WriteLine("Skipping download already have file.");
+                return false;
+            }
+            if(string.IsNullOrEmpty(file.GetFileUrl()))
+            {
+                return false;
+            }
+            else
             {
                 string filePath = fullPath + file.FileName;
                 getFile(file.GetFileUrl(), filePath);
                 writeToIndex(file.GetFullTitle());
                 return true;
-            }
-            else
-            {
-                Console.WriteLine("Skipping download already have file.");
-                return false;
             }
         }
 

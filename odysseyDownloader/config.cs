@@ -189,8 +189,8 @@ namespace Odyssey_Downloader
 
         public void setDefaults()
         {
-            pageUrl = "http://www.focusonthefamily.com/popups/media_player.aspx?Tab=Shows&subcategory=AdventuresInOdyssey&ShowPath=Adventures%20in%20Odyssey&broadcastDate=$DATE&KidSafe=1";
-            dateFormat = "yyyy-MM-dd";
+            pageUrl = "https://www.oneplace.com/ministries/adventures-in-odyssey/listen/";
+            dateFormat = "{0:MMMM d, yyyy}";
             fileExtension = ".mp3";
             titleStart = "<div class=\"title\" title=\"\">";
             titleEnd = "<label class=\"duration\">";
