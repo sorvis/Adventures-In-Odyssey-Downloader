@@ -22,7 +22,7 @@ namespace Odyssey_Downloader
                 RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
             string Parameter = null;
-            string[] Parts;
+            string[] parts;
 
             // Valid parameters forms:
 
@@ -40,9 +40,9 @@ namespace Odyssey_Downloader
 
                 // possible enclosed value (=,:)
 
-                Parts = Spliter.Split(Txt, 3);
+                parts = Spliter.Split(Txt, 3);
 
-                switch (Parts.Length)
+                switch (parts.Length)
                 {
                     // Found a value (for the last parameter 
 
@@ -53,10 +53,10 @@ namespace Odyssey_Downloader
                         {
                             if (!Parameters.ContainsKey(Parameter))
                             {
-                                Parts[0] =
-                                    Remover.Replace(Parts[0], "$1");
+                                parts[0] =
+                                    Remover.Replace(parts[0], "$1");
 
-                                Parameters.Add(Parameter, Parts[0]);
+                                Parameters.Add(Parameter, parts[0]);
                             }
                             Parameter = null;
                         }
@@ -76,7 +76,7 @@ namespace Odyssey_Downloader
                             if (!Parameters.ContainsKey(Parameter))
                                 Parameters.Add(Parameter, "true");
                         }
-                        Parameter = Parts[1];
+                        Parameter = parts[1];
                         break;
 
                     // Parameter with enclosed value
@@ -92,14 +92,14 @@ namespace Odyssey_Downloader
                                 Parameters.Add(Parameter, "true");
                         }
 
-                        Parameter = Parts[1];
+                        Parameter = parts[1];
 
                         // Remove possible enclosing characters (",')
 
                         if (!Parameters.ContainsKey(Parameter))
                         {
-                            Parts[2] = Remover.Replace(Parts[2], "$1");
-                            Parameters.Add(Parameter, Parts[2]);
+                            parts[2] = Remover.Replace(parts[2], "$1");
+                            Parameters.Add(Parameter, parts[2]);
                         }
 
                         Parameter = null;
