@@ -4,7 +4,7 @@ using System;
 
 namespace Odyssey_Downloader
 {
-    class config
+    class Config
     {
         protected string pageUrl;
         protected string fileExtension;
@@ -15,11 +15,11 @@ namespace Odyssey_Downloader
         protected string indexFileName;
         protected int normalMode;
 		protected string configPATH = "config.xml";
-		
-		public void setConfigPath(string path)
+
+		public void SetConfigPath(string path)
 		{
-			configPATH = path;	
-			
+			configPATH = path;
+
 			if (checkConfigFile())
             {
                 loadConfigFile();
@@ -31,41 +31,24 @@ namespace Odyssey_Downloader
             }
 		}
 
-        public string getUrl()
-        {
-            return pageUrl;
-        }
-        public string getFileExtension()
-        {
-            return fileExtension;
-        }
-        public string getTitleStart()
-        {
-            return titleStart;
-        }
-        public string getTitleEnd()
-        {
-            return titleEnd;
-        }
-        public string getDateFormat()
-        {
-            return dateFormat;
-        }
-        public string getFullPathToFiles()
-        {
-            return fullPathToFiles;
-        }
-        public string getIndexFileName()
-        {
-            return indexFileName;
-        }
-        public int getNormalMode()
-        {
-            return normalMode;
-        }
+        public string Url => pageUrl;
+
+        public string FileExtension => fileExtension;
+
+        public string TitleStart => titleStart;
+
+        public string TitleEnd => titleEnd;
+
+        public string DateFormat => dateFormat;
+
+        public string FullPathToFiles => fullPathToFiles;
+
+        public string IndexFileName => indexFileName;
+
+        public int NormalMode => normalMode;
 
 
-        public config()
+        public Config()
         {
          /*   if (checkConfigFile())
             {
@@ -206,8 +189,8 @@ namespace Odyssey_Downloader
 
         public void setDefaults()
         {
-            pageUrl = "http://www.focusonthefamily.com/popups/media_player.aspx?Tab=Shows&subcategory=AdventuresInOdyssey&ShowPath=Adventures%20in%20Odyssey&broadcastDate=$DATE&KidSafe=1";
-            dateFormat = "yyyy-MM-dd";
+            pageUrl = "https://www.oneplace.com/ministries/adventures-in-odyssey/listen/";
+            dateFormat = "{0:MMMM d, yyyy}";
             fileExtension = ".mp3";
             titleStart = "<div class=\"title\" title=\"\">";
             titleEnd = "<label class=\"duration\">";

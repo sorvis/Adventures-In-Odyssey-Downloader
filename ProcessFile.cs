@@ -6,30 +6,34 @@ using System.Net;
 
 namespace Odyssey_Downloader
 {
-    class processFile
+    class ProcessFile
     {
         protected string fullPath;
         protected string indexFileName;
 
-        public processFile(config settings)
+        public ProcessFile(Config settings)
         {
-            fullPath = settings.getFullPathToFiles();
-            indexFileName = settings.getIndexFileName();
+            fullPath = settings.FullPathToFiles;
+            indexFileName = settings.IndexFileName;
         }
 
-        public bool download(getFileInfo file)
+        public bool Download(GetFileInfo file)
         {
-            if (!checkFileList(file.getFullTitle()))
-            {
-                string filePath = fullPath + file.getNewFileName();
-                getFile(file.getFileUrl(), filePath);
-                writeToIndex(file.getFullTitle());
-                return true;
-            }
-            else
+            if (checkFileList(file.GetFullTitle()))
             {
                 Console.WriteLine("Skipping download already have file.");
                 return false;
+            }
+            if(string.IsNullOrEmpty(file.GetFileUrl()))
+            {
+                return false;
+            }
+            else
+            {
+                string filePath = fullPath + file.FileName;
+                getFile(file.GetFileUrl(), filePath);
+                writeToIndex(file.GetFullTitle());
+                return true;
             }
         }
 
