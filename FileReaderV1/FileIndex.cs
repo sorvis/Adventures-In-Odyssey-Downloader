@@ -5,7 +5,7 @@ using System;
 
 namespace Odyssey_Downloader
 {
-    internal class FileIndex
+    internal class FileIndex : IIndexReader
     {
         protected string fullPath;
         protected string indexFileName;
