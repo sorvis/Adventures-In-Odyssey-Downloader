@@ -4,7 +4,7 @@ using System;
 
 namespace Odyssey_Downloader
 {
-    class Config
+    public class Config
     {
         protected string pageUrl;
         protected string fileExtension;

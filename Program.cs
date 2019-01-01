@@ -23,7 +23,7 @@ namespace Odyssey_Downloader
 
 			
             // create or update index file
-            FileIndex setIndex = new FileIndex(settings);
+            IIndexReader setIndex = new FileIndex();
 
             // create file downloader
             ProcessFile downloadAndSave = new ProcessFile(settings);
@@ -33,7 +33,7 @@ namespace Odyssey_Downloader
 
 			if (CommandLine["rebuild-index"] != null || CommandLine["build-index"] != null)
             {
-                setIndex.RebuildIndex();
+                setIndex.RebuildIndex(settings);
             }
 
             if (CommandLine["defaults"] != null)

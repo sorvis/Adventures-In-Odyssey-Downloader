@@ -11,16 +11,7 @@ namespace Odyssey_Downloader
         protected string indexFileName;
         protected string fileExtension;
 
-        public FileIndex(Config settings)
-        {
-            fullPath = settings.FullPathToFiles;
-            indexFileName = settings.IndexFileName;
-            fileExtension = settings.FileExtension;
-
-            checkForIndexFile();
-        }
-
-        private void checkForIndexFile()
+        private void checkForIndexFile(Config settings)
         {
             string path = fullPath + indexFileName;
             try
@@ -32,12 +23,16 @@ namespace Odyssey_Downloader
             {
                 File.Create(path).Dispose();
                 Console.WriteLine("Found no index file so rebuilding it.");
-                RebuildIndex();
+                RebuildIndex(settings);
             }
         }
 
-        public void RebuildIndex()
+        public void RebuildIndex(Config settings)
         {
+            fullPath = settings.FullPathToFiles;
+            indexFileName = settings.IndexFileName;
+            fileExtension = settings.FileExtension;
+
             List<string> titleList = new List<string>();
             foreach (string item in getFileNamesInDir(fullPath, fileExtension))
             {

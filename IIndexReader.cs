@@ -6,6 +6,6 @@ namespace Odyssey_Downloader
 {
     public interface IIndexReader
     {
-        void RebuildIndex();
+        void RebuildIndex(Config settings);
     }
 }
