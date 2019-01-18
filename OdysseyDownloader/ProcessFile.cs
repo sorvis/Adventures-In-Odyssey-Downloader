@@ -43,8 +43,15 @@ namespace Odyssey_Downloader
 
             int counter = 0;
             string line;
+
+            var indexPath = fullPath + indexFileName;
+            if (!File.Exists(indexPath))
+            {
+                using (File.Create(indexPath)) { }
+            }
+
             // Read the file and display it line by line.
-            System.IO.StreamReader file = new System.IO.StreamReader(fullPath + indexFileName);
+            System.IO.StreamReader file = new System.IO.StreamReader(indexPath);
             while ((line = file.ReadLine()) != null)
             {
                 fileLines.Add(line);
@@ -74,8 +81,11 @@ namespace Odyssey_Downloader
             int counter = 0;
             string line;
 
+            var fileName = fullPath + indexFileName;
+            if (!File.Exists(fileName)) return false;
+
             // Read the file and display it line by line.
-            System.IO.StreamReader file = new System.IO.StreamReader(fullPath + indexFileName);
+            System.IO.StreamReader file = new System.IO.StreamReader(fileName);
             while ((line = file.ReadLine()) != null)
             {
                 if (title == line)

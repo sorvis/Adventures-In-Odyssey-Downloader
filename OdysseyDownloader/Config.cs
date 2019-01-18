@@ -48,16 +48,16 @@ namespace Odyssey_Downloader
 
         public Config()
         {
-            /*   if (checkConfigFile())
-               {
-                   loadConfigFile();
-               }
-               else
-               {
-                   setDefaults();
-                   createDefaultConfig();
-               }
-               */
+            if (checkConfigFile())
+            {
+                loadConfigFile();
+            }
+            else
+            {
+                setDefaults();
+                createDefaultConfig();
+            }
+
         }
 
         private void loadConfigFile()

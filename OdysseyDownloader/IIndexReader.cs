@@ -1,8 +1,11 @@
+using Odyssey_Downloader.Model;
+using System.Collections.Generic;
+
 namespace Odyssey_Downloader
 {
     public interface IIndexReader
     {
-        void RebuildIndex(Config settings);
+        IEnumerable<AudioFile> RebuildIndex(Config settings);
 
         bool IndexDetected();
     }
