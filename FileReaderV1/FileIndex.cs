@@ -1,7 +1,6 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 using System.IO;
-using System;
-
 
 namespace Odyssey_Downloader
 {
@@ -66,7 +65,7 @@ namespace Odyssey_Downloader
         {
             List<string> list = new List<string>();
 
-            // Process the list of files found in the directory. 
+            // Process the list of files found in the directory.
             foreach (string fileName in Directory.GetFiles(dir))
             {
                 // do something with fileName
@@ -90,6 +89,11 @@ namespace Odyssey_Downloader
             }
             // close the stream
             newFile.Close();
+        }
+
+        public bool IndexDetected()
+        {
+            throw new NotImplementedException();
         }
     }
 }

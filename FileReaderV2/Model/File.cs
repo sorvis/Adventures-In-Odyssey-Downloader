@@ -1,9 +1,3 @@
-using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Net;
-
-
 namespace Odyssey_Downloader.FileReaderV2.Model
 {
     public class File

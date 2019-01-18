@@ -1,6 +1,5 @@
-﻿using System.Xml;
-using System;
-
+﻿using System;
+using System.Xml;
 
 namespace Odyssey_Downloader
 {
@@ -14,13 +13,13 @@ namespace Odyssey_Downloader
         protected string fullPathToFiles;
         protected string indexFileName;
         protected int normalMode;
-		protected string configPATH = "config.xml";
+        protected string configPATH = "config.xml";
 
-		public void SetConfigPath(string path)
-		{
-			configPATH = path;
+        public void SetConfigPath(string path)
+        {
+            configPATH = path;
 
-			if (checkConfigFile())
+            if (checkConfigFile())
             {
                 loadConfigFile();
             }
@@ -29,7 +28,7 @@ namespace Odyssey_Downloader
                 setDefaults();
                 createDefaultConfig();
             }
-		}
+        }
 
         public string Url => pageUrl;
 
@@ -47,25 +46,24 @@ namespace Odyssey_Downloader
 
         public int NormalMode => normalMode;
 
-
         public Config()
         {
-         /*   if (checkConfigFile())
-            {
-                loadConfigFile();
-            }
-            else
-            {
-                setDefaults();
-                createDefaultConfig();
-            }
-            */
+            /*   if (checkConfigFile())
+               {
+                   loadConfigFile();
+               }
+               else
+               {
+                   setDefaults();
+                   createDefaultConfig();
+               }
+               */
         }
 
         private void loadConfigFile()
         {
-            XmlTextReader reader = new XmlTextReader (configPATH);
-            string element="";
+            XmlTextReader reader = new XmlTextReader(configPATH);
+            string element = "";
             while (reader.Read())
             {
                 switch (reader.NodeType)
@@ -73,6 +71,7 @@ namespace Odyssey_Downloader
                     case XmlNodeType.Element: // The node is an element.
                         element = reader.Name;
                         break;
+
                     case XmlNodeType.Text: //Display the text in each element.
                         setConfig(element, reader.Value);
                         break;
@@ -87,26 +86,33 @@ namespace Odyssey_Downloader
                 case "sourceURL":
                     pageUrl = data;
                     break;
+
                 case "dateFormat":
                     dateFormat = data;
                     break;
+
                 case "fileExtension":
                     fileExtension = data;
                     break;
+
                 case "titleStart":
                     titleStart = data;
                     break;
+
                 case "titleEnd":
                     titleEnd = data;
                     break;
+
                 case "fullPathToFiles":
                     fullPathToFiles = data;
                     break;
+
                 case "indexFileName":
                     indexFileName = data;
                     break;
+
                 case "normalMode":
-                    normalMode = Convert.ToInt16( data);
+                    normalMode = Convert.ToInt16(data);
                     break;
             }
         }
@@ -175,7 +181,7 @@ namespace Odyssey_Downloader
 
             // Write next element
             textWriter.WriteStartElement("normalMode", "Number of files to download normally");
-            textWriter.WriteString(Convert.ToString( normalMode));
+            textWriter.WriteString(Convert.ToString(normalMode));
             textWriter.WriteEndElement();
 
             // root element end

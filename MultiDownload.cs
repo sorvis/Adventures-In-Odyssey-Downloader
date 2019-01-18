@@ -1,9 +1,8 @@
 ﻿using System;
 
-
 namespace Odyssey_Downloader
 {
-    class MultiDownload
+    internal class MultiDownload
     {
         public MultiDownload(Config settings, ref ProcessFile downloadAndSave, int limit)
         {
@@ -14,7 +13,7 @@ namespace Odyssey_Downloader
                 GetFileInfo currentFile = new GetFileInfo(settings, counter);
                 if (currentFile.GetFileUrl() != "" && counter < limit)
                 {
-                    Console.WriteLine("Downloading: "+currentFile.GetFullTitle());
+                    Console.WriteLine("Downloading: " + currentFile.GetFullTitle());
                     downloadAndSave.Download(currentFile);
                 }
                 else

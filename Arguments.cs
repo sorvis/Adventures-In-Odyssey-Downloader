@@ -1,7 +1,6 @@
 ﻿using System.Collections.Specialized;
 using System.Text.RegularExpressions;
 
-
 namespace Odyssey_Downloader
 {
     public class Arguments
@@ -28,9 +27,9 @@ namespace Odyssey_Downloader
 
             // {-,/,--}param{ ,=,:}((",')value(",'))
 
-            // Examples: 
+            // Examples:
 
-            // -param1 value1 --param2 /param3:"Test-:-work" 
+            // -param1 value1 --param2 /param3:"Test-:-work"
 
             //   /param4=happy -param5 '--=nice=--'
 
@@ -44,7 +43,7 @@ namespace Odyssey_Downloader
 
                 switch (parts.Length)
                 {
-                    // Found a value (for the last parameter 
+                    // Found a value (for the last parameter
 
                     // found (space separator))
 
@@ -67,14 +66,16 @@ namespace Odyssey_Downloader
                     // Found just a parameter
 
                     case 2:
-                        // The last parameter is still waiting. 
+                        // The last parameter is still waiting.
 
                         // With no value, set it to true.
 
                         if (Parameter != null)
                         {
                             if (!Parameters.ContainsKey(Parameter))
+                            {
                                 Parameters.Add(Parameter, "true");
+                            }
                         }
                         Parameter = parts[1];
                         break;
@@ -82,14 +83,16 @@ namespace Odyssey_Downloader
                     // Parameter with enclosed value
 
                     case 3:
-                        // The last parameter is still waiting. 
+                        // The last parameter is still waiting.
 
                         // With no value, set it to true.
 
                         if (Parameter != null)
                         {
                             if (!Parameters.ContainsKey(Parameter))
+                            {
                                 Parameters.Add(Parameter, "true");
+                            }
                         }
 
                         Parameter = parts[1];
@@ -111,20 +114,16 @@ namespace Odyssey_Downloader
             if (Parameter != null)
             {
                 if (!Parameters.ContainsKey(Parameter))
+                {
                     Parameters.Add(Parameter, "true");
+                }
             }
         }
 
-        // Retrieve a parameter value if it exists 
+        // Retrieve a parameter value if it exists
 
         // (overriding C# indexer property)
 
-        public string this[string Param]
-        {
-            get
-            {
-                return (Parameters[Param]);
-            }
-        }
+        public string this[string Param] => (Parameters[Param]);
     }
 }

@@ -3,10 +3,9 @@ using System.Collections.Generic;
 using System.IO;
 using System.Net;
 
-
 namespace Odyssey_Downloader
 {
-    class ProcessFile
+    internal class ProcessFile
     {
         protected string fullPath;
         protected string indexFileName;
@@ -94,7 +93,7 @@ namespace Odyssey_Downloader
         {
             WebClient Client = new WebClient();
             Client.DownloadFile(url, fileName);
-			Client.Dispose();
+            Client.Dispose();
         }
     }
 }

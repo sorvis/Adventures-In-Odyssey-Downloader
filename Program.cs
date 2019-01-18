@@ -2,9 +2,9 @@
 
 namespace Odyssey_Downloader
 {
-    class Program
+    internal class Program
     {
-        static void Main(string[] args)
+        private static void Main(string[] args)
         {
             // get any arguments passed in at the commandline
             Arguments CommandLine = new Arguments(args);
@@ -12,26 +12,24 @@ namespace Odyssey_Downloader
             // load config file
             Config settings = new Config();
 
-			if (CommandLine["config"] != null)
+            if (CommandLine["config"] != null)
             {
                 settings.SetConfigPath(Convert.ToString(CommandLine["config"]));
             }
-			else
-			{
-				settings.SetConfigPath("config.xml");
-			}
+            else
+            {
+                settings.SetConfigPath("config.xml");
+            }
 
-			
             // create or update index file
             IIndexReader setIndex = new FileIndex();
 
             // create file downloader
             ProcessFile downloadAndSave = new ProcessFile(settings);
 
-
             //***********************************************************
 
-			if (CommandLine["rebuild-index"] != null || CommandLine["build-index"] != null)
+            if (CommandLine["rebuild-index"] != null || CommandLine["build-index"] != null)
             {
                 setIndex.RebuildIndex(settings);
             }
@@ -82,7 +80,7 @@ namespace Odyssey_Downloader
             }
         }
 
-        static void showHelp()
+        private static void showHelp()
         {
             Console.WriteLine(" -?               This Help.");
             Console.WriteLine(" -c               Number of files to download.");
@@ -90,7 +88,7 @@ namespace Odyssey_Downloader
             Console.WriteLine(" --defaults       Run using program defaults.");
             Console.WriteLine(" --write-defaults Over write config file with default settings.");
             Console.WriteLine(" --rebuild-index  Rebuild file index.");
-			Console.WriteLine(" --config	  Set path to XML config file.");
+            Console.WriteLine(" --config	  Set path to XML config file.");
         }
     }
 }
