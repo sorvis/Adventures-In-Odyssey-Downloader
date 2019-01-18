@@ -1,11 +1,12 @@
-﻿using Odyssey_Downloader.Model;
+﻿using Odyssey_Downloader;
+using Odyssey_Downloader.Model;
 using System;
 using System.Collections.Generic;
 using System.IO;
 
-namespace Odyssey_Downloader
+namespace OdysseyDownloader.FileReaderV1
 {
-    internal class FileIndex : IIndexReader
+    public class FileIndex : IIndexReader
     {
         protected string fullPath;
         protected string indexFileName;
@@ -16,15 +17,18 @@ namespace Odyssey_Downloader
             indexFileName = settings.IndexFileName;
             fileExtension = settings.FileExtension;
 
+            List<AudioFile> audioFiles = new List<AudioFile>();
+
             List<string> titleList = new List<string>();
             foreach (string item in getFileNamesInDir(fullPath, fileExtension))
             {
-                titleList.Add("Episode " + findElement(item, "#-", "/") + ": " +
-                    findElement(item, fileExtension, "#-").Replace("_", " "));
+                var title = findElement(item, fileExtension, "#-").Replace("_", " ");
+                titleList.Add("Episode " + findElement(item, "#-", "/") + ": " + title);
+                audioFiles.Add(new AudioFile { Title = title });
             }
 
             writeListToFile(titleList);
-            return null;
+            return audioFiles;
         }
 
         public bool IndexDetected()

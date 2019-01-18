@@ -10,7 +10,6 @@ namespace Odyssey_Downloader
         protected string titleStart;
         protected string titleEnd;
         protected string dateFormat;
-        protected string fullPathToFiles;
         protected string indexFileName;
         protected int normalMode;
         protected string configPATH = "config.xml";
@@ -40,7 +39,7 @@ namespace Odyssey_Downloader
 
         public string DateFormat => dateFormat;
 
-        public string FullPathToFiles => fullPathToFiles;
+        public string FullPathToFiles { get; set; }
 
         public string IndexFileName => indexFileName;
 
@@ -104,7 +103,7 @@ namespace Odyssey_Downloader
                     break;
 
                 case "fullPathToFiles":
-                    fullPathToFiles = data;
+                    FullPathToFiles = data;
                     break;
 
                 case "indexFileName":
@@ -171,7 +170,7 @@ namespace Odyssey_Downloader
 
             // Write next element
             textWriter.WriteStartElement("fullPathToFiles");
-            textWriter.WriteString(fullPathToFiles);
+            textWriter.WriteString(FullPathToFiles);
             textWriter.WriteEndElement();
 
             // Write next element
@@ -200,7 +199,7 @@ namespace Odyssey_Downloader
             fileExtension = ".mp3";
             titleStart = "<div class=\"title\" title=\"\">";
             titleEnd = "<label class=\"duration\">";
-            fullPathToFiles = "";
+            FullPathToFiles = "";
             indexFileName = "index.txt";
             normalMode = 3;
         }
