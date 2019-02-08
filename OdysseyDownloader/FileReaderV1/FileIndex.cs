@@ -8,26 +8,31 @@ namespace OdysseyDownloader.FileReaderV1
 {
     public class FileIndex : IIndexReader
     {
-        protected string fullPath;
-        protected string indexFileName;
-        protected string fileExtension;
+        private string _fullPath;
+        private string _indexFileName;
+        private string _fileExtension;
+
         public IEnumerable<AudioFile> RebuildIndex(Config settings)
         {
-            fullPath = settings.FullPathToFiles;
-            indexFileName = settings.IndexFileName;
-            fileExtension = settings.FileExtension;
+            _fullPath = settings.FullPathToFiles;
+            _indexFileName = settings.IndexFileName;
+            _fileExtension = settings.FileExtension;
 
             List<AudioFile> audioFiles = new List<AudioFile>();
 
             List<string> titleList = new List<string>();
-            var filesInDirectory = getFileNamesInDir(fullPath, fileExtension);
+            var filesInDirectory = getFileNamesInDir(_fullPath, _fileExtension);
             foreach (string item in filesInDirectory)
             {
                 var justFileName = Path.GetFileName(item);
-                var title = findElement(justFileName, fileExtension, "#-").Replace("_", " ");
+                var title = findElement(justFileName, _fileExtension, "#-").Replace("_", " ");
                 var episodeNumber = findElement(justFileName, "#-", "/");
                 titleList.Add($"Episode {episodeNumber}: {title}");
-                audioFiles.Add(new AudioFile { Title = title });
+                audioFiles.Add(new AudioFile {
+                    Title = title,
+                    FileName = justFileName,
+                    Number = episodeNumber,
+                });
             }
 
             writeListToFile(titleList);
@@ -48,7 +53,7 @@ namespace OdysseyDownloader.FileReaderV1
 
         private void checkForIndexFile(Config settings)
         {
-            string path = fullPath + indexFileName;
+            string path = _fullPath + _indexFileName;
             try
             {
                 System.IO.StreamReader file = new System.IO.StreamReader(path);
@@ -93,7 +98,7 @@ namespace OdysseyDownloader.FileReaderV1
 
         private void writeListToFile(List<string> fileLines)
         {
-            TextWriter newFile = new StreamWriter(fullPath + indexFileName);
+            TextWriter newFile = new StreamWriter(_fullPath + _indexFileName);
             foreach (string Currentline in fileLines)
             {
                 newFile.WriteLine(Currentline);

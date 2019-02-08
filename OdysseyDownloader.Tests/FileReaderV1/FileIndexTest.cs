@@ -28,12 +28,30 @@ namespace OdysseyDownloader.FileReaderV1.Tests
         [Fact]
         public void it_should_find_each_title()
         {
-            var titles = new[] { "some title", "other neat show" };
-            _scenerio.CreateTestMp3FilesByTitle(titles);
+            _scenerio.CreateTestMp3Files();
             var result = it.RebuildIndex(_scenerio.Config);
-            result.Should().NotBeNull();
             var actualTitles = result.Select(x => x.Title);
-            actualTitles.Should().BeEquivalentTo(titles);
+            actualTitles.Should().BeEquivalentTo(_scenerio.Titles);
+        }
+
+        [Fact]
+        public void it_should_find_each_file_name()
+        {
+            _scenerio.CreateTestMp3Files();
+            var result = it.RebuildIndex(_scenerio.Config);
+            var actual = result.Select(x => x.FileName);
+            var expectedFileNames = _scenerio.GetFileNamesCreated();
+            actual.Should().BeEquivalentTo(expectedFileNames);
+        }
+
+        [Fact]
+        public void it_should_find_each_episode_number()
+        {
+            _scenerio.CreateTestMp3Files();
+            var result = it.RebuildIndex(_scenerio.Config);
+            var actual = result.Select(x => x.Number);
+            var expected = _scenerio.EpisodeNumbers.Select(x => x.ToString());
+            actual.Should().BeEquivalentTo(expected);
         }
 
         class TestScenerio:IDisposable
@@ -49,14 +67,24 @@ namespace OdysseyDownloader.FileReaderV1.Tests
             }
 
             public Config Config { get; set; }
+            public IEnumerable<string> Titles { get; private set; }
+            public List<int> EpisodeNumbers { get; } = new List<int>();
 
-            public void CreateTestMp3FilesByTitle(params string[] titles )
+            public void CreateTestMp3Files()
             {
-                foreach(var title in titles)
+                Titles = new[] { "some title", "other neat show" };
+                foreach(var title in Titles)
                 {
                     var titleWithSpacesReplaced = title.Replace(' ', '_');
-                    createFile(titleWithSpacesReplaced, Convert.ToString(_fixture.Generate<uint>()));
+                    var episodeNumber = Convert.ToInt32(_fixture.Generate<uint>() / 2);
+                    EpisodeNumbers.Add(episodeNumber);
+                    createFile(titleWithSpacesReplaced, Convert.ToString(episodeNumber));
                 }
+            }
+
+            public IEnumerable<string> GetFileNamesCreated()
+            {
+                return _filesCreated.Select(x => Path.GetFileName(x));
             }
 
             public void Dispose()
