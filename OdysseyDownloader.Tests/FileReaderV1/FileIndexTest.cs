@@ -1,11 +1,10 @@
-﻿using Odyssey_Downloader;
-using Shouldly;
+﻿using FluentAssertions;
+using Odyssey_Downloader;
 using SimpleFixture;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Text;
 using Xunit;
 
 namespace OdysseyDownloader.FileReaderV1.Tests
@@ -29,11 +28,12 @@ namespace OdysseyDownloader.FileReaderV1.Tests
         [Fact]
         public void it_should_find_each_title()
         {
-            var titles = new[] { "some_title", "other_neat_show" };
+            var titles = new[] { "some title", "other neat show" };
             _scenerio.CreateTestMp3FilesByTitle(titles);
             var result = it.RebuildIndex(_scenerio.Config);
-            result.ShouldNotBeNull();
-            result.Select(x => x.Title).ShouldBe(titles);
+            result.Should().NotBeNull();
+            var actualTitles = result.Select(x => x.Title);
+            actualTitles.Should().BeEquivalentTo(titles);
         }
 
         class TestScenerio:IDisposable
@@ -54,7 +54,8 @@ namespace OdysseyDownloader.FileReaderV1.Tests
             {
                 foreach(var title in titles)
                 {
-                    createFile(title, Convert.ToString(_fixture.Generate<int>()));
+                    var titleWithSpacesReplaced = title.Replace(' ', '_');
+                    createFile(titleWithSpacesReplaced, Convert.ToString(_fixture.Generate<uint>()));
                 }
             }
 

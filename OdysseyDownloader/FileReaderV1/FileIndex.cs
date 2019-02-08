@@ -20,10 +20,13 @@ namespace OdysseyDownloader.FileReaderV1
             List<AudioFile> audioFiles = new List<AudioFile>();
 
             List<string> titleList = new List<string>();
-            foreach (string item in getFileNamesInDir(fullPath, fileExtension))
+            var filesInDirectory = getFileNamesInDir(fullPath, fileExtension);
+            foreach (string item in filesInDirectory)
             {
-                var title = findElement(item, fileExtension, "#-").Replace("_", " ");
-                titleList.Add("Episode " + findElement(item, "#-", "/") + ": " + title);
+                var justFileName = Path.GetFileName(item);
+                var title = findElement(justFileName, fileExtension, "#-").Replace("_", " ");
+                var episodeNumber = findElement(justFileName, "#-", "/");
+                titleList.Add($"Episode {episodeNumber}: {title}");
                 audioFiles.Add(new AudioFile { Title = title });
             }
 
@@ -64,7 +67,7 @@ namespace OdysseyDownloader.FileReaderV1
             Source = Source.Substring(0, extensionIndex); //cut off source after file
             Source = reverseString(Source); // reverse the source so that the file url is first
             int httpIndex = Source.IndexOf(reverseString(elementStart));
-            Source = Source.Substring(0, httpIndex); //cut off source before file
+            if(httpIndex > 0) Source = Source.Substring(0, httpIndex); //cut off source before file
             Source = reverseString(Source); // reverse the URL back to normal
 
             return Source;
