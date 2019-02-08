@@ -3,21 +3,25 @@ using Odyssey_Downloader.Model;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 
 namespace OdysseyDownloader.FileReaderV1
 {
     public class FileIndex : IIndexReader
     {
+        public FileIndex(Config settings)
+        {
+            _fullPath = settings.FullPathToFiles;
+            _fileExtension = settings.FileExtension;
+            _fullPathToIndex = _fullPath + settings.IndexFileName;
+        }
+
         private string _fullPath;
-        private string _indexFileName;
         private string _fileExtension;
+        private string _fullPathToIndex;
 
         public IEnumerable<AudioFile> RebuildIndex(Config settings)
         {
-            _fullPath = settings.FullPathToFiles;
-            _indexFileName = settings.IndexFileName;
-            _fileExtension = settings.FileExtension;
-
             List<AudioFile> audioFiles = new List<AudioFile>();
 
             List<string> titleList = new List<string>();
@@ -28,7 +32,8 @@ namespace OdysseyDownloader.FileReaderV1
                 var title = findElement(justFileName, _fileExtension, "#-").Replace("_", " ");
                 var episodeNumber = findElement(justFileName, "#-", "/");
                 titleList.Add($"Episode {episodeNumber}: {title}");
-                audioFiles.Add(new AudioFile {
+                audioFiles.Add(new AudioFile
+                {
                     Title = title,
                     FileName = justFileName,
                     Number = episodeNumber,
@@ -44,6 +49,29 @@ namespace OdysseyDownloader.FileReaderV1
             throw new NotImplementedException();
         }
 
+        public IEnumerable<AudioFile> ReadIndex()
+        {
+            // format of lines look like this: "Episode {episodeNumber}: {title}"
+            var lines = File.ReadAllLines(_fullPathToIndex);
+            foreach(var line in lines)
+            {
+                var stripEpisode = line.Replace("Episode ", string.Empty);
+                var splitOnColon = stripEpisode.Split(':', 2);
+                var episodeNumber = splitOnColon.First();
+                var title = splitOnColon.Skip(1).First().Trim();
+                yield return new AudioFile {
+                    Number = episodeNumber,
+                    Title = title,
+                    FileName = $"{episodeNumber}#-{title.Replace(' ', '_')}{_fileExtension}",
+                };
+            }
+        }
+
+        public void WriteToIndex(AudioFile fileInfo)
+        {
+            throw new NotImplementedException();
+        }
+
         private static string reverseString(string text)
         {
             char[] array = text.ToCharArray();
@@ -53,30 +81,35 @@ namespace OdysseyDownloader.FileReaderV1
 
         private void checkForIndexFile(Config settings)
         {
-            string path = _fullPath + _indexFileName;
             try
             {
-                System.IO.StreamReader file = new System.IO.StreamReader(path);
+                System.IO.StreamReader file = new System.IO.StreamReader(_fullPathToIndex);
                 file.Close();
             }
             catch
             {
-                File.Create(path).Dispose();
+                File.Create(_fullPathToIndex).Dispose();
                 Console.WriteLine("Found no index file so rebuilding it.");
                 RebuildIndex(settings);
             }
         }
+
         private string findElement(string Source, string elementEnd, string elementStart)
         {
             int extensionIndex = Source.IndexOf(elementEnd);
             Source = Source.Substring(0, extensionIndex); //cut off source after file
             Source = reverseString(Source); // reverse the source so that the file url is first
             int httpIndex = Source.IndexOf(reverseString(elementStart));
-            if(httpIndex > 0) Source = Source.Substring(0, httpIndex); //cut off source before file
+            if (httpIndex > 0)
+            {
+                Source = Source.Substring(0, httpIndex); //cut off source before file
+            }
+
             Source = reverseString(Source); // reverse the URL back to normal
 
             return Source;
         }
+
         private List<string> getFileNamesInDir(string dir, string extension)
         {
             List<string> list = new List<string>();
@@ -98,7 +131,7 @@ namespace OdysseyDownloader.FileReaderV1
 
         private void writeListToFile(List<string> fileLines)
         {
-            TextWriter newFile = new StreamWriter(_fullPath + _indexFileName);
+            TextWriter newFile = new StreamWriter(_fullPathToIndex);
             foreach (string Currentline in fileLines)
             {
                 newFile.WriteLine(Currentline);

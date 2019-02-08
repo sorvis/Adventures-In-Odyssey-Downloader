@@ -6,7 +6,6 @@ namespace Odyssey_Downloader
     public class Config
     {
         protected string pageUrl;
-        protected string fileExtension;
         protected string titleStart;
         protected string titleEnd;
         protected string dateFormat;
@@ -31,7 +30,7 @@ namespace Odyssey_Downloader
 
         public string Url => pageUrl;
 
-        public string FileExtension => fileExtension;
+        public string FileExtension { get; private set; } = ".mp3";
 
         public string TitleStart => titleStart;
 
@@ -91,7 +90,7 @@ namespace Odyssey_Downloader
                     break;
 
                 case "fileExtension":
-                    fileExtension = data;
+                    FileExtension = data;
                     break;
 
                 case "titleStart":
@@ -155,7 +154,7 @@ namespace Odyssey_Downloader
 
             // Write next element
             textWriter.WriteStartElement("fileExtension");
-            textWriter.WriteString(fileExtension);
+            textWriter.WriteString(FileExtension);
             textWriter.WriteEndElement();
 
             // Write next element
@@ -196,7 +195,7 @@ namespace Odyssey_Downloader
         {
             pageUrl = "https://www.oneplace.com/ministries/adventures-in-odyssey/listen/";
             dateFormat = "{0:MMMM d, yyyy}";
-            fileExtension = ".mp3";
+            FileExtension = ".mp3";
             titleStart = "<div class=\"title\" title=\"\">";
             titleEnd = "<label class=\"duration\">";
             FullPathToFiles = "";

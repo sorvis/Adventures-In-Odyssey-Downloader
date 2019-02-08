@@ -16,8 +16,9 @@ namespace OdysseyDownloader.FileReaderV1.Tests
 
         public FileIndexTest()
         {
-            it = new FileIndex();
             _scenerio = new TestScenerio();
+            it = new FileIndex(_scenerio.Config);
+            _scenerio.CreateTestMp3Files();
         }
 
         public void Dispose()
@@ -28,7 +29,6 @@ namespace OdysseyDownloader.FileReaderV1.Tests
         [Fact]
         public void it_should_find_each_title()
         {
-            _scenerio.CreateTestMp3Files();
             var result = it.RebuildIndex(_scenerio.Config);
             var actualTitles = result.Select(x => x.Title);
             actualTitles.Should().BeEquivalentTo(_scenerio.Titles);
@@ -37,7 +37,6 @@ namespace OdysseyDownloader.FileReaderV1.Tests
         [Fact]
         public void it_should_find_each_file_name()
         {
-            _scenerio.CreateTestMp3Files();
             var result = it.RebuildIndex(_scenerio.Config);
             var actual = result.Select(x => x.FileName);
             var expectedFileNames = _scenerio.GetFileNamesCreated();
@@ -47,11 +46,31 @@ namespace OdysseyDownloader.FileReaderV1.Tests
         [Fact]
         public void it_should_find_each_episode_number()
         {
-            _scenerio.CreateTestMp3Files();
             var result = it.RebuildIndex(_scenerio.Config);
             var actual = result.Select(x => x.Number);
             var expected = _scenerio.EpisodeNumbers.Select(x => x.ToString());
             actual.Should().BeEquivalentTo(expected);
+        }
+
+        [Fact]
+        public void it_should_read_back_same_as_Rebuild_created()
+        {
+            var expected = it.RebuildIndex(_scenerio.Config);
+            var actual = it.ReadIndex();
+            actual.Should().BeEquivalentTo(expected);
+        }
+
+        [Fact]
+        public void it_should_know_if_index_file_exists()
+        {
+            it.RebuildIndex(_scenerio.Config);
+            it.IndexDetected().Should().BeTrue();
+        }
+
+        [Fact]
+        public void it_should_know_if_index_file_does_not_exist()
+        {
+            it.IndexDetected().Should().BeFalse();
         }
 
         class TestScenerio:IDisposable
@@ -94,6 +113,8 @@ namespace OdysseyDownloader.FileReaderV1.Tests
                     File.Delete(file);
                 }
                 _filesCreated.Clear();
+                var indexFullFileName = Config.FullPathToFiles + Config.IndexFileName;
+                if (File.Exists(indexFullFileName)) File.Delete(indexFullFileName);
             }
 
             private void createFile(string title, string number)

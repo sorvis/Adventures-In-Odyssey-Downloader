@@ -7,6 +7,10 @@ namespace Odyssey_Downloader
     {
         IEnumerable<AudioFile> RebuildIndex(Config settings);
 
+        IEnumerable<AudioFile> ReadIndex();
+
+        void WriteToIndex(AudioFile fileInfo);
+
         bool IndexDetected();
     }
 }
