@@ -6,6 +6,13 @@ namespace Adventures_In_Odyssey_Downloader.FileReaderV2
 {
     public class FileIndexV2 : IIndexReader
     {
+        private Config config;
+
+        public FileIndexV2(Config config)
+        {
+            this.config = config;
+        }
+
         public bool IndexDetected()
         {
             throw new System.NotImplementedException();

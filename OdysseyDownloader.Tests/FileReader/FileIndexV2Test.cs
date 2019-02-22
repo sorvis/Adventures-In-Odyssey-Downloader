@@ -1,25 +1,21 @@
-﻿using FluentAssertions;
-using Odyssey_Downloader;
-using OdysseyDownloader.FileReader;
-using OdysseyDownloader.Tests.FileReader;
-using SimpleFixture;
+﻿using Adventures_In_Odyssey_Downloader.FileReaderV2;
+using FluentAssertions;
 using System;
-using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using Xunit;
 
 namespace OdysseyDownloader.Tests.FileReader
 {
-    public class FileIndexV1Test: IDisposable
+    public class FileIndexV2Test : IDisposable
     {
-        private readonly FileIndexV1 it;
+        private readonly FileIndexV2 it;
         private readonly TestFileIndexScenerio _scenerio;
 
-        public FileIndexV1Test()
+        public FileIndexV2Test()
         {
             _scenerio = new TestFileIndexScenerio();
-            it = new FileIndexV1(_scenerio.Config);
+            it = new FileIndexV2(_scenerio.Config);
             _scenerio.CreateTestMp3Files();
         }
 
