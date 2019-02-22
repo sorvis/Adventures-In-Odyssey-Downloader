@@ -1,5 +1,6 @@
 ﻿using FluentAssertions;
 using Odyssey_Downloader;
+using OdysseyDownloader.Tests.FileReader;
 using SimpleFixture;
 using System;
 using System.Collections.Generic;
@@ -12,11 +13,11 @@ namespace OdysseyDownloader.FileReader.Tests
     public class FileIndexV1Test: IDisposable
     {
         private readonly FileIndexV1 it;
-        private readonly TestScenerio _scenerio;
+        private readonly TestFileIndexScenerio _scenerio;
 
         public FileIndexV1Test()
         {
-            _scenerio = new TestScenerio();
+            _scenerio = new TestFileIndexScenerio();
             it = new FileIndexV1(_scenerio.Config);
             _scenerio.CreateTestMp3Files();
         }
@@ -29,7 +30,7 @@ namespace OdysseyDownloader.FileReader.Tests
         [Fact]
         public void it_should_find_each_title()
         {
-            var result = it.RebuildIndex(_scenerio.Config);
+            var result = it.RebuildIndex();
             var actualTitles = result.Select(x => x.Title);
             actualTitles.Should().BeEquivalentTo(_scenerio.Titles);
         }
@@ -37,7 +38,7 @@ namespace OdysseyDownloader.FileReader.Tests
         [Fact]
         public void it_should_find_each_file_name()
         {
-            var result = it.RebuildIndex(_scenerio.Config);
+            var result = it.RebuildIndex();
             var actual = result.Select(x => x.FileName);
             var expectedFileNames = _scenerio.GetFileNamesCreated();
             actual.Should().BeEquivalentTo(expectedFileNames);
@@ -46,7 +47,7 @@ namespace OdysseyDownloader.FileReader.Tests
         [Fact]
         public void it_should_find_each_episode_number()
         {
-            var result = it.RebuildIndex(_scenerio.Config);
+            var result = it.RebuildIndex();
             var actual = result.Select(x => x.Number);
             var expected = _scenerio.EpisodeNumbers.Select(x => x.ToString());
             actual.Should().BeEquivalentTo(expected);
@@ -55,7 +56,7 @@ namespace OdysseyDownloader.FileReader.Tests
         [Fact]
         public void it_should_read_back_same_as_Rebuild_created()
         {
-            var expected = it.RebuildIndex(_scenerio.Config);
+            var expected = it.RebuildIndex();
             var actual = it.ReadIndex();
             actual.Should().BeEquivalentTo(expected);
         }
@@ -63,7 +64,7 @@ namespace OdysseyDownloader.FileReader.Tests
         [Fact]
         public void it_should_know_if_index_file_exists()
         {
-            it.RebuildIndex(_scenerio.Config);
+            it.RebuildIndex();
             it.IndexDetected().Should().BeTrue();
         }
 
@@ -79,58 +80,6 @@ namespace OdysseyDownloader.FileReader.Tests
             var indexFileName = _scenerio.Config.GetIndexFilePath();
             File.WriteAllText(indexFileName, Guid.NewGuid().ToString());
             it.IndexDetected().Should().BeFalse();
-        }
-
-        class TestScenerio:IDisposable
-        {
-            private List<string> _filesCreated = new List<string>();
-            private Fixture _fixture;
-
-            public TestScenerio()
-            {
-                Config = new Config();
-                Config.FullPathToFiles = ".";
-                _fixture = new Fixture();
-            }
-
-            public Config Config { get; set; }
-            public IEnumerable<string> Titles { get; private set; }
-            public List<int> EpisodeNumbers { get; } = new List<int>();
-
-            public void CreateTestMp3Files()
-            {
-                Titles = new[] { "some title", "other neat show" };
-                foreach(var title in Titles)
-                {
-                    var titleWithSpacesReplaced = title.Replace(' ', '_');
-                    var episodeNumber = Convert.ToInt32(_fixture.Generate<uint>() / 2);
-                    EpisodeNumbers.Add(episodeNumber);
-                    createFile(titleWithSpacesReplaced, Convert.ToString(episodeNumber));
-                }
-            }
-
-            public IEnumerable<string> GetFileNamesCreated()
-            {
-                return _filesCreated.Select(x => Path.GetFileName(x));
-            }
-
-            public void Dispose()
-            {
-                foreach(var file in _filesCreated)
-                {
-                    File.Delete(file);
-                }
-                _filesCreated.Clear();
-                var indexFullFileName = Config.GetIndexFilePath();
-                if (File.Exists(indexFullFileName)) File.Delete(indexFullFileName);
-            }
-
-            private void createFile(string title, string number)
-            {
-                var fileName = $"{number}#-{title}.mp3";
-                using (File.Create(fileName)) { }
-                _filesCreated.Add(fileName);
-            }
         }
     }
 }

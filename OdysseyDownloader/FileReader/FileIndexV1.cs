@@ -14,15 +14,17 @@ namespace OdysseyDownloader.FileReader
         private string _fullPath;
         private string _fileExtension;
         private string _fullPathToIndex;
+        private readonly Config _settings;
 
         public FileIndexV1(Config settings)
         {
             _fullPath = settings.FullPathToFiles;
             _fileExtension = settings.FileExtension;
             _fullPathToIndex = settings.GetIndexFilePath();
+            _settings = settings;
         }
 
-        public IEnumerable<AudioFile> RebuildIndex(Config settings)
+        public IEnumerable<AudioFile> RebuildIndex()
         {
             List<AudioFile> audioFiles = new List<AudioFile>();
 
@@ -91,7 +93,7 @@ namespace OdysseyDownloader.FileReader
             return new string(array);
         }
 
-        private void checkForIndexFile(Config settings)
+        private void checkForIndexFile()
         {
             try
             {
@@ -102,7 +104,7 @@ namespace OdysseyDownloader.FileReader
             {
                 File.Create(_fullPathToIndex).Dispose();
                 Console.WriteLine("Found no index file so rebuilding it.");
-                RebuildIndex(settings);
+                RebuildIndex();
             }
         }
 

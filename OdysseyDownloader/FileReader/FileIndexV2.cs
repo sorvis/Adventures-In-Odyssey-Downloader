@@ -16,7 +16,7 @@ namespace Adventures_In_Odyssey_Downloader.FileReaderV2
             throw new System.NotImplementedException();
         }
 
-        public IEnumerable<AudioFile> RebuildIndex(Config settings)
+        public IEnumerable<AudioFile> RebuildIndex()
         {
             return null;
         }

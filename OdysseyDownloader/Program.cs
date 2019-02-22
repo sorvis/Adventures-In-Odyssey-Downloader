@@ -1,4 +1,5 @@
-﻿using System;
+﻿using OdysseyDownloader.FileReader;
+using System;
 
 namespace Odyssey_Downloader
 {
@@ -22,7 +23,8 @@ namespace Odyssey_Downloader
             }
 
             // create or update index file
-            IIndexReader setIndex = new OdysseyDownloader.FileReader.FileIndexV1(settings);
+            var fileReaderFactory = new FileReaderFactory(settings);
+            IIndexReader setIndex = fileReaderFactory.Get();
 
             // create file downloader
             ProcessFile downloadAndSave = new ProcessFile(settings);
@@ -31,7 +33,7 @@ namespace Odyssey_Downloader
 
             if (CommandLine["rebuild-index"] != null || CommandLine["build-index"] != null)
             {
-                setIndex.RebuildIndex(settings);
+                setIndex.RebuildIndex();
             }
 
             if (CommandLine["defaults"] != null)
