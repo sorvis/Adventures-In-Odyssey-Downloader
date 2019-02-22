@@ -4,7 +4,7 @@ using System.Collections.Generic;
 
 namespace Adventures_In_Odyssey_Downloader.FileReaderV2
 {
-    public class FileIndex : IIndexReader
+    public class FileIndexV2 : IIndexReader
     {
         public bool IndexDetected()
         {

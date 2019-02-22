@@ -7,17 +7,17 @@ using System.IO;
 using System.Linq;
 using Xunit;
 
-namespace OdysseyDownloader.FileReaderV1.Tests
+namespace OdysseyDownloader.FileReader.Tests
 {
-    public class FileIndexTest: IDisposable
+    public class FileIndexV1Test: IDisposable
     {
-        private readonly FileIndex it;
+        private readonly FileIndexV1 it;
         private readonly TestScenerio _scenerio;
 
-        public FileIndexTest()
+        public FileIndexV1Test()
         {
             _scenerio = new TestScenerio();
-            it = new FileIndex(_scenerio.Config);
+            it = new FileIndexV1(_scenerio.Config);
             _scenerio.CreateTestMp3Files();
         }
 

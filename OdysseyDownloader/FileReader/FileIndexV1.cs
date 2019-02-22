@@ -6,16 +6,16 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 
-namespace OdysseyDownloader.FileReaderV1
+namespace OdysseyDownloader.FileReader
 {
-    public class FileIndex : IIndexReader
+    public class FileIndexV1 : IIndexReader
     {
         private readonly Logger _logger = NLog.LogManager.GetCurrentClassLogger();
         private string _fullPath;
         private string _fileExtension;
         private string _fullPathToIndex;
 
-        public FileIndex(Config settings)
+        public FileIndexV1(Config settings)
         {
             _fullPath = settings.FullPathToFiles;
             _fileExtension = settings.FileExtension;

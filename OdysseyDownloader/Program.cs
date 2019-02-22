@@ -22,7 +22,7 @@ namespace Odyssey_Downloader
             }
 
             // create or update index file
-            IIndexReader setIndex = new OdysseyDownloader.FileReaderV1.FileIndex(settings);
+            IIndexReader setIndex = new OdysseyDownloader.FileReader.FileIndexV1(settings);
 
             // create file downloader
             ProcessFile downloadAndSave = new ProcessFile(settings);
