@@ -73,6 +73,14 @@ namespace OdysseyDownloader.FileReaderV1.Tests
             it.IndexDetected().Should().BeFalse();
         }
 
+        [Fact]
+        public void it_should_know_if_index_file_is_in_unknown_format()
+        {
+            var indexFileName = _scenerio.Config.GetIndexFilePath();
+            File.WriteAllText(indexFileName, Guid.NewGuid().ToString());
+            it.IndexDetected().Should().BeFalse();
+        }
+
         class TestScenerio:IDisposable
         {
             private List<string> _filesCreated = new List<string>();
@@ -113,7 +121,7 @@ namespace OdysseyDownloader.FileReaderV1.Tests
                     File.Delete(file);
                 }
                 _filesCreated.Clear();
-                var indexFullFileName = Config.FullPathToFiles + Config.IndexFileName;
+                var indexFullFileName = Config.GetIndexFilePath();
                 if (File.Exists(indexFullFileName)) File.Delete(indexFullFileName);
             }
 

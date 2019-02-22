@@ -1,4 +1,5 @@
-﻿using Odyssey_Downloader;
+﻿using NLog;
+using Odyssey_Downloader;
 using Odyssey_Downloader.Model;
 using System;
 using System.Collections.Generic;
@@ -9,24 +10,24 @@ namespace OdysseyDownloader.FileReaderV1
 {
     public class FileIndex : IIndexReader
     {
+        private readonly Logger _logger = NLog.LogManager.GetCurrentClassLogger();
+        private string _fullPath;
+        private string _fileExtension;
+        private string _fullPathToIndex;
+
         public FileIndex(Config settings)
         {
             _fullPath = settings.FullPathToFiles;
             _fileExtension = settings.FileExtension;
-            _fullPathToIndex = _fullPath + settings.IndexFileName;
+            _fullPathToIndex = settings.GetIndexFilePath();
         }
-
-        private string _fullPath;
-        private string _fileExtension;
-        private string _fullPathToIndex;
 
         public IEnumerable<AudioFile> RebuildIndex(Config settings)
         {
             List<AudioFile> audioFiles = new List<AudioFile>();
 
             List<string> titleList = new List<string>();
-            var filesInDirectory = getFileNamesInDir(_fullPath, _fileExtension);
-            foreach (string item in filesInDirectory)
+            foreach (string item in getFileNamesInDir())
             {
                 var justFileName = Path.GetFileName(item);
                 var title = findElement(justFileName, _fileExtension, "#-").Replace("_", " ");
@@ -46,7 +47,18 @@ namespace OdysseyDownloader.FileReaderV1
 
         public bool IndexDetected()
         {
-            throw new NotImplementedException();
+            if (!File.Exists(_fullPathToIndex)) return false;
+            try
+            {
+                var files = ReadIndex();
+                return files.Any();
+            }
+            catch(Exception exception)
+            {
+                _logger.Error(exception, 
+                    $"Unable to read contents of index file at: {_fullPathToIndex}. Probably this is the an older index reader checking for compatibility.");
+                return false;
+            }
         }
 
         public IEnumerable<AudioFile> ReadIndex()
@@ -110,8 +122,10 @@ namespace OdysseyDownloader.FileReaderV1
             return Source;
         }
 
-        private List<string> getFileNamesInDir(string dir, string extension)
+        private List<string> getFileNamesInDir()
         {
+            var dir = _fullPath;
+            var extension = _fileExtension;
             List<string> list = new List<string>();
 
             // Process the list of files found in the directory.

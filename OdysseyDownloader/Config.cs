@@ -28,6 +28,11 @@ namespace Odyssey_Downloader
             }
         }
 
+        public string GetIndexFilePath()
+        {
+            return FullPathToFiles + IndexFileName;
+        }
+
         public string Url => pageUrl;
 
         public string FileExtension { get; private set; } = ".mp3";
