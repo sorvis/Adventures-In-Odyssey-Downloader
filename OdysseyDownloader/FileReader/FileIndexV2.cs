@@ -1,16 +1,17 @@
 using Odyssey_Downloader;
 using Odyssey_Downloader.Model;
 using System.Collections.Generic;
+using System.IO;
 
 namespace Adventures_In_Odyssey_Downloader.FileReaderV2
 {
     public class FileIndexV2 : IIndexReader
     {
-        private Config config;
+        private Config _config;
 
         public FileIndexV2(Config config)
         {
-            this.config = config;
+            _config = config;
         }
 
         public bool IndexDetected()
@@ -25,7 +26,52 @@ namespace Adventures_In_Odyssey_Downloader.FileReaderV2
 
         public IEnumerable<AudioFile> RebuildIndex()
         {
-            return null;
+            List<AudioFile> audioFiles = new List<AudioFile>();
+            List<string> titleList = new List<string>();
+            foreach (string item in getFileNamesInDir())
+            {
+                var justFileName = Path.GetFileName(item);
+                var title = justFileName.Replace($".{_config.FileExtension}", "");
+                titleList.Add(title);
+                audioFiles.Add(new AudioFile
+                {
+                    Title = title,
+                    FileName = justFileName,
+                });
+            }
+
+            writeListToFile(titleList);
+            return audioFiles;
+        }
+
+        private void writeListToFile(List<string> fileLines)
+        {
+            TextWriter newFile = new StreamWriter(_config.GetIndexFilePath());
+            foreach (string Currentline in fileLines)
+            {
+                newFile.WriteLine(Currentline);
+            }
+            // close the stream
+            newFile.Close();
+        }
+
+        private List<string> getFileNamesInDir()
+        {
+            var dir = _config.FullPathToFiles;
+            var extension = _config.FileExtension;
+            List<string> list = new List<string>();
+
+            // Process the list of files found in the directory.
+            foreach (string fileName in Directory.GetFiles(dir))
+            {
+                // do something with fileName
+                if (fileName.Contains(extension))
+                {
+                    list.Add(fileName);
+                }
+            }
+            list.Sort();
+            return list;
         }
 
         public void WriteToIndex(AudioFile fileInfo)

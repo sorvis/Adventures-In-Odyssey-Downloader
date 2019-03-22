@@ -139,9 +139,7 @@ namespace OdysseyDownloader.FileReader
                     list.Add(fileName);
                 }
             }
-
             list.Sort();
-
             return list;
         }
 

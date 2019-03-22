@@ -28,7 +28,7 @@ namespace OdysseyDownloader.Tests.FileReader
         [Fact]
         public void it_should_return_v1_when_index_is_found()
         {
-            _scenerio.CreateTestMp3Files();
+            _scenerio.V1CreateTestMp3Files();
             _v1.RebuildIndex();
             var instance = it.Get();
             instance.Should().BeOfType<FileIndexV1>();

@@ -16,7 +16,7 @@ namespace OdysseyDownloader.Tests.FileReader
         {
             _scenerio = new TestFileIndexScenerio();
             it = new FileIndexV2(_scenerio.Config);
-            _scenerio.CreateTestMp3Files();
+            _scenerio.V2CreateTestMp3Files();
         }
 
         public void Dispose()
