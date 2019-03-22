@@ -11,15 +11,19 @@ namespace OdysseyDownloader.Tests.FileReader
     {
         private List<string> _filesCreated = new List<string>();
         private Fixture _fixture;
+        private readonly string _folderName;
 
         public TestFileIndexScenerio()
         {
             Config = new Config();
-            Config.FullPathToFiles = ".";
+            _folderName = Guid.NewGuid().ToString();
+            Directory.CreateDirectory(_folderName);
+            Config.FullPathToFiles = _folderName;
             _fixture = new Fixture();
         }
 
         public Config Config { get; set; }
+
         public IEnumerable<string> Titles { get; private set; }
         public List<int> EpisodeNumbers { get; } = new List<int>();
 
@@ -44,17 +48,18 @@ namespace OdysseyDownloader.Tests.FileReader
         {
             foreach (var file in _filesCreated)
             {
-                File.Delete(file);
+                File.Delete(Path.Combine(_folderName, file));
             }
             _filesCreated.Clear();
             var indexFullFileName = Config.GetIndexFilePath();
             if (File.Exists(indexFullFileName)) File.Delete(indexFullFileName);
+            Directory.Delete(_folderName);
         }
 
         private void createFile(string title, string number)
         {
             var fileName = $"{number}#-{title}.mp3";
-            using (File.Create(fileName)) { }
+            using (File.Create(Path.Combine(_folderName, fileName))) { }
             _filesCreated.Add(fileName);
         }
     }
