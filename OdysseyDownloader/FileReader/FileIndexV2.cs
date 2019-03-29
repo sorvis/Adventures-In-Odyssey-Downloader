@@ -48,7 +48,7 @@ namespace Adventures_In_Odyssey_Downloader.FileReaderV2
             foreach (string item in getFileNamesInDir())
             {
                 var justFileName = Path.GetFileName(item);
-                var title = justFileName.Replace($".{_config.FileExtension}", "");
+                var title = justFileName.Replace($"{_config.FileExtension}", "").Replace('_', ' ');
                 titleList.Add(title);
                 audioFiles.Add(new AudioFile
                 {
