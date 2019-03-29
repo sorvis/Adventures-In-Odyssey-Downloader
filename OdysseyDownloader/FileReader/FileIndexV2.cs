@@ -35,10 +35,12 @@ namespace Adventures_In_Odyssey_Downloader.FileReaderV2
                 return false;
             }
         }
-
         public IEnumerable<AudioFile> ReadIndex()
         {
-            throw new System.NotImplementedException();
+            var path = _config.GetIndexFilePath();
+            var file = File.ReadAllText(path);
+            var index = JsonConvert.DeserializeObject<Index>(file);
+            return index.Files;
         }
 
         public IEnumerable<AudioFile> RebuildIndex()
@@ -57,19 +59,15 @@ namespace Adventures_In_Odyssey_Downloader.FileReaderV2
                 });
             }
 
-            writeIndex(titleList);
+            writeIndex(audioFiles);
             return audioFiles;
         }
 
-        private void writeIndex(List<string> fileLines)
+        private void writeIndex(List<AudioFile> fileLines)
         {
-            TextWriter newFile = new StreamWriter(_config.GetIndexFilePath());
-            foreach (string Currentline in fileLines)
-            {
-                newFile.WriteLine(Currentline);
-            }
-            // close the stream
-            newFile.Close();
+            var index = new Index { Files = fileLines };
+            var indexJson = JsonConvert.SerializeObject(index);
+            File.WriteAllText(_config.GetIndexFilePath(), indexJson);
         }
 
         private List<string> getFileNamesInDir()
@@ -94,6 +92,11 @@ namespace Adventures_In_Odyssey_Downloader.FileReaderV2
         public void WriteToIndex(AudioFile fileInfo)
         {
             throw new System.NotImplementedException();
+        }
+
+        public class Index
+        {
+            public IEnumerable<AudioFile> Files { get; internal set; }
         }
     }
 }
