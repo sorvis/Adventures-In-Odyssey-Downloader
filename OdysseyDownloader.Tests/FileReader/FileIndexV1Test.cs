@@ -1,10 +1,6 @@
 ﻿using FluentAssertions;
-using Odyssey_Downloader;
 using OdysseyDownloader.FileReader;
-using OdysseyDownloader.Tests.FileReader;
-using SimpleFixture;
 using System;
-using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using Xunit;
