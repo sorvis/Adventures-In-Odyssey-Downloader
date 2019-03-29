@@ -66,6 +66,12 @@ namespace OdysseyDownloader.Tests.FileReader
             Directory.Delete(_folderName);
         }
 
+        public void WriteIndex(string indexContents)
+        {
+            var indexPath = Config.GetIndexFilePath();
+            File.WriteAllText(indexPath, indexContents);
+        }
+
         private void v1CreateFile(string title, string number)
         {
             var fileName = $"{number}#-{title}.mp3";

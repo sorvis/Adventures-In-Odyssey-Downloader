@@ -1,5 +1,6 @@
 ﻿using Adventures_In_Odyssey_Downloader.FileReaderV2;
 using FluentAssertions;
+using Newtonsoft.Json;
 using System;
 using System.IO;
 using System.Linq;
@@ -61,7 +62,10 @@ namespace OdysseyDownloader.Tests.FileReader
         [Fact]
         public void it_should_know_if_index_file_exists()
         {
-            it.RebuildIndex();
+            var indexContents = new {
+                Version = "V2"
+            };
+            _scenerio.WriteIndex(JsonConvert.SerializeObject(indexContents));
             it.IndexDetected().Should().BeTrue();
         }
 

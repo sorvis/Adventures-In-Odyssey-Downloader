@@ -1,5 +1,8 @@
+using Newtonsoft.Json;
+using NLog;
 using Odyssey_Downloader;
 using Odyssey_Downloader.Model;
+using System;
 using System.Collections.Generic;
 using System.IO;
 
@@ -7,6 +10,7 @@ namespace Adventures_In_Odyssey_Downloader.FileReaderV2
 {
     public class FileIndexV2 : IIndexReader
     {
+        private readonly Logger _logger = LogManager.GetCurrentClassLogger();
         private Config _config;
 
         public FileIndexV2(Config config)
@@ -16,7 +20,20 @@ namespace Adventures_In_Odyssey_Downloader.FileReaderV2
 
         public bool IndexDetected()
         {
-            throw new System.NotImplementedException();
+            var indexLocation = _config.GetIndexFilePath();
+            if (!File.Exists(indexLocation)) return false;
+            var fileText = File.ReadAllText(indexLocation);
+            try
+            {
+                dynamic index = JsonConvert.DeserializeObject(fileText);
+                return index.Version == "V2";
+            }
+            catch (Exception exception)
+            {
+                _logger.Error(exception,
+                    $"Unable to read contents of index file at: {indexLocation}. Probably this is the an older index reader checking for compatibility.");
+                return false;
+            }
         }
 
         public IEnumerable<AudioFile> ReadIndex()
@@ -40,11 +57,11 @@ namespace Adventures_In_Odyssey_Downloader.FileReaderV2
                 });
             }
 
-            writeListToFile(titleList);
+            writeIndex(titleList);
             return audioFiles;
         }
 
-        private void writeListToFile(List<string> fileLines)
+        private void writeIndex(List<string> fileLines)
         {
             TextWriter newFile = new StreamWriter(_config.GetIndexFilePath());
             foreach (string Currentline in fileLines)

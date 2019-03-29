@@ -10,7 +10,7 @@ namespace OdysseyDownloader.FileReader
 {
     public class FileIndexV1 : IIndexReader
     {
-        private readonly Logger _logger = NLog.LogManager.GetCurrentClassLogger();
+        private readonly Logger _logger = LogManager.GetCurrentClassLogger();
         private string _fullPath;
         private string _fileExtension;
         private string _fullPathToIndex;
