@@ -78,5 +78,28 @@ namespace OdysseyDownloader.Tests.FileReader
             File.WriteAllText(indexFileName, Guid.NewGuid().ToString());
             it.IndexDetected().Should().BeFalse();
         }
+
+        [Fact]
+        public void it_should_create_new_index_on_WriteToIndex_if_none_exists()
+        {
+            var expected = _scenerio.GenerateAudioFile();
+            expected.Date = default(DateTime); // v1 does not support storing the date
+            expected.FileName = $"{expected.Number}#-{expected.Title}.mp3";
+
+            it.WriteToIndex(expected);
+            var actual = it.ReadIndex();
+
+            actual.Should().BeEquivalentTo(new[] { expected });
+        }
+
+        [Fact]
+        public void it_should_append_to_index_on_WriteToIndex_if_one_exists()
+        {
+            var addOnFile = _scenerio.GenerateAudioFile();
+            var expected = it.RebuildIndex().Concat(new[] { addOnFile });
+            it.WriteToIndex(addOnFile);
+            var actual = it.ReadIndex();
+            actual.Should().BeEquivalentTo(expected);
+        }
     }
 }

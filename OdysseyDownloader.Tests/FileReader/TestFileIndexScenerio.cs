@@ -90,7 +90,10 @@ namespace OdysseyDownloader.Tests.FileReader
 
         internal AudioFile GenerateAudioFile()
         {
-            return _fixture.Generate<AudioFile>();
+            var file = _fixture.Generate<AudioFile>();
+            file.FileName = file.FileName.Replace(":", "");
+            file.Number = _fixture.Generate<int>().ToString();
+            return file;
         }
     }
 }

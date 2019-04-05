@@ -34,17 +34,23 @@ namespace OdysseyDownloader.FileReader
                 var justFileName = Path.GetFileName(item);
                 var title = findElement(justFileName, _fileExtension, "#-").Replace("_", " ");
                 var episodeNumber = findElement(justFileName, "#-", "/");
-                titleList.Add($"Episode {episodeNumber}: {title}");
-                audioFiles.Add(new AudioFile
+                var audioFile = new AudioFile
                 {
                     Title = title,
                     FileName = justFileName,
                     Number = episodeNumber,
-                });
+                };
+                audioFiles.Add(audioFile);
+                titleList.Add(formatIndexLine(audioFile));
             }
 
             writeListToFile(titleList);
             return audioFiles;
+        }
+
+        private string formatIndexLine(AudioFile file)
+        {
+            return $"Episode {file.Number}: {file.Title}";
         }
 
         public bool IndexDetected()
@@ -83,7 +89,8 @@ namespace OdysseyDownloader.FileReader
 
         public void WriteToIndex(AudioFile fileInfo)
         {
-            throw new NotImplementedException();
+            var line = formatIndexLine(fileInfo);
+            writeListToFile(new[] { line });
         }
 
         private static string reverseString(string text)
@@ -143,8 +150,15 @@ namespace OdysseyDownloader.FileReader
             return list;
         }
 
-        private void writeListToFile(List<string> fileLines)
+        private void writeListToFile(IEnumerable<string> fileLines)
         {
+            var existingIndexFiles = new List<string>();
+            if (IndexDetected())
+            {
+                existingIndexFiles.AddRange(ReadIndex().Select(formatIndexLine));
+            }
+            var filesToWrite = fileLines.Concat(existingIndexFiles).OrderBy(x => x);
+
             TextWriter newFile = new StreamWriter(_fullPathToIndex);
             foreach (string Currentline in fileLines)
             {
