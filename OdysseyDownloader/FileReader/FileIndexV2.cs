@@ -5,6 +5,7 @@ using Odyssey_Downloader.Model;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 
 namespace Adventures_In_Odyssey_Downloader.FileReaderV2
 {
@@ -63,9 +64,20 @@ namespace Adventures_In_Odyssey_Downloader.FileReaderV2
             return audioFiles;
         }
 
-        private void writeIndex(List<AudioFile> fileLines)
+        public void WriteToIndex(AudioFile fileInfo)
         {
-            var index = new Index { Files = fileLines };
+            writeIndex(new[] { fileInfo });
+        }
+
+        private void writeIndex(IEnumerable<AudioFile> fileLines)
+        {
+            var existingIndexFiles = new List<AudioFile>();
+            if(IndexDetected())
+            {
+                existingIndexFiles.AddRange(ReadIndex());
+            }
+            var filesToWrite = fileLines.Concat(existingIndexFiles).OrderBy(x => x.Title);
+            var index = new Index { Files = filesToWrite };
             var indexJson = JsonConvert.SerializeObject(index);
             File.WriteAllText(_config.GetIndexFilePath(), indexJson);
         }
@@ -88,14 +100,9 @@ namespace Adventures_In_Odyssey_Downloader.FileReaderV2
             list.Sort();
             return list;
         }
-
-        public void WriteToIndex(AudioFile fileInfo)
-        {
-            throw new System.NotImplementedException();
-        }
-
         public class Index
         {
+            public string Version => "V2";
             public IEnumerable<AudioFile> Files { get; set; }
         }
     }

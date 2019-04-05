@@ -1,4 +1,5 @@
 ﻿using Odyssey_Downloader;
+using Odyssey_Downloader.Model;
 using SimpleFixture;
 using System;
 using System.Collections.Generic;
@@ -85,6 +86,11 @@ namespace OdysseyDownloader.Tests.FileReader
             }
             using (File.Create(Path.Combine(_folderName, fileName))) { }
             _filesCreated.Add(fileName);
+        }
+
+        internal AudioFile GenerateAudioFile()
+        {
+            return _fixture.Generate<AudioFile>();
         }
     }
 }

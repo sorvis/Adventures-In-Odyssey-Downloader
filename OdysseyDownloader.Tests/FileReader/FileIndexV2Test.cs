@@ -1,6 +1,7 @@
 ﻿using Adventures_In_Odyssey_Downloader.FileReaderV2;
 using FluentAssertions;
 using Newtonsoft.Json;
+using Odyssey_Downloader.Model;
 using System;
 using System.IO;
 using System.Linq;
@@ -61,6 +62,15 @@ namespace OdysseyDownloader.Tests.FileReader
         }
 
         [Fact]
+        public void it_should_should_write_index_with_version_V2()
+        {
+            it.RebuildIndex();
+            var fileText = File.ReadAllText(_scenerio.Config.GetIndexFilePath());
+            dynamic index = JsonConvert.DeserializeObject(fileText);
+            ((string)index.Version).Should().Be("V2");
+        }
+
+        [Fact]
         public void it_should_know_if_index_file_does_not_exist()
         {
             it.IndexDetected().Should().BeFalse();
@@ -72,6 +82,25 @@ namespace OdysseyDownloader.Tests.FileReader
             var indexFileName = _scenerio.Config.GetIndexFilePath();
             File.WriteAllText(indexFileName, Guid.NewGuid().ToString());
             it.IndexDetected().Should().BeFalse();
+        }
+
+        [Fact]
+        public void it_should_create_new_index_on_WriteToIndex_if_none_exists()
+        {
+            var expected = _scenerio.GenerateAudioFile();
+            it.WriteToIndex(expected);
+            var actual = it.ReadIndex();
+            actual.Should().BeEquivalentTo(new[] { expected });
+        }
+
+        [Fact]
+        public void it_should_append_to_index_on_WriteToIndex_if_one_exists()
+        {
+            var addOnFile = _scenerio.GenerateAudioFile();
+            var expected = it.RebuildIndex().Concat(new[] { addOnFile });
+            it.WriteToIndex(addOnFile);
+            var actual = it.ReadIndex();
+            actual.Should().BeEquivalentTo(expected);
         }
     }
 }
