@@ -43,15 +43,6 @@ namespace OdysseyDownloader.Tests.FileReader
         }
 
         [Fact]
-        public void it_should_find_each_episode_number()
-        {
-            var result = it.RebuildIndex();
-            var actual = result.Select(x => x.Number);
-            var expected = _scenerio.EpisodeNumbers.Select(x => x.ToString());
-            actual.Should().BeEquivalentTo(expected);
-        }
-
-        [Fact]
         public void it_should_read_back_same_as_Rebuild_created()
         {
             var expected = it.RebuildIndex();

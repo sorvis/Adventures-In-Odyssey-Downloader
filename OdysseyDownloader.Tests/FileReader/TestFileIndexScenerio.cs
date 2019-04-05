@@ -35,7 +35,7 @@ namespace OdysseyDownloader.Tests.FileReader
                 var titleWithSpacesReplaced = title.Replace(' ', '_');
                 var episodeNumber = Convert.ToInt32(_fixture.Generate<uint>() / 2);
                 EpisodeNumbers.Add(episodeNumber);
-                v1CreateFile(titleWithSpacesReplaced, Convert.ToString(episodeNumber));
+                createFile(titleWithSpacesReplaced, Convert.ToString(episodeNumber));
             }
         }
 
@@ -45,7 +45,7 @@ namespace OdysseyDownloader.Tests.FileReader
             foreach (var title in Titles)
             {
                 var titleWithSpacesReplaced = title.Replace(' ', '_');
-                v2CreateFile(titleWithSpacesReplaced);
+                createFile(titleWithSpacesReplaced);
             }
         }
 
@@ -72,16 +72,17 @@ namespace OdysseyDownloader.Tests.FileReader
             File.WriteAllText(indexPath, indexContents);
         }
 
-        private void v1CreateFile(string title, string number)
+        private void createFile(string title, string number = null)
         {
-            var fileName = $"{number}#-{title}.mp3";
-            using (File.Create(Path.Combine(_folderName, fileName))) { }
-            _filesCreated.Add(fileName);
-        }
-
-        private void v2CreateFile(string title)
-        {
-            var fileName = $"{title}.mp3";
+            string fileName = string.Empty;
+            if (number != null)
+            {
+                 fileName = $"{number}#-{title}.mp3";
+            }
+            else
+            {
+                fileName = $"{title}.mp3";
+            }
             using (File.Create(Path.Combine(_folderName, fileName))) { }
             _filesCreated.Add(fileName);
         }

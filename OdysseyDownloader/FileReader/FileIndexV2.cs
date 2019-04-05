@@ -96,7 +96,7 @@ namespace Adventures_In_Odyssey_Downloader.FileReaderV2
 
         public class Index
         {
-            public IEnumerable<AudioFile> Files { get; internal set; }
+            public IEnumerable<AudioFile> Files { get; set; }
         }
     }
 }
