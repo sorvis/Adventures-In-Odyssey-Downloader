@@ -50,6 +50,12 @@ namespace OdysseyDownloader.Tests.FileReader
             }
         }
 
+        internal IEnumerable<string> GetFormattedFileTimestamps()
+        {
+            // todo get date time from files timestamp
+            throw new NotImplementedException();
+        }
+
         public IEnumerable<string> GetFileNamesCreated()
         {
             return _filesCreated.Select(x => Path.GetFileName(x));
@@ -91,8 +97,8 @@ namespace OdysseyDownloader.Tests.FileReader
         internal AudioFile GenerateAudioFile()
         {
             var file = _fixture.Generate<AudioFile>();
-            file.FileName = file.FileName.Replace(":", "");
             file.Number = _fixture.Generate<int>().ToString();
+            file.FileName = $"{file.Number}#-{file.Title}.mp3";
             return file;
         }
     }

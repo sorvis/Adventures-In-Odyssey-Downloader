@@ -10,6 +10,11 @@ namespace Odyssey_Downloader.Model
 
         public string Number { get; set; }
 
-        public DateTime Date { get; set; }
+        public string Date { get; set; }
+
+        public void SetDate(DateTime date)
+        {
+
+        }
     }
 }

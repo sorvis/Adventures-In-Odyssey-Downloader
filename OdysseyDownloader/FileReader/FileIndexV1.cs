@@ -160,7 +160,7 @@ namespace OdysseyDownloader.FileReader
             var filesToWrite = fileLines.Concat(existingIndexFiles).OrderBy(x => x);
 
             TextWriter newFile = new StreamWriter(_fullPathToIndex);
-            foreach (string Currentline in fileLines)
+            foreach (string Currentline in filesToWrite)
             {
                 newFile.WriteLine(Currentline);
             }

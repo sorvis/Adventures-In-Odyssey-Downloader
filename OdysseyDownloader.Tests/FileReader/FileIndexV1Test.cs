@@ -1,6 +1,8 @@
 ﻿using FluentAssertions;
+using Odyssey_Downloader.Model;
 using OdysseyDownloader.FileReader;
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using Xunit;
@@ -25,29 +27,33 @@ namespace OdysseyDownloader.Tests.FileReader
         }
 
         [Fact]
-        public void it_should_find_each_title()
+        public void it_should_build_index()
         {
-            var result = it.RebuildIndex();
-            var actualTitles = result.Select(x => x.Title);
-            actualTitles.Should().BeEquivalentTo(_scenerio.Titles);
-        }
+            var cases = new[] {
+                new { Expected = _scenerio.EpisodeNumbers.Select(x => x.ToString()),
+                    Actual = (Func<IEnumerable<AudioFile>, IEnumerable<string>>)(input => input.Select(x => x.Number)),
+                    FailMessage = $"{nameof(_scenerio.EpisodeNumbers)} did not match",
+                },
+                new { Expected = _scenerio.GetFileNamesCreated(),
+                    Actual = (Func<IEnumerable<AudioFile>, IEnumerable<string>>)(input => input.Select(x => x.FileName)),
+                    FailMessage = $"{nameof(_scenerio.GetFileNamesCreated)} did not match",
+                },
+                new { Expected = _scenerio.Titles,
+                    Actual = (Func<IEnumerable<AudioFile>, IEnumerable<string>>)(input => input.Select(x => x.Title)),
+                    FailMessage = $"{nameof(_scenerio.Titles)} did not match",
+                },
+                new { Expected = _scenerio.GetFormattedFileTimestamps(),
+                    Actual = (Func<IEnumerable<AudioFile>, IEnumerable<string>>)(input => input.Select(x => x.Date)),
+                    FailMessage = $"{nameof(_scenerio.GetFormattedFileTimestamps)} did not match",
+                },
+            };
 
-        [Fact]
-        public void it_should_find_each_file_name()
-        {
-            var result = it.RebuildIndex();
-            var actual = result.Select(x => x.FileName);
-            var expectedFileNames = _scenerio.GetFileNamesCreated();
-            actual.Should().BeEquivalentTo(expectedFileNames);
-        }
-
-        [Fact]
-        public void it_should_find_each_episode_number()
-        {
-            var result = it.RebuildIndex();
-            var actual = result.Select(x => x.Number);
-            var expected = _scenerio.EpisodeNumbers.Select(x => x.ToString());
-            actual.Should().BeEquivalentTo(expected);
+            foreach (var testCase in cases)
+            {
+                var result = it.RebuildIndex();
+                var actual = testCase.Actual(result);
+                actual.Should().BeEquivalentTo(testCase.Expected, because: testCase.FailMessage);
+            }
         }
 
         [Fact]
@@ -55,6 +61,7 @@ namespace OdysseyDownloader.Tests.FileReader
         {
             var expected = it.RebuildIndex();
             var actual = it.ReadIndex();
+            actual.Count().Should().BeGreaterThan(0);
             actual.Should().BeEquivalentTo(expected);
         }
 
@@ -96,9 +103,9 @@ namespace OdysseyDownloader.Tests.FileReader
         public void it_should_append_to_index_on_WriteToIndex_if_one_exists()
         {
             var addOnFile = _scenerio.GenerateAudioFile();
-            var expected = it.RebuildIndex().Concat(new[] { addOnFile });
+            var expected = it.RebuildIndex().Concat(new[] { addOnFile }).ToArray();
             it.WriteToIndex(addOnFile);
-            var actual = it.ReadIndex();
+            var actual = it.ReadIndex().ToArray();
             actual.Should().BeEquivalentTo(expected);
         }
     }
