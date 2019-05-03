@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "OdysseyDownloader": {
+      "commandName": "Project",
+      "commandLineArgs": "-c 3"
+    }
+  }
+}

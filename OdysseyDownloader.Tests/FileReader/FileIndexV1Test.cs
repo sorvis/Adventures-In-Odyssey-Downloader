@@ -90,7 +90,6 @@ namespace OdysseyDownloader.Tests.FileReader
         public void it_should_create_new_index_on_WriteToIndex_if_none_exists()
         {
             var expected = _scenerio.GenerateAudioFile();
-            expected.Date = default(DateTime); // v1 does not support storing the date
             expected.FileName = $"{expected.Number}#-{expected.Title}.mp3";
 
             it.WriteToIndex(expected);

@@ -4,42 +4,52 @@ using System.Text.RegularExpressions;
 
 namespace Odyssey_Downloader
 {
-    internal class GetFileInfo
+    public class GetFileInfo : IGetFileInfo
     {
-        private readonly string pageSource;
-        private readonly string fileUrl;
-        private string title;
-        private readonly string episodeNumber;
-        private readonly string fullTitle;
+        private string _title;
         private readonly string newFileName;
         private CGWebClient webClient = new CGWebClient();
 
-        public string GetPageSource()
+
+        public GetFileInfo(Config settings, int dayOffset)
         {
-            return pageSource;
+            var contentsPage = getPageSource(settings.Url);
+            var targetDate = returnDate(dayOffset, settings.DateFormat);
+            if (!contentsPage.Contains(targetDate))
+            {
+                return;
+            }
+
+            var contentsTargetSection = findElement(contentsPage, targetDate, "href=\"");
+            var targetUrl = "https" + findElement(contentsTargetSection.Replace(".html", ".html_END_"), "_END_", "https");
+
+            var targetPage = getPageSource(targetUrl);
+            FileUrl = findElement(targetPage, ".mp3", "encodedFileUrl: '") + ".mp3";
+            EpisodeNumber = findElement(targetPage, ",\r\n        encodedFileUrl", "episodeId: ");
+            _title = findElement(contentsTargetSection, "</div>\r\n                            <div class=\"date\">", "title dotdotdot\">");
+
+            FullTitle = "Episode " + EpisodeNumber + ": " + _title;
+            var fileName = EpisodeNumber + "#-" + _title.Replace(" ", "_") + settings.FileExtension;
+
+            var illegalInFileName = new Regex(string.Format("[{0}]", Regex.Escape(new string(Path.GetInvalidFileNameChars()))), RegexOptions.Compiled);
+            newFileName = illegalInFileName.Replace(fileName, "");
         }
 
-        public string GetFileUrl()
-        {
-            return fileUrl;
-        }
+        public string FileUrl { get; }
 
-        public string GetTitle()
-        {
-            return title;
-        }
 
-        public string GetEpisodeNumber()
-        {
-            return episodeNumber;
-        }
+        public string EpisodeNumber { get; }
 
-        public string GetFullTitle()
-        {
-            return fullTitle;
-        }
+        public string FullTitle { get; }
 
         public string FileName => filterOutInvalidFileNameChars(newFileName);
+
+        private static string ReverseString(string s)
+        {
+            char[] arr = s.ToCharArray();
+            Array.Reverse(arr);
+            return new string(arr);
+        }
 
         private static string filterOutInvalidFileNameChars(string fileName)
         {
@@ -48,9 +58,9 @@ namespace Odyssey_Downloader
                 return string.Empty;
             }
 
-            string invalidChars = System.Text.RegularExpressions.Regex.Escape(new string(System.IO.Path.GetInvalidFileNameChars()));
+            string invalidChars = Regex.Escape(new string(Path.GetInvalidFileNameChars()));
             string invalidReStr = string.Format(@"([{0}]*\.+$)|([{0}]+)", invalidChars);
-            return System.Text.RegularExpressions.Regex.Replace(fileName, invalidReStr, "_");
+            return Regex.Replace(fileName, invalidReStr, "_");
         }
 
         private string getPageSource(string url)
@@ -115,13 +125,6 @@ namespace Odyssey_Downloader
             Source = ReverseString(cutOffBeforeReversed); // reverse the URL back to normal
 
             return Source;
-        }
-
-        private static string ReverseString(string s)
-        {
-            char[] arr = s.ToCharArray();
-            Array.Reverse(arr);
-            return new string(arr);
         }
     }
 }

@@ -24,16 +24,17 @@ namespace Odyssey_Downloader
 
             // create or update index file
             var fileReaderFactory = new FileReaderFactory(settings);
-            IIndexReader setIndex = fileReaderFactory.Get();
+            IIndexReader indexReader = fileReaderFactory.Get();
 
             // create file downloader
-            ProcessFile downloadAndSave = new ProcessFile(settings);
+            ProcessFile downloadAndSave = new ProcessFile(settings, indexReader);
+            var multiDownloader = new MultiDownload(settings, downloadAndSave);
 
             //***********************************************************
 
             if (CommandLine["rebuild-index"] != null || CommandLine["build-index"] != null)
             {
-                setIndex.RebuildIndex();
+                indexReader.RebuildIndex();
             }
 
             if (CommandLine["defaults"] != null)
@@ -60,8 +61,7 @@ namespace Odyssey_Downloader
                 }
                 else if (Convert.ToInt16(CommandLine["c"]) > 1)
                 {
-                    MultiDownload download = new MultiDownload(settings, ref downloadAndSave,
-                        Convert.ToInt16(CommandLine["c"]));
+                    multiDownloader.Run(Convert.ToInt16(CommandLine["c"]));
                 }
                 else
                 {
@@ -72,13 +72,12 @@ namespace Odyssey_Downloader
             else if (CommandLine["all"] != null)
             {
                 // 35 does whole three weeks
-                MultiDownload download35 = new MultiDownload(settings, ref downloadAndSave, 35);
+                multiDownloader.Run(35);
             }
             else
             {
                 // normal mode
-                MultiDownload downloadNormal = new MultiDownload(settings, ref downloadAndSave,
-                    settings.NormalMode);
+                multiDownloader.Run(settings.NormalMode);
             }
         }
 

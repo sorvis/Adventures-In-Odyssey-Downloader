@@ -9,16 +9,18 @@ namespace Odyssey_Downloader
     {
         protected string fullPath;
         protected string indexFileName;
+        private readonly IIndexReader _indexReader;
 
-        public ProcessFile(Config settings)
+        public ProcessFile(Config settings, IIndexReader indexReader)
         {
             fullPath = settings.FullPathToFiles;
             indexFileName = settings.IndexFileName;
+            _indexReader = indexReader;
         }
 
-        public bool Download(GetFileInfo file)
+        public bool Download(IGetFileInfo file)
         {
-            if (checkFileList(file.GetFullTitle()))
+            if (checkFileList(file.FullTitle))
             {
                 Console.WriteLine("Skipping download already have file.");
                 return false;
@@ -31,8 +33,8 @@ namespace Odyssey_Downloader
             else
             {
                 string filePath = fullPath + file.FileName;
-                getFile(file.GetFileUrl(), filePath);
-                writeToIndex(file.GetFullTitle());
+                getFile(file.FileUrl, filePath);
+                writeToIndex(file.FullTitle);
                 return true;
             }
         }
@@ -51,7 +53,7 @@ namespace Odyssey_Downloader
             }
 
             // Read the file and display it line by line.
-            System.IO.StreamReader file = new System.IO.StreamReader(indexPath);
+            StreamReader file = new StreamReader(indexPath);
             while ((line = file.ReadLine()) != null)
             {
                 fileLines.Add(line);
@@ -85,7 +87,7 @@ namespace Odyssey_Downloader
             if (!File.Exists(fileName)) return false;
 
             // Read the file and display it line by line.
-            System.IO.StreamReader file = new System.IO.StreamReader(fileName);
+            StreamReader file = new StreamReader(fileName);
             while ((line = file.ReadLine()) != null)
             {
                 if (title == line)

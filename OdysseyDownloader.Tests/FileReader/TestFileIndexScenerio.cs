@@ -52,20 +52,24 @@ namespace OdysseyDownloader.Tests.FileReader
 
         internal IEnumerable<string> GetFormattedFileTimestamps()
         {
-            // todo get date time from files timestamp
-            throw new NotImplementedException();
+            return filesCreatedPath().Select(File.GetCreationTime).Select(x => x.ToString());
         }
 
         public IEnumerable<string> GetFileNamesCreated()
         {
-            return _filesCreated.Select(x => Path.GetFileName(x));
+            return _filesCreated.Select(Path.GetFileName);
+        }
+
+        private IEnumerable<string> filesCreatedPath()
+        {
+            return _filesCreated.Select(x => Path.Combine(_folderName, x));
         }
 
         public void Dispose()
         {
-            foreach (var file in _filesCreated)
+            foreach (var file in filesCreatedPath())
             {
-                File.Delete(Path.Combine(_folderName, file));
+                File.Delete(file);
             }
             _filesCreated.Clear();
             var indexFullFileName = Config.GetIndexFilePath();

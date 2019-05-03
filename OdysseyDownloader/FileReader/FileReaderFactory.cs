@@ -6,7 +6,7 @@ namespace OdysseyDownloader.FileReader
 {
     public class FileReaderFactory
     {
-        private readonly Logger _logger = NLog.LogManager.GetCurrentClassLogger();
+        private readonly Logger _logger = LogManager.GetCurrentClassLogger();
         private readonly FileIndexV1[] _readers;
 
         public FileReaderFactory(Config config)

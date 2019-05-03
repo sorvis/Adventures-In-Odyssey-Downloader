@@ -29,9 +29,9 @@ namespace OdysseyDownloader.FileReader
             List<AudioFile> audioFiles = new List<AudioFile>();
 
             List<string> titleList = new List<string>();
-            foreach (string item in getFileNamesInDir())
+            foreach (string file in getFileNamesInDir())
             {
-                var justFileName = Path.GetFileName(item);
+                var justFileName = Path.GetFileName(file);
                 var title = findElement(justFileName, _fileExtension, "#-").Replace("_", " ");
                 var episodeNumber = findElement(justFileName, "#-", "/");
                 var audioFile = new AudioFile
@@ -39,6 +39,7 @@ namespace OdysseyDownloader.FileReader
                     Title = title,
                     FileName = justFileName,
                     Number = episodeNumber,
+                    Date = File.GetCreationTime(file).ToString(),
                 };
                 audioFiles.Add(audioFile);
                 titleList.Add(formatIndexLine(audioFile));
@@ -50,7 +51,7 @@ namespace OdysseyDownloader.FileReader
 
         private string formatIndexLine(AudioFile file)
         {
-            return $"Episode {file.Number}: {file.Title}";
+            return $"Episode {file.Number}: {file.Title} Date: {file.Date}";
         }
 
         public bool IndexDetected()
@@ -72,17 +73,19 @@ namespace OdysseyDownloader.FileReader
         public IEnumerable<AudioFile> ReadIndex()
         {
             // format of lines look like this: "Episode {episodeNumber}: {title}"
-            var lines = File.ReadAllLines(_fullPathToIndex);
-            foreach(var line in lines)
+            foreach(var line in File.ReadAllLines(_fullPathToIndex))
             {
                 var stripEpisode = line.Replace("Episode ", string.Empty);
                 var splitOnColon = stripEpisode.Split(':', 2);
                 var episodeNumber = splitOnColon.First();
-                var title = splitOnColon.Skip(1).First().Trim();
+                var titleAndDate = splitOnColon.Skip(1).First().Trim().Split("Date: ", 2);
+                var title = titleAndDate.First().Trim();
+                var date = titleAndDate.Skip(1).FirstOrDefault().Trim();
                 yield return new AudioFile {
                     Number = episodeNumber,
                     Title = title,
                     FileName = $"{episodeNumber}#-{title.Replace(' ', '_')}{_fileExtension}",
+                    Date = date,
                 };
             }
         }
@@ -104,7 +107,7 @@ namespace OdysseyDownloader.FileReader
         {
             try
             {
-                System.IO.StreamReader file = new System.IO.StreamReader(_fullPathToIndex);
+                StreamReader file = new StreamReader(_fullPathToIndex);
                 file.Close();
             }
             catch
