@@ -85,7 +85,7 @@ namespace Odyssey_Downloader
             var targetPage = getPageSource(targetUrl);
             fileUrl = findElement(targetPage, ".mp3", "encodedFileUrl: '") + ".mp3";
             episodeNumber = findElement(targetPage, ",\r\n        encodedFileUrl", "episodeId: ");
-            title = findElement(contentsTargetSection, "</div>\r\n                            <div class=\"date\">", "title dotdotdot\">");
+            title = findElement(targetPage, "</title>", "<title>");
 
             fullTitle = "Episode " + episodeNumber + ": " + title;
             var fileName = episodeNumber + "#-" + title.Replace(" ", "_")+settings.FileExtension;
@@ -103,6 +103,7 @@ namespace Odyssey_Downloader
 
         private string findElement(string Source, string elementEnd, string elementStart)
         {
+            if(!Source.Contains(elementEnd) || !Source.Contains(elementStart)) return string.Empty;
             int extensionIndex = Source.IndexOf(elementEnd);
             var endCutOff = Source.Substring(0, extensionIndex); //cut off source after file
             var reversedEndCutOff = ReverseString(endCutOff); // reverse the source so that the file url is first

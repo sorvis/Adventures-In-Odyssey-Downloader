@@ -24,7 +24,8 @@ namespace Odyssey_Downloader
                 Console.WriteLine("Skipping download already have file.");
                 return false;
             }
-            if(string.IsNullOrEmpty(file.GetFileUrl()))
+            if(string.IsNullOrEmpty(file.GetFileUrl()) 
+                || file.GetFullTitle().Contains("Free Online Christian Ministry Radio Broadcasts"))
             {
                 return false;
             }
