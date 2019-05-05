@@ -85,7 +85,9 @@ namespace Odyssey_Downloader
             var targetPage = getPageSource(targetUrl);
             fileUrl = findElement(targetPage, ".mp3", "encodedFileUrl: '") + ".mp3";
             episodeNumber = findElement(targetPage, ",\r\n        encodedFileUrl", "episodeId: ");
-            title = findElement(targetPage, "</title>", "<title>");
+            title = findElement(targetPage, "</title>", "<title>").
+                Replace(" - Listen to Listen to Adventures in Odyssey from Focus on The Family Radio Online, ", "").
+                Replace(targetDate, "");
 
             fullTitle = "Episode " + episodeNumber + ": " + title;
             var fileName = episodeNumber + "#-" + title.Replace(" ", "_")+settings.FileExtension;
