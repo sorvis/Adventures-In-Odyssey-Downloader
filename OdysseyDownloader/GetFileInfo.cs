@@ -4,11 +4,11 @@ using System.Text.RegularExpressions;
 
 namespace Odyssey_Downloader
 {
-    public class GetFileInfo : IGetFileInfo
+    public class GetFileInfo : IFileInfo
     {
         private string _title;
-        private readonly string newFileName;
-        private CGWebClient webClient = new CGWebClient();
+        private readonly string _newFileName;
+        private CGWebClient _webClient = new CGWebClient();
 
 
         public GetFileInfo(Config settings, int dayOffset)
@@ -26,13 +26,15 @@ namespace Odyssey_Downloader
             var targetPage = getPageSource(targetUrl);
             FileUrl = findElement(targetPage, ".mp3", "encodedFileUrl: '") + ".mp3";
             EpisodeNumber = findElement(targetPage, ",\r\n        encodedFileUrl", "episodeId: ");
-            _title = findElement(contentsTargetSection, "</div>\r\n                            <div class=\"date\">", "title dotdotdot\">");
+            _title = findElement(targetPage, "</title>", "<title>").
+                Replace(" - Listen to Listen to Adventures in Odyssey from Focus on The Family Radio Online, ", "").
+                Replace(targetDate, "");
 
-            FullTitle = "Episode " + EpisodeNumber + ": " + _title;
+            Title = "Episode " + EpisodeNumber + ": " + _title;
             var fileName = EpisodeNumber + "#-" + _title.Replace(" ", "_") + settings.FileExtension;
 
             var illegalInFileName = new Regex(string.Format("[{0}]", Regex.Escape(new string(Path.GetInvalidFileNameChars()))), RegexOptions.Compiled);
-            newFileName = illegalInFileName.Replace(fileName, "");
+            _newFileName = illegalInFileName.Replace(fileName, "");
         }
 
         public string FileUrl { get; }
@@ -40,9 +42,9 @@ namespace Odyssey_Downloader
 
         public string EpisodeNumber { get; }
 
-        public string FullTitle { get; }
+        public string Title { get; }
 
-        public string FileName => filterOutInvalidFileNameChars(newFileName);
+        public string FileName => filterOutInvalidFileNameChars(_newFileName);
 
         private static string ReverseString(string s)
         {
@@ -69,8 +71,8 @@ namespace Odyssey_Downloader
             {
                 //System.Net.WebClient webClient = new System.Net.WebClient();
                 //webClient.Headers.Add ("user-agent", "Mozilla/4.0 (compatible; MSIE 6.0; Windows NT 5.2; .NET CLR 1.0.3705;)");
-                string strSource = webClient.DownloadString(url);
-                webClient.Dispose();
+                string strSource = _webClient.DownloadString(url);
+                _webClient.Dispose();
 
                 return strSource;
             }
@@ -80,33 +82,6 @@ namespace Odyssey_Downloader
                 return getPageSource(url);
             }
         }
-
-        public GetFileInfo(Config settings, int dayOffset)
-        {
-            var contentsPage = getPageSource(settings.Url);
-            var targetDate = returnDate(dayOffset, settings.DateFormat);
-            if (!contentsPage.Contains(targetDate))
-            {
-                return;
-            }
-
-            var contentsTargetSection = findElement(contentsPage, targetDate, "href=\"");
-            var targetUrl = "https" + findElement(contentsTargetSection.Replace(".html", ".html_END_"), "_END_", "https");
-
-            var targetPage = getPageSource(targetUrl);
-            fileUrl = findElement(targetPage, ".mp3", "encodedFileUrl: '") + ".mp3";
-            episodeNumber = findElement(targetPage, ",\r\n        encodedFileUrl", "episodeId: ");
-            title = findElement(targetPage, "</title>", "<title>").
-                Replace(" - Listen to Listen to Adventures in Odyssey from Focus on The Family Radio Online, ", "").
-                Replace(targetDate, "");
-
-            fullTitle = "Episode " + episodeNumber + ": " + title;
-            var fileName = episodeNumber + "#-" + title.Replace(" ", "_") + settings.FileExtension;
-
-            var illegalInFileName = new Regex(string.Format("[{0}]", Regex.Escape(new string(Path.GetInvalidFileNameChars()))), RegexOptions.Compiled);
-            newFileName = illegalInFileName.Replace(fileName, "");
-        }
-
         private string returnDate(int dayOffset, string dateFormat)
         {
             DateTime dt = DateTime.Today.AddDays(-dayOffset);

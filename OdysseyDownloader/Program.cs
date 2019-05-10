@@ -27,7 +27,7 @@ namespace Odyssey_Downloader
             IIndexReader indexReader = fileReaderFactory.Get();
 
             // create file downloader
-            ProcessFile downloadAndSave = new ProcessFile(settings, indexReader);
+            ProcessFile downloadAndSave = new ProcessFile(settings, indexReader, new Downloader());
             var multiDownloader = new MultiDownload(settings, downloadAndSave);
 
             //***********************************************************

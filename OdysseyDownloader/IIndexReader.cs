@@ -13,4 +13,11 @@ namespace Odyssey_Downloader
 
         bool IndexDetected();
     }
+    public static class IndexReaderExtensions
+    {
+        public static bool HasTitle(this IIndexReader reader, string title)
+        {
+            return false;
+        }
+    }
 }

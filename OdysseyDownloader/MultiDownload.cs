@@ -22,7 +22,7 @@ namespace Odyssey_Downloader
                 GetFileInfo currentFile = new GetFileInfo(_settings, counter);
                 if (currentFile.FileUrl!= "" && counter < limit)
                 {
-                    Console.WriteLine("Downloading: " + currentFile.FullTitle);
+                    Console.WriteLine("Downloading: " + currentFile.Title);
                     _downloadAndSave.Download(currentFile);
                 }
                 else

@@ -1,10 +1,10 @@
 ﻿namespace Odyssey_Downloader
 {
-    public interface IGetFileInfo
+    public interface IFileInfo
     {
         string EpisodeNumber { get; }
         string FileName { get; }
         string FileUrl { get; }
-        string FullTitle { get; }
+        string Title { get; }
     }
 }
