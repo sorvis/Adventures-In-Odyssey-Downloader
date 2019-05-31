@@ -4,3 +4,4 @@
 obj/
 bin/
 TestResults/
+.vscode/
