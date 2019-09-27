@@ -7,6 +7,7 @@ namespace Odyssey_Downloader
     {
         private static void Main(string[] args)
         {
+            // TODO perhaps we could switch over to commandline parser
             // get any arguments passed in at the commandline
             Arguments CommandLine = new Arguments(args);
 
