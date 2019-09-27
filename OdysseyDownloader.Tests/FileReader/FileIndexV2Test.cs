@@ -1,7 +1,6 @@
 ﻿using Adventures_In_Odyssey_Downloader.FileReaderV2;
 using FluentAssertions;
 using Newtonsoft.Json;
-using Odyssey_Downloader.Model;
 using System;
 using System.IO;
 using System.Linq;

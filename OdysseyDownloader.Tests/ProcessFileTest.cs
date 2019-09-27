@@ -1,10 +1,9 @@
-﻿using Moq;
+﻿using FluentAssertions;
+using Moq;
 using Odyssey_Downloader;
 using Odyssey_Downloader.Model;
-using SimpleFixture;
 using System;
-using System.Collections.Generic;
-using System.Text;
+using System.IO;
 using Xunit;
 
 namespace OdysseyDownloader.Tests
@@ -24,7 +23,7 @@ namespace OdysseyDownloader.Tests
             _fileInfoMock.SetupGet(x => x.FileUrl).Returns(Guid.NewGuid().ToString());
             _fileInfoMock.SetupGet(x => x.FileName).Returns(Guid.NewGuid().ToString());
 
-            _config = new Config();
+            _config = new Config { FullPathToFiles = "." };
             _indexReaderMock = new Mock<IIndexReader>();
             _downloaderMock = new Mock<IDownloader>();
             it = new ProcessFile(_config, _indexReaderMock.Object, _downloaderMock.Object);
@@ -34,14 +33,29 @@ namespace OdysseyDownloader.Tests
         public void it_should_download_file()
         {
             it.Download(_fileInfoMock.Object);
-            _downloaderMock.Verify(x => x.GetFile(_fileInfoMock.Object.FileUrl, _fileInfoMock.Object.FileName));
+            _downloaderMock.Verify(x => x.GetFile(Path.Combine(_config.FullPathToFiles, _fileInfoMock.Object.FileUrl),
+                _fileInfoMock.Object.FileName));
         }
 
         [Fact]
         public void it_should_write_file_to_index()
         {
             it.Download(_fileInfoMock.Object);
-            _indexReaderMock.Verify(x => x.WriteToIndex(It.Is<AudioFile>(a => a.Title == _fileInfoMock.Object.Title)), Times.Once);
+            _indexReaderMock.Verify(x => x.WriteToIndex(It.Is<AudioFile>(a =>
+                a.Title == _fileInfoMock.Object.Title &&
+                a.FileName == _fileInfoMock.Object.FileName
+                )), Times.Once);
+        }
+
+        [Fact]
+        public void it_should_skip_downloading_if_file_already_exists()
+        {
+            _indexReaderMock.Setup(x => x.ReadIndex()).Returns(new[] {
+                new AudioFile { Title = _fileInfoMock.Object.Title } });
+            var result = it.Download(_fileInfoMock.Object);
+            result.Should().BeFalse();
+            _downloaderMock.Verify(x => x.GetFile(_fileInfoMock.Object.FileUrl, _fileInfoMock.Object.FileName),
+                Times.Never);
         }
     }
 }

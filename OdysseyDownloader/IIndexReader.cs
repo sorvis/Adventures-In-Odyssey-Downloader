@@ -1,5 +1,6 @@
 using Odyssey_Downloader.Model;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace Odyssey_Downloader
 {
@@ -17,7 +18,9 @@ namespace Odyssey_Downloader
     {
         public static bool HasTitle(this IIndexReader reader, string title)
         {
-            return false;
+            var items = reader.ReadIndex();
+            var findTitle = items.Where(x => x.Title == title);
+            return findTitle.Any();
         }
     }
 }

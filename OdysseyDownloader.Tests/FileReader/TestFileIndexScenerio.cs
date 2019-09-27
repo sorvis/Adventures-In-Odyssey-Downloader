@@ -100,7 +100,8 @@ namespace OdysseyDownloader.Tests.FileReader
 
         internal AudioFile GenerateAudioFile()
         {
-            var file = _fixture.Generate<AudioFile>();
+            var file = new AudioFile();
+            _fixture.Populate(file);
             file.Number = _fixture.Generate<int>().ToString();
             file.FileName = $"{file.Number}#-{file.Title}.mp3";
             return file;

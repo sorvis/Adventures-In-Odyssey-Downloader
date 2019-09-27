@@ -85,7 +85,7 @@ namespace Odyssey_Downloader
         private string returnDate(int dayOffset, string dateFormat)
         {
             DateTime dt = DateTime.Today.AddDays(-dayOffset);
-            string date = string.Format(dateFormat, dt);
+            string date = dt.ToString(dateFormat);
             return date;
         }
 

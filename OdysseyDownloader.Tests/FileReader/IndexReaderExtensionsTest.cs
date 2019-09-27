@@ -3,8 +3,6 @@ using Moq;
 using Odyssey_Downloader;
 using Odyssey_Downloader.Model;
 using System;
-using System.Collections.Generic;
-using System.Text;
 using Xunit;
 
 namespace OdysseyDownloader.Tests.FileReader

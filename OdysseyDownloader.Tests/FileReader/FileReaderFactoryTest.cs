@@ -1,8 +1,6 @@
 ﻿using FluentAssertions;
 using OdysseyDownloader.FileReader;
 using System;
-using System.Collections.Generic;
-using System.Text;
 using Xunit;
 
 namespace OdysseyDownloader.Tests.FileReader

@@ -5,7 +5,7 @@ namespace Odyssey_Downloader
 {
     public class Config
     {
-        protected string pageUrl;
+        protected string PageUrl;
         protected string titleStart;
         protected string titleEnd;
         protected string dateFormat;
@@ -33,7 +33,7 @@ namespace Odyssey_Downloader
             return FullPathToFiles + IndexFileName;
         }
 
-        public string Url => pageUrl;
+        public string Url => PageUrl;
 
         public string FileExtension { get; private set; } = ".mp3";
 
@@ -87,7 +87,7 @@ namespace Odyssey_Downloader
             switch (element)
             {
                 case "sourceURL":
-                    pageUrl = data;
+                    PageUrl = data;
                     break;
 
                 case "dateFormat":
@@ -149,7 +149,7 @@ namespace Odyssey_Downloader
 
             // Write next element
             textWriter.WriteStartElement("sourceURL");
-            textWriter.WriteString(pageUrl);
+            textWriter.WriteString(PageUrl);
             textWriter.WriteEndElement();
 
             // Write next element
@@ -198,8 +198,8 @@ namespace Odyssey_Downloader
 
         public void setDefaults()
         {
-            pageUrl = "https://www.oneplace.com/ministries/adventures-in-odyssey/listen/";
-            dateFormat = "{0:MMMM d, yyyy}";
+            PageUrl = "https://www.focusonthefamily.com/media/adventures-in-odyssey##latest-episode";
+            dateFormat = "MM/dd/yyyy";
             FileExtension = ".mp3";
             titleStart = "<div class=\"title\" title=\"\">";
             titleEnd = "<label class=\"duration\">";
