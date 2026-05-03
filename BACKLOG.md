@@ -104,7 +104,66 @@ oneplace.com's API:
 
 # Bugs
 
+- **Play button is broken in v0.1.6.** Reported after install. Worked
+  in earlier releases. Most likely culprit is the P2.4 CacheDataSource
+  wiring — `OdysseyPlaybackService` is now `@AndroidEntryPoint` with
+  an injected `MediaCache`, and a Hilt-graph or SimpleCache-init failure
+  would silently prevent the service from starting (and `MediaController`
+  binding would hang). Diagnose with `adb logcat` filtering for
+  `odyssey|exoplayer|hilt|fatalexception`. If P2.4 is at fault, revert
+  the `setMediaSourceFactory` + the `@Inject MediaCache` until we add
+  a service-construction Robolectric test.
+
 - **Settings → retention field looks broken.** The control for
   "downloaded-episode retention" doesn't appear to behave correctly in
   the UI. Need to reproduce, narrow down (is it the editor, the saved
   value, or the worker that uses it?), and fix.
+
+---
+
+## Multi-show plugin abstraction (AIO + Your Story Hour + …)
+
+The whole app is hardcoded for Adventures in Odyssey today: the
+oneplace.com scraper, the `Adventures in Odyssey` strings in
+`MediaMetadata`, the single-show retention model. We'll want to add
+**Your Story Hour** next, and possibly more shows after that, so a
+plugin-style abstraction makes sense before the second integration.
+
+**Sketch:**
+
+1. Define a `ShowProvider` interface with the surface of `OneplaceClient`
+   plus a few static fields:
+   ```kotlin
+   interface ShowProvider {
+       val showId: String          // "aio", "ysh"
+       val displayName: String     // "Adventures in Odyssey"
+       val artistName: String      // for MediaMetadata
+       suspend fun latestEpisodeId(): Long?
+       suspend fun newSince(lastSeen: Long, maxFetch: Int): List<ProviderEpisode>
+       fun parseAirDate(raw: String?): Long  // each show may format differently
+   }
+   ```
+2. `LocalEpisodeEntity` gains a `showId: String` column (Room migration
+   v2→v3). All queries filter by active showId or show all when "All"
+   is selected.
+3. Each provider lives in its own package (`com.odyssey.show.aio`,
+   `com.odyssey.show.ysh`) with its own scrape model, fixture tests,
+   and any show-specific quirks.
+4. Hilt provides a `Map<String, ShowProvider>` (multibinding). Workers
+   iterate providers; UI shows a show-picker.
+5. Settings: per-show NAS path, per-show retention, per-show
+   allow-metered-downloads. Or a "global" toggle that applies to all.
+
+**Where Your Story Hour data lives:** TBD — first step is to scrape /
+inspect the YSH site/app and find a stable JSON or HTML endpoint, same
+exercise as we did for oneplace.com.
+
+**Why "plugin" but not actual runtime-loaded plugins:** for a personal
+app with two shows, a sealed interface + per-package implementation is
+plenty. Real OSGi-style plugins are overkill and bring classpath
+isolation problems we don't need.
+
+**Naming:** if we go this route, the project name "Adventures in
+Odyssey Downloader" becomes a misnomer. Worth renaming the repo or at
+least the app/applicationId. Lower priority than the abstraction
+itself; we can ship multi-show under the current name first.
