@@ -22,6 +22,7 @@ import com.odyssey.data.local.LocalEpisodeEntity
 import com.odyssey.data.local.PlaybackDao
 import com.odyssey.debug.DebugLogger
 import com.odyssey.download.DownloadProgressTracker
+import com.odyssey.work.WorkScheduler
 import com.odyssey.player.EpisodePlayer
 import com.odyssey.player.PlaySource
 import com.odyssey.player.playSourceFor
@@ -46,6 +47,7 @@ class DownloadedVm @Inject constructor(
     private val episodes: EpisodeDao,
     val playback: PlaybackDao,
     private val player: EpisodePlayer,
+    private val scheduler: WorkScheduler,
     private val downloadProgress: DownloadProgressTracker,
 ) : ViewModel() {
 
@@ -78,6 +80,21 @@ class DownloadedVm @Inject constructor(
             } catch (t: Throwable) {
                 DebugLogger.e("DownloadedVm", "play(${ep.episodeId}) — dispatch threw", t)
             }
+        }
+    }
+
+    /**
+     * Re-enqueue a download. Library rows are by definition already
+     * downloaded; this only matters in the rare race where a row is
+     * shown stale (filePath cleared between observation and tap).
+     */
+    fun download(ep: LocalEpisodeEntity) {
+        if (ep.filePath != null) return
+        DebugLogger.i("DownloadedVm", "download(${ep.episodeId}) — enqueueing")
+        viewModelScope.launch {
+            // No SettingsRepo dep here — Library tab keeps a slim VM.
+            // Default to allowMetered=false; user can flip it in Recent.
+            scheduler.enqueueDownload(ep.episodeId, allowMetered = false)
         }
     }
 
@@ -143,6 +160,7 @@ fun DownloadedScreen(vm: DownloadedVm = hiltViewModel()) {
                         },
                         onPlay = { vm.play(ep) },
                         onDelete = { vm.delete(ep) },
+                        onDownload = { vm.download(ep) },
                     )
                 }
             }

@@ -139,6 +139,90 @@ class EpisodeRowTest {
         assertTrue(played == 0)
     }
 
+    // ---- Download button (manual re-download feature) -----------------
+
+    @Test
+    fun `download button is visible on streamable rows when handler is wired`() {
+        composeRule.setContent {
+            EpisodeRow(
+                ep = episode(filePath = null),
+                played = false,
+                expanded = true,
+                onToggleExpand = {},
+                onPlay = {},
+                onDownload = {},
+            )
+        }
+        composeRule.onNodeWithTag("episode-row-download-button").assertIsDisplayed()
+    }
+
+    @Test
+    fun `download button is hidden when episode is already downloaded`() {
+        composeRule.setContent {
+            EpisodeRow(
+                ep = episode(filePath = "/data/odyssey/123.mp3"),
+                played = false,
+                expanded = true,
+                onToggleExpand = {},
+                onPlay = {},
+                onDownload = {},
+            )
+        }
+        composeRule.onNodeWithTag("episode-row-download-button").assertDoesNotExist()
+    }
+
+    @Test
+    fun `download button is hidden when no onDownload handler is provided`() {
+        composeRule.setContent {
+            EpisodeRow(
+                ep = episode(filePath = null),
+                played = false,
+                expanded = true,
+                onToggleExpand = {},
+                onPlay = {},
+                // onDownload intentionally omitted
+            )
+        }
+        composeRule.onNodeWithTag("episode-row-download-button").assertDoesNotExist()
+    }
+
+    @Test
+    fun `download button is hidden while a download is already in flight`() {
+        composeRule.setContent {
+            EpisodeRow(
+                ep = episode(filePath = null),
+                played = false,
+                expanded = true,
+                onToggleExpand = {},
+                onPlay = {},
+                onDownload = {},
+                downloadProgress = DownloadProgressEntry(bytesRead = 100, totalBytes = 1000),
+            )
+        }
+        // Don't offer a duplicate download trigger — progress bar already
+        // signals that a worker is active.
+        composeRule.onNodeWithTag("episode-row-download-button").assertDoesNotExist()
+    }
+
+    @Test
+    fun `tapping the download button invokes onDownload and not onPlay`() {
+        var played = 0
+        var downloaded = 0
+        composeRule.setContent {
+            EpisodeRow(
+                ep = episode(filePath = null),
+                played = false,
+                expanded = true,
+                onToggleExpand = {},
+                onPlay = { played++ },
+                onDownload = { downloaded++ },
+            )
+        }
+        composeRule.onNodeWithTag("episode-row-download-button").performClick()
+        assertTrue("onDownload should fire", downloaded == 1)
+        assertTrue("onPlay should not fire from a download tap", played == 0)
+    }
+
     // ---- Delete button (manual delete-download feature) ---------------
 
     @Test

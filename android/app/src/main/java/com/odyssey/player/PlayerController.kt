@@ -78,6 +78,18 @@ class PlayerController @Inject constructor(
             DebugLogger.w("PlayerController", "playLocal called with null filePath — bailing")
             return
         }
+        when (decidePlayAction(c.currentMediaItem?.mediaId, c.isPlaying, ep.episodeId.toString())) {
+            PlayAction.NoOp -> {
+                DebugLogger.d("PlayerController", "playLocal — already playing ${ep.episodeId}, no-op")
+                return
+            }
+            PlayAction.Resume -> {
+                DebugLogger.d("PlayerController", "playLocal — resuming ${ep.episodeId}")
+                c.playWhenReady = true
+                return
+            }
+            PlayAction.LoadFresh -> Unit
+        }
         // Diagnostic: ExoPlayer's UnrecognizedInputFormatException points at
         // the file content not matching any known media format (HTML error
         // page, truncated download, mangled resume-append). First 64 bytes
@@ -132,6 +144,18 @@ class PlayerController @Inject constructor(
         } catch (t: Throwable) {
             DebugLogger.e("PlayerController", "playStream — connect() threw", t)
             return
+        }
+        when (decidePlayAction(c.currentMediaItem?.mediaId, c.isPlaying, episodeId.toString())) {
+            PlayAction.NoOp -> {
+                DebugLogger.d("PlayerController", "playStream — already playing $episodeId, no-op")
+                return
+            }
+            PlayAction.Resume -> {
+                DebugLogger.d("PlayerController", "playStream — resuming $episodeId")
+                c.playWhenReady = true
+                return
+            }
+            PlayAction.LoadFresh -> Unit
         }
         val item = MediaItem.Builder()
             .setMediaId(episodeId.toString())

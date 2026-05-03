@@ -5,8 +5,10 @@ import com.odyssey.data.local.EpisodeDao
 import com.odyssey.data.local.LocalEpisodeEntity
 import com.odyssey.data.local.PlaybackDao
 import com.odyssey.data.local.PlaybackPositionEntity
+import androidx.test.core.app.ApplicationProvider
 import com.odyssey.download.DownloadProgressTracker
 import com.odyssey.player.EpisodePlayer
+import com.odyssey.work.WorkScheduler
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -42,7 +44,7 @@ class DownloadedVmTest {
     @Test
     fun `play(downloaded) calls Player playLocal`() = runTest {
         val fakePlayer = FakeEpisodePlayer()
-        val vm = DownloadedVm(NoopEpisodeDao(), NoopPlaybackDao(), fakePlayer, DownloadProgressTracker())
+        val vm = DownloadedVm(NoopEpisodeDao(), NoopPlaybackDao(), fakePlayer, WorkScheduler(ApplicationProvider.getApplicationContext()), DownloadProgressTracker())
 
         val ep = makeEp(filePath = "/data/odyssey/123.mp3")
         vm.play(ep)
@@ -55,7 +57,7 @@ class DownloadedVmTest {
     @Test
     fun `play(stale row with null filePath) falls back to playStream`() = runTest {
         val fakePlayer = FakeEpisodePlayer()
-        val vm = DownloadedVm(NoopEpisodeDao(), NoopPlaybackDao(), fakePlayer, DownloadProgressTracker())
+        val vm = DownloadedVm(NoopEpisodeDao(), NoopPlaybackDao(), fakePlayer, WorkScheduler(ApplicationProvider.getApplicationContext()), DownloadProgressTracker())
 
         // RetentionWorker may have nulled out filePath after the row
         // was observed but before the tap arrived. Dispatching to
@@ -70,7 +72,7 @@ class DownloadedVmTest {
     @Test
     fun `play swallows exceptions thrown by Player`() = runTest {
         val fakePlayer = FakeEpisodePlayer(throwOnLocal = true)
-        val vm = DownloadedVm(NoopEpisodeDao(), NoopPlaybackDao(), fakePlayer, DownloadProgressTracker())
+        val vm = DownloadedVm(NoopEpisodeDao(), NoopPlaybackDao(), fakePlayer, WorkScheduler(ApplicationProvider.getApplicationContext()), DownloadProgressTracker())
 
         // Must not propagate — the user tapping play shouldn't crash.
         vm.play(makeEp(filePath = "/data/odyssey/123.mp3"))

@@ -129,6 +129,21 @@ class RecentVm @Inject constructor(
     }
 
     /**
+     * Re-enqueue a download for an episode that has no local file yet
+     * (after a manual delete, or for an episode that was scraped but
+     * never downloaded). Streaming alone doesn't create a downloaded
+     * file, so this is the explicit "save for offline" trigger.
+     */
+    fun download(ep: LocalEpisodeEntity) {
+        if (ep.filePath != null) return
+        DebugLogger.i("RecentVm", "download(${ep.episodeId}) — enqueueing")
+        viewModelScope.launch {
+            val allowMetered = settings.flow.first().allowMeteredDownloads
+            scheduler.enqueueDownload(ep.episodeId, allowMetered = allowMetered)
+        }
+    }
+
+    /**
      * Delete the local copy of an episode. Row falls back to streamable
      * (filePath becomes null in DB); on-disk file is removed.
      */
@@ -247,6 +262,7 @@ fun RecentScreen(
                         },
                         onPlay = { vm.play(ep) },
                         onDelete = { vm.delete(ep) },
+                        onDownload = { vm.download(ep) },
                     )
                 }
             }
@@ -262,6 +278,7 @@ internal fun EpisodeRow(
     onToggleExpand: () -> Unit,
     onPlay: () -> Unit,
     onDelete: (() -> Unit)? = null,
+    onDownload: (() -> Unit)? = null,
     downloadProgress: DownloadProgressEntry? = null,
 ) {
     Column {
@@ -387,6 +404,19 @@ internal fun EpisodeRow(
                             modifier = Modifier.testTag("episode-row-delete-button"),
                         ) {
                             Text("Delete download")
+                        }
+                    }
+                    // Download offered only on streamable rows (no local
+                    // file yet) AND with a download handler wired. Lets
+                    // users re-download an episode they previously deleted,
+                    // or pin a streamable row for offline.
+                    if (ep.filePath == null && onDownload != null && downloadProgress == null) {
+                        Spacer(Modifier.width(8.dp))
+                        OutlinedButton(
+                            onClick = onDownload,
+                            modifier = Modifier.testTag("episode-row-download-button"),
+                        ) {
+                            Text("Download for offline")
                         }
                     }
                 }
