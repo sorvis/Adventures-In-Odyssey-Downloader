@@ -1,0 +1,12 @@
+services:
+  archive:
+    build: .
+    container_name: odyssey-archive
+    restart: unless-stopped
+    environment:
+      ODYSSEY_AUTH_TOKEN: ${ODYSSEY_AUTH_TOKEN:?set ODYSSEY_AUTH_TOKEN in .env}
+      ODYSSEY_DATA_DIR: /data
+    volumes:
+      - /data:/data
+    ports:
+      - "${BIND_IP:-0.0.0.0}:8088:8088"
