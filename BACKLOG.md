@@ -36,6 +36,27 @@ to existing screens, and the NAS tab keeps doing one specific thing.
 
 ---
 
+## Canonical AIO episode number (#657, etc.)
+
+oneplace.com's API exposes only its CMS-internal `episodeId` (~1.27M
+range — e.g. `1278294`). The CANONICAL Adventures in Odyssey episode
+number — what listeners reference, what the official site shows next
+to the title — is different. Verified: app.adventuresinodyssey.com
+displays `#657: Clutter` for what oneplace calls episodeId 1278294.
+
+The CMS id is *useful* as a stable foreign key but should never be
+shown to users as "the episode number." v0.1.13 briefly rendered it
+as `#1278294` in the row headline; v0.1.14 removed that — the row
+title now stands alone until we have the real number.
+
+**Where the real number comes from:** the AIO-app endpoints below
+expose canonical episode/album numbering. Schema TBD until we capture
+fixtures. Once captured, add `aioEpisodeNumber: Int?` to
+`LocalEpisodeEntity` (Room migration) and render it in `EpisodeRow`'s
+headline as `#<num> <title>` matching the official-site format.
+
+---
+
 ## Better data sources for artwork + descriptions
 
 Two new endpoints from the AIO mobile-web app that are richer than

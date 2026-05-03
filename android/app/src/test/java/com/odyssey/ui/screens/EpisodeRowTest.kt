@@ -368,7 +368,12 @@ class EpisodeRowTest {
     }
 
     @Test
-    fun `every row renders the episode number next to the title`() {
+    fun `row does NOT render the oneplace CMS id as an episode number`() {
+        // Regression lock: oneplace's episodeId is a CMS-internal id
+        // (e.g. 1278383) NOT the canonical AIO episode number (e.g. #657
+        // for "Clutter"). Showing the CMS id is misleading. The real
+        // number must come from app.adventuresinodyssey.com — see
+        // BACKLOG.md. Until that's wired, headline is title-only.
         composeRule.setContent {
             EpisodeRow(
                 ep = episode().copy(episodeId = 1278383L),
@@ -378,9 +383,8 @@ class EpisodeRowTest {
                 onPlay = {},
             )
         }
-        composeRule.onNodeWithTag("episode-row-number", useUnmergedTree = true).assertExists()
-        // Format is "#<id>" — locks the user-visible string contract.
-        composeRule.onNodeWithText("#1278383", useUnmergedTree = true).assertExists()
+        composeRule.onNodeWithTag("episode-row-number", useUnmergedTree = true).assertDoesNotExist()
+        composeRule.onNodeWithText("#1278383", useUnmergedTree = true).assertDoesNotExist()
     }
 
     @Test

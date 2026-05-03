@@ -298,21 +298,15 @@ internal fun EpisodeRow(
                         .testTag("episode-row-thumbnail"),
                 )
             },
-            headlineContent = {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = ep.title,
-                        modifier = Modifier.weight(1f, fill = false),
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        text = "#${ep.episodeId}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.testTag("episode-row-number"),
-                    )
-                }
-            },
+            // Headline is just the title for now — we used to render
+            // "#${ep.episodeId}" but that's the oneplace.com CMS id
+            // (~1.27M), NOT the canonical AIO album/episode number
+            // (e.g. "#657 Clutter"). The real number is only available
+            // from app.adventuresinodyssey.com — see BACKLOG.md ("Better
+            // data sources for artwork + descriptions") for the plan to
+            // pull it. Until then, hide the misleading id rather than
+            // show a meaningless 7-digit number next to the title.
+            headlineContent = { Text(ep.title) },
             supportingContent = {
                 Column {
                     Text(
