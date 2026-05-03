@@ -118,7 +118,8 @@ kotlinc \
   android/app/src/main/java/com/odyssey/player/PlaybackFormat.kt \
   android/app/src/main/java/com/odyssey/player/Mp3Validation.kt \
   android/app/src/main/java/com/odyssey/ui/screens/RecentListing.kt \
-  android/app/src/main/java/com/odyssey/debug/DebugLog.kt
+  android/app/src/main/java/com/odyssey/debug/DebugLog.kt \
+  android/app/src/main/java/com/odyssey/download/DownloadProgress.kt
 
 step "Compiling test sources"
 kotlinc \
@@ -131,7 +132,8 @@ kotlinc \
   android/app/src/test/java/com/odyssey/player/PlaybackFormatTest.kt \
   android/app/src/test/java/com/odyssey/player/Mp3ValidationTest.kt \
   android/app/src/test/java/com/odyssey/ui/screens/RecentListingTest.kt \
-  android/app/src/test/java/com/odyssey/debug/DebugLogTest.kt
+  android/app/src/test/java/com/odyssey/debug/DebugLogTest.kt \
+  android/app/src/test/java/com/odyssey/download/DownloadProgressTest.kt
 
 # Test resources need to live on the runtime classpath for getResource() to find them.
 cp -r android/app/src/test/resources/* "$BUILD/test/" 2>/dev/null || true
@@ -157,7 +159,8 @@ java \
   com.odyssey.player.PlaybackFormatTest \
   com.odyssey.player.Mp3ValidationTest \
   com.odyssey.ui.screens.RecentListingTest \
-  com.odyssey.debug.DebugLogTest
+  com.odyssey.debug.DebugLogTest \
+  com.odyssey.download.DownloadProgressTest
 
 # ---------- 6. Coverage report ----------
 step "Generating JaCoCo report"

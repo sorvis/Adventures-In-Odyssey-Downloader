@@ -28,6 +28,12 @@ class EpisodeDownloader @Inject constructor(
      * Download the URL to `out`, resuming from `out.length()` if it already
      * exists (server must honor Range: bytes=N-). Returns final byte length.
      *
+     * [onProgress] is called periodically (throttled to ~10 Hz) with the
+     * current `bytesRead` (cumulative, including any prior partial bytes
+     * on disk) and `totalBytes` (the full expected size — partial +
+     * Content-Length when resuming, or just Content-Length on a fresh 200).
+     * Pass a no-op for callers that don't need progress.
+     *
      * Resume gotcha: opening a FileOutputStream truncates the file to 0
      * bytes; seeking past EOF then writing causes the OS to fill the gap
      * with zeros, producing a final file of correct size but with the
@@ -35,7 +41,11 @@ class EpisodeDownloader @Inject constructor(
      * find ID3 / frame sync and rejects the file. Use append mode
      * (which never truncates and writes at current EOF) instead.
      */
-    fun download(url: String, out: File): Long {
+    fun download(
+        url: String,
+        out: File,
+        onProgress: (bytesRead: Long, totalBytes: Long) -> Unit = { _, _ -> },
+    ): Long {
         val partial = out.length()
         val req = Request.Builder()
             .url(url)
@@ -50,10 +60,41 @@ class EpisodeDownloader @Inject constructor(
             // whole file again (200) — we want a fresh write.
             val append = resp.code == 206 && partial > 0
             out.parentFile?.mkdirs()
+            val body = resp.body ?: error("empty body for $url")
+            val bodyLen = body.contentLength()  // -1 if server didn't send it
+            // For 206 Partial Content the body length is just the rest;
+            // total file size = bytes already on disk + the rest.
+            val total = when {
+                bodyLen < 0 -> -1L
+                append -> partial + bodyLen
+                else -> bodyLen
+            }
             val sink = out.sink(append = append).buffer()
-            sink.use { s -> resp.body?.source()?.let { src -> s.writeAll(src) } }
+            sink.use { s ->
+                val src = body.source()
+                var bytesRead = if (append) partial else 0L
+                var lastEmitMs = 0L
+                onProgress(bytesRead, total)
+                while (true) {
+                    val n = src.read(s.buffer, CHUNK_BYTES)
+                    if (n == -1L) break
+                    s.emitCompleteSegments()
+                    bytesRead += n
+                    val now = System.currentTimeMillis()
+                    if (now - lastEmitMs >= MIN_EMIT_INTERVAL_MS) {
+                        onProgress(bytesRead, total)
+                        lastEmitMs = now
+                    }
+                }
+                onProgress(bytesRead, total)  // final tick at 100%
+            }
         }
         return out.length()
+    }
+
+    private companion object {
+        const val CHUNK_BYTES = 64L * 1024            // 64 KB per read
+        const val MIN_EMIT_INTERVAL_MS = 100L          // throttle to ~10 Hz
     }
 
     fun delete(file: File) { file.delete() }

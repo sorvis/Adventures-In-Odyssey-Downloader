@@ -6,6 +6,7 @@ import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.odyssey.app.SettingsRepo
 import com.odyssey.data.local.EpisodeDao
+import com.odyssey.download.DownloadProgressTracker
 import com.odyssey.download.EpisodeDownloader
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
@@ -21,6 +22,7 @@ class DownloadEpisodeWorker @AssistedInject constructor(
     private val downloader: EpisodeDownloader,
     private val scheduler: WorkScheduler,
     private val settings: SettingsRepo,
+    private val progressTracker: DownloadProgressTracker,
 ) : CoroutineWorker(ctx, params) {
 
     override suspend fun doWork(): Result {
@@ -31,11 +33,21 @@ class DownloadEpisodeWorker @AssistedInject constructor(
 
         return runCatching {
             val out = downloader.fileFor(ep.episodeId, ep.title)
-            val size = withContext(Dispatchers.IO) { downloader.download(ep.downloadUrl, out) }
+            val size = withContext(Dispatchers.IO) {
+                downloader.download(ep.downloadUrl, out) { bytesRead, totalBytes ->
+                    progressTracker.update(ep.episodeId, bytesRead, totalBytes)
+                }
+            }
+            progressTracker.clear(ep.episodeId)
             episodes.markDownloaded(ep.episodeId, out.absolutePath, size, System.currentTimeMillis())
             scheduler.enqueueArchive(ep.episodeId, allowMetered = settings.flow.first().allowMeteredDownloads)
             Result.success()
-        }.getOrElse { Result.retry() }
+        }.getOrElse {
+            // Worker may retry; wipe the progress entry so the row's bar
+            // doesn't sit at a stale percent until the next run picks up.
+            progressTracker.clear(ep.episodeId)
+            Result.retry()
+        }
     }
 
     companion object { const val KEY_EPISODE_ID = "episodeId" }

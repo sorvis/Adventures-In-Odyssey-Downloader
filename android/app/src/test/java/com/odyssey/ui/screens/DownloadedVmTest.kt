@@ -5,6 +5,7 @@ import com.odyssey.data.local.EpisodeDao
 import com.odyssey.data.local.LocalEpisodeEntity
 import com.odyssey.data.local.PlaybackDao
 import com.odyssey.data.local.PlaybackPositionEntity
+import com.odyssey.download.DownloadProgressTracker
 import com.odyssey.player.EpisodePlayer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -41,7 +42,7 @@ class DownloadedVmTest {
     @Test
     fun `play(downloaded) calls Player playLocal`() = runTest {
         val fakePlayer = FakeEpisodePlayer()
-        val vm = DownloadedVm(NoopEpisodeDao(), NoopPlaybackDao(), fakePlayer)
+        val vm = DownloadedVm(NoopEpisodeDao(), NoopPlaybackDao(), fakePlayer, DownloadProgressTracker())
 
         val ep = makeEp(filePath = "/data/odyssey/123.mp3")
         vm.play(ep)
@@ -54,7 +55,7 @@ class DownloadedVmTest {
     @Test
     fun `play(stale row with null filePath) falls back to playStream`() = runTest {
         val fakePlayer = FakeEpisodePlayer()
-        val vm = DownloadedVm(NoopEpisodeDao(), NoopPlaybackDao(), fakePlayer)
+        val vm = DownloadedVm(NoopEpisodeDao(), NoopPlaybackDao(), fakePlayer, DownloadProgressTracker())
 
         // RetentionWorker may have nulled out filePath after the row
         // was observed but before the tap arrived. Dispatching to
@@ -69,7 +70,7 @@ class DownloadedVmTest {
     @Test
     fun `play swallows exceptions thrown by Player`() = runTest {
         val fakePlayer = FakeEpisodePlayer(throwOnLocal = true)
-        val vm = DownloadedVm(NoopEpisodeDao(), NoopPlaybackDao(), fakePlayer)
+        val vm = DownloadedVm(NoopEpisodeDao(), NoopPlaybackDao(), fakePlayer, DownloadProgressTracker())
 
         // Must not propagate — the user tapping play shouldn't crash.
         vm.play(makeEp(filePath = "/data/odyssey/123.mp3"))

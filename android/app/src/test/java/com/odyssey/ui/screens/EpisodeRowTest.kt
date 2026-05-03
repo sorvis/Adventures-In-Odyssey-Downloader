@@ -11,6 +11,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import com.odyssey.data.local.LocalEpisodeEntity
+import com.odyssey.download.DownloadProgressEntry
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -330,6 +331,78 @@ class EpisodeRowTest {
             "episode-row-description-collapsed",
             useUnmergedTree = true,
         ).assertDoesNotExist()
+    }
+
+    // ---- Download progress UI ----
+
+    @Test
+    fun `progress bar and percent chip are visible when downloadProgress is set`() {
+        composeRule.setContent {
+            EpisodeRow(
+                ep = episode(filePath = null),
+                played = false,
+                expanded = false,
+                onToggleExpand = {},
+                onPlay = {},
+                downloadProgress = DownloadProgressEntry(bytesRead = 5_000_000, totalBytes = 10_000_000),
+            )
+        }
+        composeRule.onNodeWithTag("episode-row-progress-bar", useUnmergedTree = true).assertExists()
+        composeRule.onNodeWithTag("episode-row-progress-pct", useUnmergedTree = true).assertExists()
+        // 5/10 = 50% — text contract.
+        composeRule.onNodeWithText("50%", useUnmergedTree = true).assertExists()
+    }
+
+    @Test
+    fun `progress percent chip overrides the trailing stream chip`() {
+        composeRule.setContent {
+            EpisodeRow(
+                ep = episode(filePath = null),
+                played = false,
+                expanded = false,
+                onToggleExpand = {},
+                onPlay = {},
+                downloadProgress = DownloadProgressEntry(bytesRead = 200, totalBytes = 1000),
+            )
+        }
+        composeRule.onNodeWithText("20%", useUnmergedTree = true).assertExists()
+        // While downloading, "▶ stream" should NOT show — the progress
+        // chip takes priority since the row is actively transitioning.
+        composeRule.onNodeWithText("▶ stream", useUnmergedTree = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun `progress bar is absent when downloadProgress is null (no in-flight download)`() {
+        composeRule.setContent {
+            EpisodeRow(
+                ep = episode(filePath = null),
+                played = false,
+                expanded = false,
+                onToggleExpand = {},
+                onPlay = {},
+                downloadProgress = null,
+            )
+        }
+        composeRule.onNodeWithTag("episode-row-progress-bar", useUnmergedTree = true).assertDoesNotExist()
+        composeRule.onNodeWithTag("episode-row-progress-pct", useUnmergedTree = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun `unknown total bytes still shows progress bar (indeterminate variant)`() {
+        composeRule.setContent {
+            EpisodeRow(
+                ep = episode(filePath = null),
+                played = false,
+                expanded = false,
+                onToggleExpand = {},
+                onPlay = {},
+                // totalBytes=-1 means server didn't send Content-Length.
+                downloadProgress = DownloadProgressEntry(bytesRead = 100, totalBytes = -1),
+            )
+        }
+        composeRule.onNodeWithTag("episode-row-progress-bar", useUnmergedTree = true).assertExists()
+        // Percent reads 0 in this case (per DownloadProgressTest).
+        composeRule.onNodeWithText("0%", useUnmergedTree = true).assertExists()
     }
 
     // ---- Trailing-chip states (downloaded / streamable / archived / played) ----

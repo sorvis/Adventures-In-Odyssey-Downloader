@@ -21,6 +21,7 @@ import com.odyssey.data.local.EpisodeDao
 import com.odyssey.data.local.LocalEpisodeEntity
 import com.odyssey.data.local.PlaybackDao
 import com.odyssey.debug.DebugLogger
+import com.odyssey.download.DownloadProgressTracker
 import com.odyssey.player.EpisodePlayer
 import com.odyssey.player.PlaySource
 import com.odyssey.player.playSourceFor
@@ -45,7 +46,10 @@ class DownloadedVm @Inject constructor(
     private val episodes: EpisodeDao,
     val playback: PlaybackDao,
     private val player: EpisodePlayer,
+    private val downloadProgress: DownloadProgressTracker,
 ) : ViewModel() {
+
+    val progress = downloadProgress.progress
 
     val items = episodes.observeDownloaded()
         .map { eps ->
@@ -94,6 +98,7 @@ class DownloadedVm @Inject constructor(
 fun DownloadedScreen(vm: DownloadedVm = hiltViewModel()) {
     val items by vm.items.collectAsState()
     val completedIds by vm.completedIds.collectAsState()
+    val progress by vm.progress.collectAsState()
     var expandedIds by remember { mutableStateOf(setOf<Long>()) }
 
     Scaffold(topBar = { TopAppBar(title = { Text("Library") }) }) { padding ->
@@ -131,6 +136,7 @@ fun DownloadedScreen(vm: DownloadedVm = hiltViewModel()) {
                         ep = ep,
                         played = ep.episodeId in completedSet,
                         expanded = ep.episodeId in expandedIds,
+                        downloadProgress = progress[ep.episodeId],
                         onToggleExpand = {
                             expandedIds = if (ep.episodeId in expandedIds) expandedIds - ep.episodeId
                                           else expandedIds + ep.episodeId

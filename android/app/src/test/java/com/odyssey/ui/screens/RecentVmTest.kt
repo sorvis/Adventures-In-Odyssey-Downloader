@@ -7,6 +7,7 @@ import com.odyssey.data.local.EpisodeDao
 import com.odyssey.data.local.LocalEpisodeEntity
 import com.odyssey.data.local.PlaybackDao
 import com.odyssey.data.local.PlaybackPositionEntity
+import com.odyssey.download.DownloadProgressTracker
 import com.odyssey.player.EpisodePlayer
 import com.odyssey.work.WorkScheduler
 import kotlinx.coroutines.Dispatchers
@@ -109,6 +110,7 @@ class RecentVmTest {
         player = player,
         scheduler = WorkScheduler(ApplicationProvider.getApplicationContext()),
         settings = SettingsRepo(ApplicationProvider.getApplicationContext()),
+        downloadProgress = DownloadProgressTracker(),
     )
 
     private fun makeEp(

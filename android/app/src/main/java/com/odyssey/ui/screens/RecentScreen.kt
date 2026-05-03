@@ -33,6 +33,8 @@ import com.odyssey.data.local.EpisodeDao
 import com.odyssey.data.local.LocalEpisodeEntity
 import com.odyssey.data.local.PlaybackDao
 import com.odyssey.debug.DebugLogger
+import com.odyssey.download.DownloadProgressEntry
+import com.odyssey.download.DownloadProgressTracker
 import com.odyssey.player.EpisodePlayer
 import com.odyssey.player.PlaySource
 import com.odyssey.player.formatResumeSubtitle
@@ -57,7 +59,10 @@ class RecentVm @Inject constructor(
     private val player: EpisodePlayer,
     private val scheduler: WorkScheduler,
     private val settings: SettingsRepo,
+    private val downloadProgress: DownloadProgressTracker,
 ) : ViewModel() {
+
+    val progress = downloadProgress.progress
     // Sort by parsed air-date desc, falling back to episodeId desc. The
     // SQL ORDER BY in EpisodeDao.observeAll() sorts the airDate string,
     // which works in-year but breaks across year boundaries — re-sorting
@@ -149,6 +154,7 @@ fun RecentScreen(
     val resumeEp by vm.resumeEpisode.collectAsState()
     val completedIds by vm.completedIds.collectAsState()
     val showWarning by vm.showMeteredWarning.collectAsState()
+    val progress by vm.progress.collectAsState()
     var expandedIds by remember { mutableStateOf(setOf<Long>()) }
 
     if (showWarning) {
@@ -234,6 +240,7 @@ fun RecentScreen(
                         ep = ep,
                         played = ep.episodeId in completedSet,
                         expanded = ep.episodeId in expandedIds,
+                        downloadProgress = progress[ep.episodeId],
                         onToggleExpand = {
                             expandedIds = if (ep.episodeId in expandedIds) expandedIds - ep.episodeId
                                           else expandedIds + ep.episodeId
@@ -255,6 +262,7 @@ internal fun EpisodeRow(
     onToggleExpand: () -> Unit,
     onPlay: () -> Unit,
     onDelete: (() -> Unit)? = null,
+    downloadProgress: DownloadProgressEntry? = null,
 ) {
     Column {
         ListItem(
@@ -312,6 +320,13 @@ internal fun EpisodeRow(
             },
             trailingContent = {
                 when {
+                    // In-flight download takes priority — show percent so
+                    // the user can tell the row is making progress.
+                    downloadProgress != null -> Text(
+                        text = "${downloadProgress.percent}%",
+                        style = MaterialTheme.typography.labelSmall,
+                        modifier = Modifier.testTag("episode-row-progress-pct"),
+                    )
                     ep.filePath == null -> Text("▶ stream", style = MaterialTheme.typography.labelSmall)
                     ep.archivedAt != null -> Text("✓ archived", style = MaterialTheme.typography.labelSmall)
                     played -> Text("✓ played", style = MaterialTheme.typography.labelSmall)
@@ -322,6 +337,27 @@ internal fun EpisodeRow(
                 }
             },
         )
+        // In-flight download progress bar — full-width line under the row
+        // so users see real-time download status. Indeterminate when total
+        // bytes are unknown (server didn't send Content-Length).
+        if (downloadProgress != null) {
+            if (downloadProgress.totalBytes > 0L) {
+                LinearProgressIndicator(
+                    progress = { downloadProgress.percent / 100f },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp)
+                        .testTag("episode-row-progress-bar"),
+                )
+            } else {
+                LinearProgressIndicator(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp)
+                        .testTag("episode-row-progress-bar"),
+                )
+            }
+        }
         if (expanded) {
             Column(
                 modifier = Modifier
