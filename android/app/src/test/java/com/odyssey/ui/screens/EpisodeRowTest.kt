@@ -138,6 +138,88 @@ class EpisodeRowTest {
         assertTrue(played == 0)
     }
 
+    // ---- Delete button (manual delete-download feature) ---------------
+
+    @Test
+    fun `delete button is visible when row is downloaded and expanded with onDelete wired`() {
+        composeRule.setContent {
+            EpisodeRow(
+                ep = episode(filePath = "/data/odyssey/123.mp3"),
+                played = false,
+                expanded = true,
+                onToggleExpand = {},
+                onPlay = {},
+                onDelete = {},
+            )
+        }
+        composeRule.onNodeWithTag("episode-row-delete-button").assertIsDisplayed()
+    }
+
+    @Test
+    fun `delete button is hidden for streamable rows even when expanded`() {
+        composeRule.setContent {
+            EpisodeRow(
+                ep = episode(filePath = null),
+                played = false,
+                expanded = true,
+                onToggleExpand = {},
+                onPlay = {},
+                onDelete = {},
+            )
+        }
+        // No file on disk → nothing to delete → button is hidden.
+        composeRule.onNodeWithTag("episode-row-delete-button").assertDoesNotExist()
+    }
+
+    @Test
+    fun `delete button is hidden when no onDelete handler is provided`() {
+        composeRule.setContent {
+            EpisodeRow(
+                ep = episode(filePath = "/data/odyssey/123.mp3"),
+                played = false,
+                expanded = true,
+                onToggleExpand = {},
+                onPlay = {},
+                // onDelete intentionally omitted → screen doesn't offer delete.
+            )
+        }
+        composeRule.onNodeWithTag("episode-row-delete-button").assertDoesNotExist()
+    }
+
+    @Test
+    fun `delete button is hidden when row is collapsed`() {
+        composeRule.setContent {
+            EpisodeRow(
+                ep = episode(filePath = "/data/odyssey/123.mp3"),
+                played = false,
+                expanded = false,
+                onToggleExpand = {},
+                onPlay = {},
+                onDelete = {},
+            )
+        }
+        composeRule.onNodeWithTag("episode-row-delete-button").assertDoesNotExist()
+    }
+
+    @Test
+    fun `tapping the delete button invokes onDelete and not onPlay`() {
+        var played = 0
+        var deleted = 0
+        composeRule.setContent {
+            EpisodeRow(
+                ep = episode(filePath = "/data/odyssey/123.mp3"),
+                played = false,
+                expanded = true,
+                onToggleExpand = {},
+                onPlay = { played++ },
+                onDelete = { deleted++ },
+            )
+        }
+        composeRule.onNodeWithTag("episode-row-delete-button").performClick()
+        assertTrue("onDelete should fire", deleted == 1)
+        assertTrue("onPlay should not fire from a delete tap", played == 0)
+    }
+
     @Test
     fun `tapping the play button invokes onPlay`() {
         var played = 0

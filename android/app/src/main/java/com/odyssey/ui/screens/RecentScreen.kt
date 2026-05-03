@@ -122,6 +122,20 @@ class RecentVm @Inject constructor(
             }
         }
     }
+
+    /**
+     * Delete the local copy of an episode. Row falls back to streamable
+     * (filePath becomes null in DB); on-disk file is removed.
+     */
+    fun delete(ep: LocalEpisodeEntity) {
+        val path = ep.filePath ?: return
+        DebugLogger.i("RecentVm", "delete(${ep.episodeId}) path=$path")
+        viewModelScope.launch {
+            runCatching { java.io.File(path).delete() }
+                .onFailure { DebugLogger.w("RecentVm", "File.delete failed for $path", it) }
+            episodes.markUndownloaded(ep.episodeId)
+        }
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalComposeUiApi::class)
@@ -225,6 +239,7 @@ fun RecentScreen(
                                           else expandedIds + ep.episodeId
                         },
                         onPlay = { vm.play(ep) },
+                        onDelete = { vm.delete(ep) },
                     )
                 }
             }
@@ -239,6 +254,7 @@ internal fun EpisodeRow(
     expanded: Boolean,
     onToggleExpand: () -> Unit,
     onPlay: () -> Unit,
+    onDelete: (() -> Unit)? = null,
 ) {
     Column {
         ListItem(
@@ -318,11 +334,25 @@ internal fun EpisodeRow(
                     modifier = Modifier.testTag("episode-row-description"),
                 )
                 Spacer(Modifier.height(8.dp))
-                Button(
-                    onClick = onPlay,
-                    modifier = Modifier.testTag("episode-row-play-button"),
-                ) {
-                    Text("Play")
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Button(
+                        onClick = onPlay,
+                        modifier = Modifier.testTag("episode-row-play-button"),
+                    ) {
+                        Text("Play")
+                    }
+                    // Delete is offered only when there's actually a local
+                    // file to delete (downloaded eps) AND the screen wires
+                    // a delete handler. Streaming-only rows don't show it.
+                    if (ep.filePath != null && onDelete != null) {
+                        Spacer(Modifier.width(8.dp))
+                        OutlinedButton(
+                            onClick = onDelete,
+                            modifier = Modifier.testTag("episode-row-delete-button"),
+                        ) {
+                            Text("Delete download")
+                        }
+                    }
                 }
             }
         }

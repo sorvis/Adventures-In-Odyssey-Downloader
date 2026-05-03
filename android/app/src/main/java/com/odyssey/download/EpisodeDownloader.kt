@@ -27,6 +27,13 @@ class EpisodeDownloader @Inject constructor(
     /**
      * Download the URL to `out`, resuming from `out.length()` if it already
      * exists (server must honor Range: bytes=N-). Returns final byte length.
+     *
+     * Resume gotcha: opening a FileOutputStream truncates the file to 0
+     * bytes; seeking past EOF then writing causes the OS to fill the gap
+     * with zeros, producing a final file of correct size but with the
+     * first N bytes zeroed out — ExoPlayer's MP3 extractor then can't
+     * find ID3 / frame sync and rejects the file. Use append mode
+     * (which never truncates and writes at current EOF) instead.
      */
     fun download(url: String, out: File): Long {
         val partial = out.length()
@@ -38,13 +45,12 @@ class EpisodeDownloader @Inject constructor(
             if (resp.code != 200 && resp.code != 206) {
                 error("HTTP ${resp.code} for $url")
             }
+            // append=true when the server honored our Range request (206).
+            // append=false when the server ignored Range and is sending the
+            // whole file again (200) — we want a fresh write.
             val append = resp.code == 206 && partial > 0
             out.parentFile?.mkdirs()
-            val sink = if (append) {
-                out.outputStream().also { it.channel.position(partial) }.sink().buffer()
-            } else {
-                out.sink(append = false).buffer()
-            }
+            val sink = out.sink(append = append).buffer()
             sink.use { s -> resp.body?.source()?.let { src -> s.writeAll(src) } }
         }
         return out.length()

@@ -76,6 +76,17 @@ class DownloadedVm @Inject constructor(
             }
         }
     }
+
+    /** Delete the local copy. Row leaves the Library list (filterPath != null filter). */
+    fun delete(ep: LocalEpisodeEntity) {
+        val path = ep.filePath ?: return
+        DebugLogger.i("DownloadedVm", "delete(${ep.episodeId}) path=$path")
+        viewModelScope.launch {
+            runCatching { java.io.File(path).delete() }
+                .onFailure { DebugLogger.w("DownloadedVm", "File.delete failed for $path", it) }
+            episodes.markUndownloaded(ep.episodeId)
+        }
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalComposeUiApi::class)
@@ -125,6 +136,7 @@ fun DownloadedScreen(vm: DownloadedVm = hiltViewModel()) {
                                           else expandedIds + ep.episodeId
                         },
                         onPlay = { vm.play(ep) },
+                        onDelete = { vm.delete(ep) },
                     )
                 }
             }
