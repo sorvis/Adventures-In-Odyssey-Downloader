@@ -126,5 +126,9 @@ dependencies {
     testImplementation("androidx.test:core:1.6.1")
     testImplementation("androidx.test.ext:junit:1.2.1")
     testImplementation("androidx.compose.ui:ui-test-junit4")
-    testImplementation("androidx.compose.ui:ui-test-manifest")
+    // ui-test-manifest contributes a ComponentActivity entry to the
+    // merged manifest. Robolectric reads the *debug* merged manifest at
+    // test time, so this must be debugImplementation, not testImplementation
+    // — otherwise createComposeRule() fails with "Unable to resolve activity".
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
 }

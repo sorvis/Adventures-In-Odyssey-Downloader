@@ -114,7 +114,8 @@ kotlinc \
   -cp "$CP_LIBS" \
   -d "$BUILD/main" \
   android/app/src/main/java/com/odyssey/scrape/OneplaceClient.kt \
-  android/app/src/main/java/com/odyssey/player/PlaySource.kt
+  android/app/src/main/java/com/odyssey/player/PlaySource.kt \
+  android/app/src/main/java/com/odyssey/player/PlaybackFormat.kt
 
 step "Compiling test sources"
 kotlinc \
@@ -123,7 +124,8 @@ kotlinc \
   -d "$BUILD/test" \
   android/app/src/test/java/com/odyssey/scrape/OneplaceClientTest.kt \
   android/app/src/test/java/com/odyssey/app/AndroidManifestTest.kt \
-  android/app/src/test/java/com/odyssey/player/PlaySourceTest.kt
+  android/app/src/test/java/com/odyssey/player/PlaySourceTest.kt \
+  android/app/src/test/java/com/odyssey/player/PlaybackFormatTest.kt
 
 # Test resources need to live on the runtime classpath for getResource() to find them.
 cp -r android/app/src/test/resources/* "$BUILD/test/" 2>/dev/null || true
@@ -145,7 +147,8 @@ java \
   org.junit.runner.JUnitCore \
   com.odyssey.scrape.OneplaceClientTest \
   com.odyssey.app.AndroidManifestTest \
-  com.odyssey.player.PlaySourceTest
+  com.odyssey.player.PlaySourceTest \
+  com.odyssey.player.PlaybackFormatTest
 
 # ---------- 6. Coverage report ----------
 step "Generating JaCoCo report"

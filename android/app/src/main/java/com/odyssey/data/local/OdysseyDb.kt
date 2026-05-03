@@ -67,6 +67,9 @@ interface PlaybackDao {
     @Query("SELECT * FROM playback_positions ORDER BY updatedAt DESC LIMIT 1")
     fun observeMostRecent(): Flow<PlaybackPositionEntity?>
 
+    @Query("SELECT episodeId FROM playback_positions WHERE completedAt IS NOT NULL")
+    fun observeCompletedIds(): Flow<List<Long>>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(p: PlaybackPositionEntity)
 }

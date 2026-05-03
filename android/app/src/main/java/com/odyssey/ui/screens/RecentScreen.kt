@@ -27,12 +27,14 @@ import com.odyssey.data.local.LocalEpisodeEntity
 import com.odyssey.data.local.PlaybackDao
 import com.odyssey.player.PlaySource
 import com.odyssey.player.PlayerController
+import com.odyssey.player.formatResumeSubtitle
 import com.odyssey.player.playSourceFor
 import com.odyssey.work.WorkScheduler
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -49,6 +51,18 @@ class RecentVm @Inject constructor(
 ) : ViewModel() {
     val items = episodes.observeAll().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val resume = playback.observeMostRecent().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    // Episodes the user has finished (≥95% per OdysseyPlaybackService). Used
+    // to render the "✓ played" trailing chip on the Recent list.
+    val completedIds =
+        playback.observeCompletedIds()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList<Long>())
+
+    // Pair the most-recent playback position with its episode entity so
+    // "Continue listening" can show the real title and dispatch to play().
+    val resumeEpisode = combine(items, resume) { eps, r ->
+        if (r == null) null else eps.firstOrNull { it.episodeId == r.episodeId }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     val showMeteredWarning = MutableStateFlow(false)
 
@@ -89,6 +103,8 @@ fun RecentScreen(
 ) {
     val items by vm.items.collectAsState()
     val resume by vm.resume.collectAsState()
+    val resumeEp by vm.resumeEpisode.collectAsState()
+    val completedIds by vm.completedIds.collectAsState()
     val showWarning by vm.showMeteredWarning.collectAsState()
 
     if (showWarning) {
@@ -136,16 +152,25 @@ fun RecentScreen(
                 .testTag("episode-list"),
         ) {
             resume?.let { r ->
-                item {
-                    ListItem(
-                        headlineContent = { Text("Continue listening") },
-                        supportingContent = { Text("Episode ${r.episodeId} · ${r.positionMs / 1000}s in") },
-                    )
-                    HorizontalDivider()
+                resumeEp?.let { ep ->
+                    item {
+                        ListItem(
+                            modifier = Modifier
+                                .clickable { vm.play(ep) }
+                                .testTag("continue-listening"),
+                            overlineContent = { Text("Continue listening") },
+                            headlineContent = { Text(ep.title) },
+                            supportingContent = {
+                                Text(formatResumeSubtitle(r.positionMs, r.durationMs))
+                            },
+                        )
+                        HorizontalDivider()
+                    }
                 }
             }
+            val completedSet = completedIds.toSet()
             items(items, key = { it.episodeId }) { ep ->
-                EpisodeRow(ep, played = false, onPlay = { vm.play(ep) })
+                EpisodeRow(ep, played = ep.episodeId in completedSet, onPlay = { vm.play(ep) })
                 HorizontalDivider()
             }
         }

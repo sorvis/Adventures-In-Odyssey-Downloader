@@ -4,5 +4,12 @@
 obj/
 bin/
 
-# Local JVM test toolchain (JDK + Kotlin + Maven jars)
+# Local JVM test toolchain (JDK + Kotlin + Maven jars + Android SDK)
 .tools/
+
+# Gradle / Android build outputs
+android/.gradle/
+android/.kotlin/
+android/build/
+android/app/build/
+android/local.properties
