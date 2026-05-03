@@ -24,6 +24,14 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$PWD"
 
+# Mirror all stdout+stderr through tee to a stable log path so callers
+# (and AIs) can run `scripts/release.sh` with the same command shape
+# every time and read the result from a known location. Path is the same
+# whether release.sh is run in foreground or background.
+RELEASE_LOG="${ODYSSEY_RELEASE_LOG:-/tmp/odyssey-release.log}"
+exec > >(tee "$RELEASE_LOG") 2>&1
+printf '\033[2m(logging to %s)\033[0m\n' "$RELEASE_LOG"
+
 # --------------------- args ---------------------
 # Auto-bump support: if the first argument doesn't look like a version,
 # infer the next one from `git tag --list 'v*'`. Bumps patch by default;
@@ -64,11 +72,26 @@ else
 fi
 VERSION_NAME="${VERSION#v}"   # strip leading v
 
-# Notes: remaining args joined, OR stdin if no remaining args and stdin is a pipe.
+# Notes resolution:
+#   1. Explicit args: scripts/release.sh "notes string"
+#   2. Stdin pipe:    scripts/release.sh < notes.md
+#   3. Auto-derive:   bullet list of commit subjects since the last tag
+#                     (semantic-release-style, but reading the git log
+#                     directly — no Conventional Commits required).
+#   4. Fallback:      "Release vX.Y.Z" when there's no prior tag and
+#                     no explicit notes.
 if [[ $# -gt 0 ]]; then
   NOTES="$*"
 elif [[ ! -t 0 ]]; then
   NOTES="$(cat)"
+elif [[ -n "${LATEST:-}" ]]; then
+  DERIVED=$(git log --no-merges --pretty=format:"- %s" "${LATEST}..HEAD" 2>/dev/null || true)
+  if [[ -n "$DERIVED" ]]; then
+    NOTES="$DERIVED"
+    printf 'auto-derived %s commit subjects since %s\n' "$(echo "$NOTES" | wc -l | tr -d ' ')" "$LATEST"
+  else
+    NOTES="Release ${VERSION}"
+  fi
 else
   NOTES="Release ${VERSION}"
 fi

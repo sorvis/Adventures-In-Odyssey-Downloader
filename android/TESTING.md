@@ -99,15 +99,22 @@ cd android
 
 ## Cutting a release
 
-Single command — version auto-bumps from the latest `v*` tag:
+Single command — version + notes auto-derive from git:
 
 ```bash
-scripts/release.sh                              # auto-bump patch, default notes
-scripts/release.sh "what changed in this build" # auto-bump patch, custom notes
-scripts/release.sh --minor "new feature group"  # bump minor (X.Y+1.0)
-scripts/release.sh --major "complete rewrite"   # bump major (X+1.0.0)
-scripts/release.sh v0.2.0 "explicit override"   # explicit version
+scripts/release.sh                              # patch++, notes from git log
+scripts/release.sh --minor                      # bump minor, notes from git log
+scripts/release.sh --major                      # bump major, notes from git log
+scripts/release.sh "explicit notes"             # patch++, override notes
+scripts/release.sh v0.2.0 "explicit override"   # explicit version + notes
 ```
+
+Defaults:
+- **Version**: bumps the patch component of the highest existing `v*` tag.
+- **Notes**: bullet list of commit subjects between the last tag and `HEAD`
+  (semantic-release-style; no Conventional Commits required).
+- **Log**: full output mirrored to `/tmp/odyssey-release.log`. Override
+  with `ODYSSEY_RELEASE_LOG=/some/other/path scripts/release.sh`.
 
 What it does (each step idempotent — safe to re-run on partial failure):
 
