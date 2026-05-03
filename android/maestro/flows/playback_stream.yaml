@@ -1,0 +1,46 @@
+# Smoke flow for the streaming path: tap an undownloaded (streamable) row,
+# expand it, hit play, verify the position counter advances. Mirrors
+# playback.yaml but exercises episode-row-streamable instead of
+# episode-row-playable.
+#
+# Prerequisite: at least one episode has been scraped but not yet
+# downloaded (filePath == null → testTag = "episode-row-streamable").
+# Run daily_check.yaml first and DO NOT wait for downloads to finish, or
+# disable downloads via Settings, or seed a row manually.
+#
+# Run from android/:
+#   maestro test maestro/flows/playback_stream.yaml
+appId: com.odyssey
+---
+- launchApp:
+    clearState: false       # keep prior scrape results
+
+# Tap a streamable row → expands description (does NOT start playback).
+- tapOn:
+    id: "episode-row-streamable"
+
+# Description block now visible. The trailing chip should still read
+# "▶ stream" since this episode has no local file.
+- assertVisible:
+    text: "▶ stream"
+
+# Tap the Play button inside the expanded view.
+- tapOn:
+    id: "episode-row-play-button"
+
+# RecentVm.play() → playSourceFor(filePath=null) → PlaySource.Stream →
+# PlayerController.playStream() → MediaController begins streaming.
+- tapOn:
+    text: "Player"
+
+- assertVisible:
+    id: "play-pause"
+    timeout: 10000
+
+# Position should advance — assert the counter is no longer 0:00.
+# Streaming has higher startup latency than local playback, so allow
+# a longer window before failing.
+- extendedWaitUntil:
+    visible:
+      text: "0:0[1-9]|0:[1-9][0-9]"
+    timeout: 30000

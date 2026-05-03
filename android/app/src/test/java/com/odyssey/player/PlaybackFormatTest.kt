@@ -1,6 +1,8 @@
 package com.odyssey.player
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PlaybackFormatTest {
@@ -35,5 +37,51 @@ class PlaybackFormatTest {
     fun `formatResumeSubtitle falls back to position-only when duration unknown`() {
         assertEquals("0:30 in", formatResumeSubtitle(30_000, 0))
         assertEquals("0:30 in", formatResumeSubtitle(30_000, -1))
+    }
+
+    // ---- shouldMarkComplete (drives the ✓ played chip) -------------------
+
+    @Test
+    fun `shouldMarkComplete is false at zero progress`() {
+        assertFalse(shouldMarkComplete(positionMs = 0, durationMs = 60_000))
+    }
+
+    @Test
+    fun `shouldMarkComplete is false halfway through`() {
+        assertFalse(shouldMarkComplete(positionMs = 30_000, durationMs = 60_000))
+    }
+
+    @Test
+    fun `shouldMarkComplete is false just below the 95% threshold`() {
+        // 94.99% — below threshold by a hair.
+        assertFalse(shouldMarkComplete(positionMs = 56_993, durationMs = 60_000))
+    }
+
+    @Test
+    fun `shouldMarkComplete is true exactly at the 95% threshold`() {
+        // 60_000 * 0.95 = 57_000 — equality must count as complete.
+        assertTrue(shouldMarkComplete(positionMs = 57_000, durationMs = 60_000))
+    }
+
+    @Test
+    fun `shouldMarkComplete is true past the end`() {
+        assertTrue(shouldMarkComplete(positionMs = 60_000, durationMs = 60_000))
+        assertTrue(shouldMarkComplete(positionMs = 99_999, durationMs = 60_000))
+    }
+
+    @Test
+    fun `shouldMarkComplete is false when duration is unknown`() {
+        // Media3 can report 0 before the first frame decodes — must not
+        // mark every just-started episode complete.
+        assertFalse(shouldMarkComplete(positionMs = 0, durationMs = 0))
+        assertFalse(shouldMarkComplete(positionMs = 100_000, durationMs = 0))
+        assertFalse(shouldMarkComplete(positionMs = 100_000, durationMs = -1))
+    }
+
+    @Test
+    fun `shouldMarkComplete honors a custom threshold`() {
+        // 50%-mark threshold for a hypothetical "halfway done" use case.
+        assertFalse(shouldMarkComplete(positionMs = 29_999, durationMs = 60_000, threshold = 0.50))
+        assertTrue(shouldMarkComplete(positionMs = 30_000, durationMs = 60_000, threshold = 0.50))
     }
 }

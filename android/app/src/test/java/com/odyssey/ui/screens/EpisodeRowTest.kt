@@ -148,6 +148,69 @@ class EpisodeRowTest {
         assertTrue("Play button should invoke onPlay", played == 1)
     }
 
+    // ---- Trailing-chip states (downloaded / streamable / archived / played) ----
+
+    @Test
+    fun `streamable row shows stream chip`() {
+        composeRule.setContent {
+            EpisodeRow(
+                ep = episode(filePath = null),
+                played = false,
+                expanded = false,
+                onToggleExpand = {},
+                onPlay = {},
+            )
+        }
+        composeRule.onNodeWithText("▶ stream").assertIsDisplayed()
+    }
+
+    @Test
+    fun `downloaded row shows downloaded chip - visible signal that play wont re-stream`() {
+        composeRule.setContent {
+            EpisodeRow(
+                ep = episode(filePath = "/data/odyssey/123.mp3"),
+                played = false,
+                expanded = false,
+                onToggleExpand = {},
+                onPlay = {},
+            )
+        }
+        composeRule.onNodeWithText("✓ downloaded").assertIsDisplayed()
+        // ...and the streaming chip must NOT be present.
+        composeRule.onNodeWithText("▶ stream").assertDoesNotExist()
+    }
+
+    @Test
+    fun `played row shows played chip and overrides downloaded chip`() {
+        composeRule.setContent {
+            EpisodeRow(
+                ep = episode(filePath = "/data/odyssey/123.mp3"),
+                played = true,
+                expanded = false,
+                onToggleExpand = {},
+                onPlay = {},
+            )
+        }
+        composeRule.onNodeWithText("✓ played").assertIsDisplayed()
+        composeRule.onNodeWithText("✓ downloaded").assertDoesNotExist()
+    }
+
+    @Test
+    fun `archived row shows archived chip and overrides played and downloaded`() {
+        composeRule.setContent {
+            EpisodeRow(
+                ep = episode(filePath = "/data/odyssey/123.mp3").copy(archivedAt = 1_700_000_000L),
+                played = true,
+                expanded = false,
+                onToggleExpand = {},
+                onPlay = {},
+            )
+        }
+        composeRule.onNodeWithText("✓ archived").assertIsDisplayed()
+        composeRule.onNodeWithText("✓ played").assertDoesNotExist()
+        composeRule.onNodeWithText("✓ downloaded").assertDoesNotExist()
+    }
+
     @Test
     fun `second tap on row collapses the row`() {
         composeRule.setContent {

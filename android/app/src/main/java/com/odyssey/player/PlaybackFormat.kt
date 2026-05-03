@@ -23,3 +23,18 @@ fun formatResumeSubtitle(positionMs: Long, durationMs: Long): String {
     val pos = formatPosition(positionMs)
     return if (durationMs > 0) "$pos / ${formatPosition(durationMs)}" else "$pos in"
 }
+
+/**
+ * True when an episode has been listened far enough to count as "played"
+ * (drives the ✓ played chip on the Recent list).
+ *
+ * Returns false when duration isn't known yet — Media3 sometimes reports
+ * 0 or a negative sentinel before the first frame decodes, and we don't
+ * want to mark every just-started episode complete just because position
+ * happens to be ≥ 0 * threshold.
+ */
+fun shouldMarkComplete(
+    positionMs: Long,
+    durationMs: Long,
+    threshold: Double = 0.95,
+): Boolean = durationMs > 0 && positionMs >= durationMs * threshold

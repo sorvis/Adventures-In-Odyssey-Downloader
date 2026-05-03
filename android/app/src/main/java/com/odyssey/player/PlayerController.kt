@@ -97,7 +97,7 @@ class PlayerController @Inject constructor(
         val id = c.currentMediaItem?.mediaId?.toLongOrNull() ?: return
         val pos = c.currentPosition
         val dur = c.duration.coerceAtLeast(0)
-        val complete = if (dur > 0 && pos >= dur * 0.95) System.currentTimeMillis() else null
+        val complete = if (shouldMarkComplete(pos, dur)) System.currentTimeMillis() else null
         CoroutineScope(Dispatchers.IO).launch {
             playback.upsert(PlaybackPositionEntity(id, pos, dur, System.currentTimeMillis(), complete))
         }

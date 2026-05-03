@@ -207,7 +207,10 @@ internal fun EpisodeRow(
                     ep.filePath == null -> Text("▶ stream", style = MaterialTheme.typography.labelSmall)
                     ep.archivedAt != null -> Text("✓ archived", style = MaterialTheme.typography.labelSmall)
                     played -> Text("✓ played", style = MaterialTheme.typography.labelSmall)
-                    else -> null
+                    // Downloaded but not yet listened-through and not yet
+                    // pushed to NAS — mark visibly so the user knows tapping
+                    // play won't re-stream from the network.
+                    else -> Text("✓ downloaded", style = MaterialTheme.typography.labelSmall)
                 }
             },
         )
