@@ -14,9 +14,11 @@ import com.odyssey.data.local.PlaybackDao
 import com.odyssey.data.local.PlaybackPositionEntity
 import com.odyssey.debug.DebugLogger
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -209,23 +211,76 @@ class PlayerController @Inject constructor(
         })
     }
 
+    // MediaController has thread affinity — every read of currentMediaItem,
+    // currentPosition, duration, etc. must happen on its application looper
+    // (the main thread for Media3's MediaSessionService default). The
+    // previous save loop ran on Dispatchers.Default and threw
+    // IllegalStateException("Player is accessed on the wrong thread") about
+    // 5 seconds after playback started, which crashed the process because
+    // the coroutine had no exception handler.
+    //
+    // Fix: run the loop on Main, only TOUCHING the controller from there,
+    // then dispatch the DB upsert to IO. Wrap the loop in a SupervisorJob
+    // + CoroutineExceptionHandler so any future stray throw lands in the
+    // log instead of killing the app.
+    private val saveLoopHandler = CoroutineExceptionHandler { _, t ->
+        DebugLogger.e("PlayerController", "save loop crashed", t)
+    }
+
     private fun startSaveLoop(c: MediaController) {
         saveJob?.cancel()
-        saveJob = CoroutineScope(Dispatchers.Default).launch {
-            while (true) {
-                delay(5_000)
-                persist(c)
-            }
-        }
+        saveJob = savePeriodicallyOnMain(
+            scope = CoroutineScope(Dispatchers.Main + SupervisorJob() + saveLoopHandler),
+            intervalMs = SAVE_INTERVAL_MS,
+        ) { persist(c) }
     }
 
     private fun persist(c: MediaController) {
-        val id = c.currentMediaItem?.mediaId?.toLongOrNull() ?: return
-        val pos = c.currentPosition
-        val dur = c.duration.coerceAtLeast(0)
+        // Must be called on Main — see startSaveLoop comment.
+        val id: Long
+        val pos: Long
+        val dur: Long
+        try {
+            id = c.currentMediaItem?.mediaId?.toLongOrNull() ?: return
+            pos = c.currentPosition
+            dur = c.duration.coerceAtLeast(0)
+        } catch (t: Throwable) {
+            DebugLogger.e("PlayerController", "persist — controller read failed", t)
+            return
+        }
         val complete = if (shouldMarkComplete(pos, dur)) System.currentTimeMillis() else null
         CoroutineScope(Dispatchers.IO).launch {
-            playback.upsert(PlaybackPositionEntity(id, pos, dur, System.currentTimeMillis(), complete))
+            runCatching {
+                playback.upsert(PlaybackPositionEntity(id, pos, dur, System.currentTimeMillis(), complete))
+            }.onFailure { DebugLogger.w("PlayerController", "persist — playback.upsert failed", it) }
+        }
+    }
+
+    private companion object {
+        const val SAVE_INTERVAL_MS = 5_000L
+    }
+}
+
+/**
+ * Periodic save loop, extracted to top-level so it's testable without
+ * holding a real MediaController.
+ *
+ * Each iteration runs `persist` after a delay of [intervalMs]; an
+ * exception in a single iteration is caught + logged so the loop keeps
+ * firing on the next tick (defense in depth — `persist` itself also
+ * has try/catch around its controller reads).
+ */
+internal fun savePeriodicallyOnMain(
+    scope: CoroutineScope,
+    intervalMs: Long,
+    persist: () -> Unit,
+): Job = scope.launch {
+    while (true) {
+        delay(intervalMs)
+        try {
+            persist()
+        } catch (t: Throwable) {
+            DebugLogger.e("PlayerController", "save loop iteration threw — continuing", t)
         }
     }
 }
