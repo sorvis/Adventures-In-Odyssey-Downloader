@@ -116,6 +116,7 @@ kotlinc \
   android/app/src/main/java/com/odyssey/scrape/OneplaceClient.kt \
   android/app/src/main/java/com/odyssey/player/PlaySource.kt \
   android/app/src/main/java/com/odyssey/player/PlaybackFormat.kt \
+  android/app/src/main/java/com/odyssey/player/Mp3Validation.kt \
   android/app/src/main/java/com/odyssey/ui/screens/RecentListing.kt \
   android/app/src/main/java/com/odyssey/debug/DebugLog.kt
 
@@ -128,6 +129,7 @@ kotlinc \
   android/app/src/test/java/com/odyssey/app/AndroidManifestTest.kt \
   android/app/src/test/java/com/odyssey/player/PlaySourceTest.kt \
   android/app/src/test/java/com/odyssey/player/PlaybackFormatTest.kt \
+  android/app/src/test/java/com/odyssey/player/Mp3ValidationTest.kt \
   android/app/src/test/java/com/odyssey/ui/screens/RecentListingTest.kt \
   android/app/src/test/java/com/odyssey/debug/DebugLogTest.kt
 
@@ -153,6 +155,7 @@ java \
   com.odyssey.app.AndroidManifestTest \
   com.odyssey.player.PlaySourceTest \
   com.odyssey.player.PlaybackFormatTest \
+  com.odyssey.player.Mp3ValidationTest \
   com.odyssey.ui.screens.RecentListingTest \
   com.odyssey.debug.DebugLogTest
 

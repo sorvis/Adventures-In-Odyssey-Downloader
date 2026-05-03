@@ -50,6 +50,14 @@ interface EpisodeDao {
     @Query("UPDATE local_episodes SET filePath = :path, fileSize = :size, downloadedAt = :ts WHERE episodeId = :id")
     suspend fun markDownloaded(id: Long, path: String, size: Long, ts: Long)
 
+    /**
+     * Reverse of markDownloaded: clear filePath/fileSize/downloadedAt so
+     * the row falls back to streamable. Used by PlaybackRecovery when a
+     * downloaded file fails ExoPlayer's parser.
+     */
+    @Query("UPDATE local_episodes SET filePath = NULL, fileSize = 0, downloadedAt = NULL WHERE episodeId = :id")
+    suspend fun markUndownloaded(id: Long)
+
     @Query("UPDATE local_episodes SET archivedAt = :ts WHERE episodeId = :id")
     suspend fun markArchived(id: Long, ts: Long)
 

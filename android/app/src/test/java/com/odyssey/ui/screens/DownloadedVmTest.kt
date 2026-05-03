@@ -115,6 +115,7 @@ class DownloadedVmTest {
         override suspend fun existingIds(ids: List<Long>): List<Long> = emptyList()
         override suspend fun upsert(e: LocalEpisodeEntity) {}
         override suspend fun markDownloaded(id: Long, path: String, size: Long, ts: Long) {}
+        override suspend fun markUndownloaded(id: Long) {}
         override suspend fun markArchived(id: Long, ts: Long) {}
         override suspend fun delete(id: Long) {}
         override suspend fun downloadedOldestFirst(): List<LocalEpisodeEntity> = emptyList()

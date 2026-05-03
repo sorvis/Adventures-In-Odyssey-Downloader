@@ -29,6 +29,7 @@ import kotlin.coroutines.suspendCoroutine
 class PlayerController @Inject constructor(
     @ApplicationContext private val ctx: Context,
     private val playback: PlaybackDao,
+    private val recovery: PlaybackRecovery,
 ) : EpisodePlayer {
     private var controller: MediaController? = null
     private var saveJob: Job? = null
@@ -174,7 +175,6 @@ class PlayerController @Inject constructor(
             }
 
             override fun onPlayerError(error: PlaybackException) {
-                // This is the smoking gun for the play-button regression.
                 // PlaybackException's errorCodeName + cause stack tells us
                 // exactly what the upstream pipeline (CacheDataSource →
                 // FileDataSource → decoder) blew up on.
@@ -183,6 +183,21 @@ class PlayerController @Inject constructor(
                     "onPlayerError code=${error.errorCodeName} (${error.errorCode}) msg=${error.message}",
                     error,
                 )
+
+                // Self-heal corrupt downloads: when ExoPlayer can't parse
+                // the container, the file is usually an HTML error page or
+                // a truncated stream. Hand off to PlaybackRecovery, which
+                // sniffs magic bytes and re-enqueues if it's not an MP3.
+                if (error.errorCode == PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED ||
+                    error.errorCode == PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED
+                ) {
+                    val episodeId = c.currentMediaItem?.mediaId?.toLongOrNull()
+                    if (episodeId != null) {
+                        CoroutineScope(Dispatchers.IO).launch {
+                            recovery.handleParseError(episodeId)
+                        }
+                    }
+                }
             }
 
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
