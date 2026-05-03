@@ -1,77 +1,110 @@
 # Backlog
 
 Future-work notes — short specs that are too big for an inline TODO and
-not yet scheduled. Add new entries at the top; remove an entry when its
-PR lands.
+not yet scheduled. Add new entries at the top; remove (or move to
+"Landed") when a PR lands.
 
 ---
 
-## Per-episode album art
+## Open architecture question — finding old downloaded episodes when offline
 
-**What:** Each episode has its own image (cover art / show logo). Today
-it's not surfaced anywhere — Recent rows are text-only, and the Media3
-notification + lockscreen show no artwork. We should download the image
-alongside the MP3 and feed it to ExoPlayer's `MediaMetadata.artworkUri`
-so notifications, the in-app NowPlaying screen, and lockscreen controls
-all show the correct art.
+The **Recent** tab is what its name says: a window onto the most-recent
+episodes from oneplace.com's daily check. The **NAS** tab browses
+remote-archived episodes via `archive-service`. There's currently no
+view that shows **"all my downloaded episodes regardless of recency,
+without needing the NAS"**. So:
 
-**Where the data already is:** `OneplaceClient`'s episode JSON has an
-`imageUrl` field per item (and a nullable `imageUrlWebP`). Today we
-only parse `title`, `airDate`, `downloadUrl`, etc. — image is
-discarded. Sample fixture: `android/app/src/test/resources/oneplace/api_page1.json`.
+- A fresh install + 60 days of usage = a phone full of MP3s the user
+  can't get back to once they roll out of the Recent window.
+- The retention worker also deletes "old" downloaded episodes silently.
 
-**Sketch of the change:**
+**Options to consider** (pick when we tackle this):
 
-1. **Schema.** Add `imageUrl: String?` and `imagePath: String?` to
-   `LocalEpisodeEntity` (Room migration — bump DB version, add a
-   simple `ALTER TABLE` migration since we're not yet shipping
-   destructive migrations).
-2. **Scrape.** Parse `imageUrl` in `OneplaceClient.newSince()`. Add a
-   fixture-based test (we already have JVM tests against captured
-   responses — extend `OneplaceClientTest`).
-3. **Download.** Either:
-   - Extend `DownloadEpisodeWorker` to fetch the JPG/WebP after the
-     MP3, store at `audio/<album>/<id>-<slug>.jpg`, mark `imagePath`
-     in DB. Same pattern as the MP3 path.
-   - Or add a tiny `DownloadArtworkWorker` that runs immediately on
-     first sync, before MP3 download — so artwork shows up in the
-     list even for not-yet-downloaded episodes.
-   The latter is better UX; cost is one extra worker class. Recommend
-   that path.
-4. **Player.** In `PlayerController.playLocal/playStream`, set
-   `MediaMetadata.Builder().setArtworkUri(...)` from the local image
-   path (or remote URL fallback). This is what populates the
-   notification + lockscreen + Bluetooth-display art.
-5. **UI.** `EpisodeRow` gains a leading 56dp thumbnail loaded with
-   Coil (`io.coil-kt:coil-compose:2.7.0` — single new dep). Falls
-   back to a generic show icon when `imagePath` is null. Same on
-   `NowPlayingScreen`.
-6. **Streaming case.** When user taps a streamable row, we'd want art
-   shown immediately even before MP3 starts. Two options: (a) load
-   directly from `imageUrl` over the network for the player metadata,
-   (b) eagerly cache the artwork on daily check so it's always on
-   disk. (b) is better — small file, predictable cost, makes the
-   list look right offline.
+1. **Rename Recent → Library** and stop pruning the list to a recent
+   window. Library shows *every* `local_episodes` row, sorted by date.
+   Simplest UX; "Recent" was always a misnomer for what the screen does.
+2. **Add a Downloaded tab** that filters to `filePath != null`. Keeps
+   Recent as a "what's new" view; adds a permanent "what's on disk"
+   view. Requires a new screen + a 4th nav target (or absorbs the NAS
+   tab).
+3. **Rework the NAS tab → Library tab** that shows a unified Local +
+   NAS view, with an "offline" filter that hides NAS-only rows. Most
+   ambitious; consolidates the "browse my catalogue" UX.
 
-**Tests to add:**
+(2) is probably the right answer for a personal app — minimal disruption
+to existing screens, and the NAS tab keeps doing one specific thing.
 
-- `OneplaceClient` unit test asserting `imageUrl` is parsed from the
-  fixture.
-- `DownloadArtworkWorker` happy-path with `MockWebServer` returning
-  a tiny JPG (or just N bytes — we don't validate image content).
-- Pure helper for building the on-disk image path from
-  `(album, episodeId, slug)` — testable JVM-only.
+---
 
-**Caveats:**
+## Better data sources for artwork + descriptions
 
-- The current API returns the same generic show logo for every
-  episode (all `imageUrl`s point at the same WebP). Per-episode art
-  may not actually exist for AIO yet. The plumbing is still useful
-  for showing *some* art in the notification, and lays the
-  groundwork if the upstream API later returns distinct images.
-- If we end up downloading the same bytes for every episode, dedupe
-  by URL hash — store one file at `audio/<album>/_artwork/<sha>.jpg`
-  and have multiple rows point at it.
-- WebP support in Media3 metadata varies by Android version. Prefer
-  `imageUrl` (JPG) over `imageUrlWebP` for `setArtworkUri` until
-  proven otherwise on minSdk 26 devices.
+Two new endpoints from the AIO mobile-web app that are richer than
+oneplace.com's API:
+
+- **`https://app.adventuresinodyssey.com/radio`** — per-episode metadata
+  including (presumably) better description text and per-episode artwork
+  URLs. Right now we get those from oneplace.com, where every episode
+  shares the same generic show logo and descriptions are 1-sentence
+  blurbs. Worth scraping/inspecting to see if AIO's own canonical app
+  serves richer data.
+- **`https://app.adventuresinodyssey.com/albums`** — the official AIO
+  album list (Album 1 "The Adventure Begins" through current ~70+
+  albums) with album-level cover art. Anchor for any future
+  album-organized browse UX.
+
+**Sketch:**
+
+1. Capture live JSON/HTML from both endpoints (curl + save to
+   `android/app/src/test/resources/aio-app/`) so we have offline
+   fixtures.
+2. Decide whether to keep oneplace.com as primary and use AIO-app as
+   an enrichment layer, or switch entirely. Probably enrichment-layer
+   first to avoid a big rewrite; merge data per-episode by matching on
+   title + airDate (or by figuring out a shared episode key).
+3. New `AioAppClient` parallel to `OneplaceClient` with JVM fixture
+   tests.
+4. Per-album cover cache: download once at album-list-load time, cache
+   on disk under `files/album-art/<albumId>.jpg`. Wire into player's
+   `MediaMetadata.artworkUri` so notification/lockscreen show real
+   album art, not the generic logo.
+5. Per-episode artwork: if /radio gives distinct images per episode,
+   thread through (replaces the generic-logo fallback we have now).
+
+**Tests:**
+
+- Fixture-based JVM tests on the new client, same pattern as
+  `OneplaceClientTest`.
+- Pure helper for matching oneplace episodes to AIO-app records by
+  title/date, JVM-testable.
+
+---
+
+## Per-episode album art (partially landed in v0.1.6)
+
+**Done so far:**
+
+- `imageUrl` parsed from oneplace JSON, threaded through
+  `LocalEpisodeEntity` (DB v2 migration).
+- `EpisodeRow` shows a 56dp Coil thumbnail in the leading slot.
+
+**Still open:**
+
+- Lockscreen / notification artwork — `PlayerController.playLocal/
+  playStream` doesn't set `MediaMetadata.Builder().setArtworkUri(...)`
+  yet, so Bluetooth/lockscreen still shows nothing.
+- On-disk artwork cache so list rows render offline (today Coil hits
+  the network on first load and caches in its own RAM/disk cache,
+  which doesn't survive an uninstall and won't preload). Eager cache
+  during daily check would fix this — see "Better data sources" above
+  for where to source the actual images from.
+- The fallback when `imageUrl` is null is currently empty space —
+  needs a default placeholder (generic show icon).
+
+---
+
+# Bugs
+
+- **Settings → retention field looks broken.** The control for
+  "downloaded-episode retention" doesn't appear to behave correctly in
+  the UI. Need to reproduce, narrow down (is it the editor, the saved
+  value, or the worker that uses it?), and fix.
