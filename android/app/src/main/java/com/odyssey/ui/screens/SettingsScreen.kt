@@ -1,6 +1,8 @@
 package com.odyssey.ui.screens
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.collectAsState
@@ -8,6 +10,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTagsAsResourceId
@@ -40,6 +43,17 @@ fun SettingsScreen(
     val s by vm.state.collectAsState()
     val current = s ?: return
 
+    val ctx = LocalContext.current
+    val versionLabel = remember {
+        // PackageManager round-trip — works without enabling AGP's
+        // buildConfig feature, and surfaces both the user-facing
+        // versionName ("0.1.7") and the monotonic versionCode (7).
+        runCatching {
+            val info = ctx.packageManager.getPackageInfo(ctx.packageName, 0)
+            "${info.versionName} (build ${info.longVersionCode})"
+        }.getOrDefault("unknown")
+    }
+
     var nasUrl by remember(current.nasUrl) { mutableStateOf(current.nasUrl) }
     var nasToken by remember(current.nasToken) { mutableStateOf(current.nasToken) }
     var retention by remember(current.retentionCount) { mutableStateOf(current.retentionCount.toString()) }
@@ -48,6 +62,7 @@ fun SettingsScreen(
         Column(
             Modifier
                 .padding(padding)
+                .verticalScroll(rememberScrollState())  // anything past the fold was clipped
                 .padding(16.dp)
                 .semantics { testTagsAsResourceId = true },
             verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -114,6 +129,14 @@ fun SettingsScreen(
                     .fillMaxWidth()
                     .testTag("open-debug-logs"),
             ) { Text("Open debug logs") }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
+            Text("About", style = MaterialTheme.typography.titleMedium)
+            Text(
+                text = "Odyssey $versionLabel",
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.testTag("app-version"),
+            )
         }
     }
 }

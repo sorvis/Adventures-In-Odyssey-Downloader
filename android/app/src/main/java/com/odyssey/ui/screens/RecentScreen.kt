@@ -33,8 +33,8 @@ import com.odyssey.data.local.EpisodeDao
 import com.odyssey.data.local.LocalEpisodeEntity
 import com.odyssey.data.local.PlaybackDao
 import com.odyssey.debug.DebugLogger
+import com.odyssey.player.EpisodePlayer
 import com.odyssey.player.PlaySource
-import com.odyssey.player.PlayerController
 import com.odyssey.player.formatResumeSubtitle
 import com.odyssey.player.playSourceFor
 import com.odyssey.work.WorkScheduler
@@ -54,7 +54,7 @@ class RecentVm @Inject constructor(
     @ApplicationContext private val ctx: Context,
     private val episodes: EpisodeDao,
     val playback: PlaybackDao,
-    private val player: PlayerController,
+    private val player: EpisodePlayer,
     private val scheduler: WorkScheduler,
     private val settings: SettingsRepo,
 ) : ViewModel() {

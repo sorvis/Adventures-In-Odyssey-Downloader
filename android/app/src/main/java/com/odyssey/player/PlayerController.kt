@@ -28,7 +28,7 @@ import kotlin.coroutines.suspendCoroutine
 class PlayerController @Inject constructor(
     @ApplicationContext private val ctx: Context,
     private val playback: PlaybackDao,
-) {
+) : EpisodePlayer {
     private var controller: MediaController? = null
     private var saveJob: Job? = null
 
@@ -61,7 +61,7 @@ class PlayerController @Inject constructor(
         }
     }
 
-    suspend fun playLocal(ep: LocalEpisodeEntity) {
+    override suspend fun playLocal(ep: LocalEpisodeEntity) {
         DebugLogger.i("PlayerController", "playLocal(${ep.episodeId}) path=${ep.filePath}")
         val c = try {
             connect()
@@ -94,7 +94,7 @@ class PlayerController @Inject constructor(
         }
     }
 
-    suspend fun playStream(episodeId: Long, streamUrl: String, title: String) {
+    override suspend fun playStream(episodeId: Long, streamUrl: String, title: String) {
         DebugLogger.i("PlayerController", "playStream($episodeId) url=$streamUrl")
         val c = try {
             connect()
