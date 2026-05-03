@@ -7,6 +7,7 @@ import androidx.media3.datasource.cache.CacheDataSink
 import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
 import androidx.media3.datasource.cache.SimpleCache
+import com.odyssey.debug.DebugLogger
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import javax.inject.Inject
@@ -32,11 +33,18 @@ class MediaCache @Inject constructor(@ApplicationContext private val ctx: Contex
 
     private val cacheDir: File = File(ctx.filesDir, CACHE_DIR_NAME).apply { mkdirs() }
 
-    val cache: SimpleCache = SimpleCache(
-        cacheDir,
-        LeastRecentlyUsedCacheEvictor(MAX_BYTES),
-        StandaloneDatabaseProvider(ctx),
-    )
+    val cache: SimpleCache = run {
+        DebugLogger.d("MediaCache", "init — opening SimpleCache at ${cacheDir.absolutePath}")
+        runCatching {
+            SimpleCache(
+                cacheDir,
+                LeastRecentlyUsedCacheEvictor(MAX_BYTES),
+                StandaloneDatabaseProvider(ctx),
+            )
+        }.onFailure {
+            DebugLogger.e("MediaCache", "SimpleCache init failed — playback will be broken", it)
+        }.getOrThrow()
+    }
 
     /**
      * Build a CacheDataSource.Factory for the ExoPlayer to use. Wraps

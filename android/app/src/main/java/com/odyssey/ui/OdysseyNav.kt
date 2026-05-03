@@ -14,6 +14,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.odyssey.ui.screens.BrowseNasScreen
+import com.odyssey.ui.screens.DebugScreen
 import com.odyssey.ui.screens.NowPlayingScreen
 import com.odyssey.ui.screens.RecentScreen
 import com.odyssey.ui.screens.SettingsScreen
@@ -66,7 +67,12 @@ fun OdysseyNav() {
                 }
                 composable(Tab.Browse.route)   { BrowseNasScreen() }
                 composable(Tab.Now.route)      { NowPlayingScreen() }
-                composable(Tab.Settings.route) { SettingsScreen() }
+                composable(Tab.Settings.route) {
+                    SettingsScreen(onOpenDebug = { nav.navigate("debug") })
+                }
+                composable("debug") {
+                    DebugScreen(onBack = { nav.popBackStack() })
+                }
             }
         }
     }

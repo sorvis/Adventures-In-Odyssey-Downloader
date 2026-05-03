@@ -32,6 +32,7 @@ import com.odyssey.app.SettingsRepo
 import com.odyssey.data.local.EpisodeDao
 import com.odyssey.data.local.LocalEpisodeEntity
 import com.odyssey.data.local.PlaybackDao
+import com.odyssey.debug.DebugLogger
 import com.odyssey.player.PlaySource
 import com.odyssey.player.PlayerController
 import com.odyssey.player.formatResumeSubtitle
@@ -105,10 +106,19 @@ class RecentVm @Inject constructor(
     }
 
     fun play(ep: LocalEpisodeEntity) {
+        val src = playSourceFor(ep.filePath, ep.downloadUrl)
+        DebugLogger.i(
+            "RecentVm",
+            "play(${ep.episodeId}) — ${if (src is PlaySource.Local) "local" else "stream"}",
+        )
         viewModelScope.launch {
-            when (playSourceFor(ep.filePath, ep.downloadUrl)) {
-                is PlaySource.Local -> player.playLocal(ep)
-                is PlaySource.Stream -> player.playStream(ep.episodeId, ep.downloadUrl, ep.title)
+            try {
+                when (src) {
+                    is PlaySource.Local -> player.playLocal(ep)
+                    is PlaySource.Stream -> player.playStream(ep.episodeId, ep.downloadUrl, ep.title)
+                }
+            } catch (t: Throwable) {
+                DebugLogger.e("RecentVm", "play(${ep.episodeId}) — dispatch threw", t)
             }
         }
     }

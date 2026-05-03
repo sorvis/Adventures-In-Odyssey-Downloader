@@ -33,7 +33,10 @@ class SettingsVm @Inject constructor(private val settings: SettingsRepo) : ViewM
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalComposeUiApi::class)
 @Composable
-fun SettingsScreen(vm: SettingsVm = hiltViewModel()) {
+fun SettingsScreen(
+    onOpenDebug: () -> Unit = {},
+    vm: SettingsVm = hiltViewModel(),
+) {
     val s by vm.state.collectAsState()
     val current = s ?: return
 
@@ -103,6 +106,14 @@ fun SettingsScreen(vm: SettingsVm = hiltViewModel()) {
             HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
             Text("Last run: ${if (current.lastRunAtMs == 0L) "never" else java.text.DateFormat.getDateTimeInstance().format(java.util.Date(current.lastRunAtMs))}")
             Text("Last seen episode: ${if (current.lastSeenEpisodeId == 0L) "—" else current.lastSeenEpisodeId}")
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
+            OutlinedButton(
+                onClick = onOpenDebug,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("open-debug-logs"),
+            ) { Text("Open debug logs") }
         }
     }
 }

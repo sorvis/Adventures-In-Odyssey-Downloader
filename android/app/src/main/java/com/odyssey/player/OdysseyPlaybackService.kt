@@ -5,6 +5,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
+import com.odyssey.debug.DebugLogger
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 
@@ -26,14 +27,27 @@ class OdysseyPlaybackService : MediaSessionService() {
 
     override fun onCreate() {
         super.onCreate()
-        val mediaSourceFactory = DefaultMediaSourceFactory(this)
-            .setDataSourceFactory(mediaCache.cacheDataSourceFactory())
-        val player = ExoPlayer.Builder(this)
-            .setMediaSourceFactory(mediaSourceFactory)
-            .setSeekForwardIncrementMs(30_000)
-            .setSeekBackIncrementMs(30_000)
-            .build()
-        session = MediaSession.Builder(this, player).build()
+        DebugLogger.i("PlaybackService", "onCreate — Hilt graph + MediaCache injected OK")
+        try {
+            val mediaSourceFactory = DefaultMediaSourceFactory(this)
+                .setDataSourceFactory(mediaCache.cacheDataSourceFactory())
+            DebugLogger.d("PlaybackService", "onCreate — DataSourceFactory built")
+            val player = ExoPlayer.Builder(this)
+                .setMediaSourceFactory(mediaSourceFactory)
+                .setSeekForwardIncrementMs(30_000)
+                .setSeekBackIncrementMs(30_000)
+                .build()
+            DebugLogger.d("PlaybackService", "onCreate — ExoPlayer built")
+            session = MediaSession.Builder(this, player).build()
+            DebugLogger.i("PlaybackService", "onCreate — MediaSession built (player ready)")
+        } catch (t: Throwable) {
+            DebugLogger.e(
+                "PlaybackService",
+                "onCreate — service init threw; play() will hang forever",
+                t,
+            )
+            throw t
+        }
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = session
