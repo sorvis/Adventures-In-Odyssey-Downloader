@@ -1,12 +1,18 @@
 package com.odyssey.ui.screens
 
 import android.app.Application
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import com.odyssey.data.local.LocalEpisodeEntity
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
-import org.junit.Ignore
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -14,20 +20,14 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * Robolectric/Compose UI test for EpisodeRow — pins the bug fix where
- * undownloaded rows were silently un-tappable. The corresponding
- * regression at the dispatch layer is covered by PlaySourceTest; this
- * test covers the UI layer (clickable wired up, no `enabled = …` gate).
+ * Robolectric/Compose UI tests for EpisodeRow.
+ *
+ * Two interaction surfaces:
+ *   - tap on the row's main ListItem  → toggles description expansion (NOT play)
+ *   - tap on the Play button (only visible when expanded) → invokes onPlay
  *
  * Uses plain Application (not OdysseyApp) so Robolectric doesn't try to
  * boot the Hilt graph — this composable doesn't need it.
- *
- * TODO: currently @Ignore'd — initial CI run failed (commit 5ecbc22),
- * exact stack trace not yet retrieved (gha logs need auth). Likely
- * causes: the Hilt-rewritten merged manifest still drives Robolectric's
- * Application init even with @Config override, OR ui-test-manifest's
- * test activity isn't being picked up from testImplementation. Re-enable
- * once we can run `./gradlew test` locally to iterate on the fix.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(application = Application::class, sdk = [33])
@@ -37,36 +37,145 @@ class EpisodeRowTest {
     val composeRule = createComposeRule()
 
     @Test
-    fun `tapping a streamable row invokes onPlay`() {
-        val ep = episode(filePath = null)
-        var clicked = false
-
+    fun `collapsed row hides description and play button`() {
         composeRule.setContent {
-            EpisodeRow(ep = ep, played = false, onPlay = { clicked = true })
+            EpisodeRow(
+                ep = episode(),
+                played = false,
+                expanded = false,
+                onToggleExpand = {},
+                onPlay = {},
+            )
         }
 
-        composeRule.onNodeWithTag("episode-row-streamable").performClick()
-        assertTrue("onPlay was not invoked for an undownloaded (streamable) row", clicked)
+        composeRule.onNodeWithTag("episode-row-description").assertDoesNotExist()
+        composeRule.onNodeWithTag("episode-row-play-button").assertDoesNotExist()
     }
 
     @Test
-    fun `tapping a downloaded row invokes onPlay`() {
-        val ep = episode(filePath = "/data/odyssey/123.mp3")
-        var clicked = false
+    fun `expanded row shows description and play button`() {
+        composeRule.setContent {
+            EpisodeRow(
+                ep = episode(description = "A reckless word causes chaos in Odyssey."),
+                played = false,
+                expanded = true,
+                onToggleExpand = {},
+                onPlay = {},
+            )
+        }
+
+        composeRule.onNodeWithTag("episode-row-description").assertIsDisplayed()
+        composeRule.onNodeWithText("A reckless word causes chaos in Odyssey.").assertIsDisplayed()
+        composeRule.onNodeWithTag("episode-row-play-button").assertIsDisplayed()
+    }
+
+    @Test
+    fun `expanded row with null description shows fallback text`() {
+        composeRule.setContent {
+            EpisodeRow(
+                ep = episode(description = null),
+                played = false,
+                expanded = true,
+                onToggleExpand = {},
+                onPlay = {},
+            )
+        }
+
+        composeRule.onNodeWithText("No description available.").assertIsDisplayed()
+    }
+
+    @Test
+    fun `tapping a streamable row toggles expand and does not play`() {
+        var toggled = 0
+        var played = 0
+
+        // Use real Compose state so the row actually re-renders expanded
+        // after the tap — confirms the toggle path lights up the description.
+        composeRule.setContent {
+            var expanded by remember { mutableStateOf(false) }
+            EpisodeRow(
+                ep = episode(filePath = null, description = "Stream me."),
+                played = false,
+                expanded = expanded,
+                onToggleExpand = { expanded = !expanded; toggled++ },
+                onPlay = { played++ },
+            )
+        }
+
+        composeRule.onNodeWithTag("episode-row-streamable").performClick()
+        composeRule.onNodeWithTag("episode-row-description").assertIsDisplayed()
+        assertTrue("onToggleExpand should fire on row tap", toggled == 1)
+        assertTrue("onPlay should NOT fire on row tap", played == 0)
+    }
+
+    @Test
+    fun `tapping a downloaded row toggles expand and does not play`() {
+        var toggled = 0
+        var played = 0
 
         composeRule.setContent {
-            EpisodeRow(ep = ep, played = false, onPlay = { clicked = true })
+            var expanded by remember { mutableStateOf(false) }
+            EpisodeRow(
+                ep = episode(filePath = "/data/odyssey/123.mp3", description = "Already saved."),
+                played = false,
+                expanded = expanded,
+                onToggleExpand = { expanded = !expanded; toggled++ },
+                onPlay = { played++ },
+            )
         }
 
         composeRule.onNodeWithTag("episode-row-playable").performClick()
-        assertTrue("onPlay was not invoked for a downloaded (playable) row", clicked)
+        composeRule.onNodeWithTag("episode-row-description").assertIsDisplayed()
+        assertTrue(toggled == 1)
+        assertTrue(played == 0)
     }
 
-    private fun episode(filePath: String?): LocalEpisodeEntity = LocalEpisodeEntity(
+    @Test
+    fun `tapping the play button invokes onPlay`() {
+        var played = 0
+
+        composeRule.setContent {
+            EpisodeRow(
+                ep = episode(filePath = null),
+                played = false,
+                expanded = true,
+                onToggleExpand = {},
+                onPlay = { played++ },
+            )
+        }
+
+        composeRule.onNodeWithTag("episode-row-play-button").performClick()
+        assertTrue("Play button should invoke onPlay", played == 1)
+    }
+
+    @Test
+    fun `second tap on row collapses the row`() {
+        composeRule.setContent {
+            var expanded by remember { mutableStateOf(false) }
+            EpisodeRow(
+                ep = episode(filePath = null, description = "toggle me"),
+                played = false,
+                expanded = expanded,
+                onToggleExpand = { expanded = !expanded },
+                onPlay = {},
+            )
+        }
+
+        composeRule.onNodeWithTag("episode-row-streamable").performClick()
+        composeRule.onNodeWithTag("episode-row-description").assertIsDisplayed()
+
+        composeRule.onNodeWithTag("episode-row-streamable").performClick()
+        composeRule.onNodeWithTag("episode-row-description").assertDoesNotExist()
+    }
+
+    private fun episode(
+        filePath: String? = null,
+        description: String? = "Some description.",
+    ): LocalEpisodeEntity = LocalEpisodeEntity(
         episodeId = 1L,
         title = "Some Episode",
         airDate = "2026-05-03",
-        description = null,
+        description = description,
         sourceUrl = "https://oneplace.com/episodes/1",
         downloadUrl = "https://example.com/1.mp3",
         filePath = filePath,

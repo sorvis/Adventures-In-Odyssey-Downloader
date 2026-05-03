@@ -106,6 +106,7 @@ fun RecentScreen(
     val resumeEp by vm.resumeEpisode.collectAsState()
     val completedIds by vm.completedIds.collectAsState()
     val showWarning by vm.showMeteredWarning.collectAsState()
+    var expandedIds by remember { mutableStateOf(setOf<Long>()) }
 
     if (showWarning) {
         AlertDialog(
@@ -170,7 +171,16 @@ fun RecentScreen(
             }
             val completedSet = completedIds.toSet()
             items(items, key = { it.episodeId }) { ep ->
-                EpisodeRow(ep, played = ep.episodeId in completedSet, onPlay = { vm.play(ep) })
+                EpisodeRow(
+                    ep = ep,
+                    played = ep.episodeId in completedSet,
+                    expanded = ep.episodeId in expandedIds,
+                    onToggleExpand = {
+                        expandedIds = if (ep.episodeId in expandedIds) expandedIds - ep.episodeId
+                                      else expandedIds + ep.episodeId
+                    },
+                    onPlay = { vm.play(ep) },
+                )
                 HorizontalDivider()
             }
         }
@@ -178,20 +188,48 @@ fun RecentScreen(
 }
 
 @Composable
-internal fun EpisodeRow(ep: LocalEpisodeEntity, played: Boolean, onPlay: () -> Unit) {
-    ListItem(
-        modifier = Modifier
-            .clickable(onClick = onPlay)
-            .testTag(if (ep.filePath != null) "episode-row-playable" else "episode-row-streamable"),
-        headlineContent = { Text(ep.title) },
-        supportingContent = { Text(ep.airDate.orEmpty()) },
-        trailingContent = {
-            when {
-                ep.filePath == null -> Text("▶ stream", style = MaterialTheme.typography.labelSmall)
-                ep.archivedAt != null -> Text("✓ archived", style = MaterialTheme.typography.labelSmall)
-                played -> Text("✓ played", style = MaterialTheme.typography.labelSmall)
-                else -> null
+internal fun EpisodeRow(
+    ep: LocalEpisodeEntity,
+    played: Boolean,
+    expanded: Boolean,
+    onToggleExpand: () -> Unit,
+    onPlay: () -> Unit,
+) {
+    Column {
+        ListItem(
+            modifier = Modifier
+                .clickable(onClick = onToggleExpand)
+                .testTag(if (ep.filePath != null) "episode-row-playable" else "episode-row-streamable"),
+            headlineContent = { Text(ep.title) },
+            supportingContent = { Text(ep.airDate.orEmpty()) },
+            trailingContent = {
+                when {
+                    ep.filePath == null -> Text("▶ stream", style = MaterialTheme.typography.labelSmall)
+                    ep.archivedAt != null -> Text("✓ archived", style = MaterialTheme.typography.labelSmall)
+                    played -> Text("✓ played", style = MaterialTheme.typography.labelSmall)
+                    else -> null
+                }
+            },
+        )
+        if (expanded) {
+            Column(
+                modifier = Modifier
+                    .testTag("episode-row-expanded")
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+            ) {
+                Text(
+                    text = ep.description ?: "No description available.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.testTag("episode-row-description"),
+                )
+                Spacer(Modifier.height(8.dp))
+                Button(
+                    onClick = onPlay,
+                    modifier = Modifier.testTag("episode-row-play-button"),
+                ) {
+                    Text("Play")
+                }
             }
-        },
-    )
+        }
+    }
 }

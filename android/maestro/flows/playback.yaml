@@ -12,8 +12,13 @@ appId: com.odyssey
 - launchApp:
     clearState: false       # keep prior downloads
 
+# Tap row → expands description (does NOT start playback).
 - tapOn:
     id: "episode-row-playable"
+
+# Description block now visible. Tap the Play button inside it.
+- tapOn:
+    id: "episode-row-play-button"
 
 # RecentVm.play() → PlayerController.playLocal() → MediaController starts.
 # Navigate to the player tab to see the position counter.
