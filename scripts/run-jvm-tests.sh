@@ -90,32 +90,42 @@ if [[ ! -f "$SERIALIZATION_PLUGIN" ]]; then
   exit 1
 fi
 
-CP_LIBS="$LIBS/*"
+# kotlinc doesn't expand `dir/*` classpath syntax the way java does — we
+# have to assemble an explicit list ourselves. (java does honour `dir/*`,
+# but it's safer to use the same string everywhere.)
+CP_LIBS="$(printf '%s:' "$LIBS"/*.jar)"
+CP_LIBS="${CP_LIBS%:}"
 
 # ---------- 4. Compile ----------
 rm -rf "$BUILD"
 mkdir -p "$BUILD/main" "$BUILD/test"
 
-step "Compiling OneplaceClient.kt"
+step "Compiling production sources"
 kotlinc \
   -Xplugin="$SERIALIZATION_PLUGIN" \
   -cp "$CP_LIBS" \
   -d "$BUILD/main" \
   android/app/src/main/java/com/odyssey/scrape/OneplaceClient.kt
 
-step "Compiling OneplaceClientTest.kt"
+step "Compiling test sources"
 kotlinc \
   -Xplugin="$SERIALIZATION_PLUGIN" \
   -cp "$CP_LIBS:$BUILD/main" \
   -d "$BUILD/test" \
-  android/app/src/test/java/com/odyssey/scrape/OneplaceClientTest.kt
+  android/app/src/test/java/com/odyssey/scrape/OneplaceClientTest.kt \
+  android/app/src/test/java/com/odyssey/app/AndroidManifestTest.kt
 
 # Test resources need to live on the runtime classpath for getResource() to find them.
-cp -r android/app/src/test/resources/* "$BUILD/test/"
+cp -r android/app/src/test/resources/* "$BUILD/test/" 2>/dev/null || true
+
+# Manifest test reads the manifest directly; expose its path via a system property.
+MANIFEST_PATH="$ROOT/android/app/src/main/AndroidManifest.xml"
 
 # ---------- 5. Run JUnit ----------
-step "Running OneplaceClientTest"
+step "Running tests"
 java \
+  -Dodyssey.manifest="$MANIFEST_PATH" \
   -cp "$KOTLIN_RUNTIME:$CP_LIBS:$BUILD/main:$BUILD/test" \
   org.junit.runner.JUnitCore \
-  com.odyssey.scrape.OneplaceClientTest
+  com.odyssey.scrape.OneplaceClientTest \
+  com.odyssey.app.AndroidManifestTest
