@@ -1,0 +1,129 @@
+package com.odyssey.ui.screens
+
+import android.app.Application
+import com.odyssey.data.local.EpisodeDao
+import com.odyssey.data.local.LocalEpisodeEntity
+import com.odyssey.data.local.PlaybackDao
+import com.odyssey.data.local.PlaybackPositionEntity
+import com.odyssey.player.EpisodePlayer
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.setMain
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+
+/**
+ * Mirrors RecentVmTest for the new Library tab. The Library list only
+ * surfaces downloaded episodes (filePath != null), so dispatch should
+ * always land on Player.playLocal — but we still test the streaming
+ * branch in case a row is shown stale (e.g., the file was deleted out
+ * from under us by RetentionWorker between observation and tap).
+ */
+@OptIn(ExperimentalCoroutinesApi::class)
+@RunWith(RobolectricTestRunner::class)
+@Config(application = Application::class, sdk = [33])
+class DownloadedVmTest {
+
+    @Before fun setUp() = Dispatchers.setMain(UnconfinedTestDispatcher())
+    @After fun tearDown() = Dispatchers.resetMain()
+
+    @Test
+    fun `play(downloaded) calls Player playLocal`() = runTest {
+        val fakePlayer = FakeEpisodePlayer()
+        val vm = DownloadedVm(NoopEpisodeDao(), NoopPlaybackDao(), fakePlayer)
+
+        val ep = makeEp(filePath = "/data/odyssey/123.mp3")
+        vm.play(ep)
+
+        assertEquals(1, fakePlayer.playLocalCalls.size)
+        assertEquals(ep, fakePlayer.playLocalCalls.single())
+        assertTrue(fakePlayer.playStreamCalls.isEmpty())
+    }
+
+    @Test
+    fun `play(stale row with null filePath) falls back to playStream`() = runTest {
+        val fakePlayer = FakeEpisodePlayer()
+        val vm = DownloadedVm(NoopEpisodeDao(), NoopPlaybackDao(), fakePlayer)
+
+        // RetentionWorker may have nulled out filePath after the row
+        // was observed but before the tap arrived. Dispatching to
+        // playStream is the right safety net — better than crashing.
+        val ep = makeEp(filePath = null, downloadUrl = "https://cdn.example/123.mp3")
+        vm.play(ep)
+
+        assertEquals(1, fakePlayer.playStreamCalls.size)
+        assertTrue(fakePlayer.playLocalCalls.isEmpty())
+    }
+
+    @Test
+    fun `play swallows exceptions thrown by Player`() = runTest {
+        val fakePlayer = FakeEpisodePlayer(throwOnLocal = true)
+        val vm = DownloadedVm(NoopEpisodeDao(), NoopPlaybackDao(), fakePlayer)
+
+        // Must not propagate — the user tapping play shouldn't crash.
+        vm.play(makeEp(filePath = "/data/odyssey/123.mp3"))
+        assertEquals(1, fakePlayer.playLocalCalls.size)
+    }
+
+    private fun makeEp(filePath: String? = null, downloadUrl: String = "https://cdn.example/x.mp3") =
+        LocalEpisodeEntity(
+            episodeId = 1L,
+            title = "Some Episode",
+            airDate = "2026-05-08",
+            description = null,
+            sourceUrl = "https://oneplace.com/x",
+            downloadUrl = downloadUrl,
+            filePath = filePath,
+            fileSize = 0L,
+            durationMs = 0L,
+            downloadedAt = null,
+            archivedAt = null,
+        )
+
+    private class FakeEpisodePlayer(
+        private val throwOnLocal: Boolean = false,
+    ) : EpisodePlayer {
+        val playLocalCalls = mutableListOf<LocalEpisodeEntity>()
+        data class StreamCall(val episodeId: Long, val streamUrl: String, val title: String)
+        val playStreamCalls = mutableListOf<StreamCall>()
+
+        override suspend fun playLocal(ep: LocalEpisodeEntity) {
+            playLocalCalls += ep
+            if (throwOnLocal) error("simulated playLocal failure")
+        }
+
+        override suspend fun playStream(episodeId: Long, streamUrl: String, title: String) {
+            playStreamCalls += StreamCall(episodeId, streamUrl, title)
+        }
+    }
+
+    private class NoopEpisodeDao : EpisodeDao {
+        override fun observeAll(): Flow<List<LocalEpisodeEntity>> = flowOf(emptyList())
+        override fun observeDownloaded(): Flow<List<LocalEpisodeEntity>> = flowOf(emptyList())
+        override suspend fun byId(id: Long): LocalEpisodeEntity? = null
+        override suspend fun existingIds(ids: List<Long>): List<Long> = emptyList()
+        override suspend fun upsert(e: LocalEpisodeEntity) {}
+        override suspend fun markDownloaded(id: Long, path: String, size: Long, ts: Long) {}
+        override suspend fun markArchived(id: Long, ts: Long) {}
+        override suspend fun delete(id: Long) {}
+        override suspend fun downloadedOldestFirst(): List<LocalEpisodeEntity> = emptyList()
+    }
+
+    private class NoopPlaybackDao : PlaybackDao {
+        override suspend fun get(id: Long): PlaybackPositionEntity? = null
+        override fun observeMostRecent(): Flow<PlaybackPositionEntity?> = flowOf(null)
+        override fun observeCompletedIds(): Flow<List<Long>> = flowOf(emptyList())
+        override suspend fun upsert(p: PlaybackPositionEntity) {}
+    }
+}

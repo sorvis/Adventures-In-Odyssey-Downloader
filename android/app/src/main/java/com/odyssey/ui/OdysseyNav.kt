@@ -15,18 +15,20 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.odyssey.ui.screens.BrowseNasScreen
 import com.odyssey.ui.screens.DebugScreen
+import com.odyssey.ui.screens.DownloadedScreen
 import com.odyssey.ui.screens.NowPlayingScreen
 import com.odyssey.ui.screens.RecentScreen
 import com.odyssey.ui.screens.SettingsScreen
 
 private sealed class Tab(val route: String, val label: String, val icon: androidx.compose.ui.graphics.vector.ImageVector) {
-    data object Recent   : Tab("recent",   "Recent",   Icons.Default.Home)
-    data object Browse   : Tab("browse",   "NAS",      Icons.Default.Storage)
-    data object Now      : Tab("now",      "Player",   Icons.Default.PlayArrow)
-    data object Settings : Tab("settings", "Settings", Icons.Default.Settings)
+    data object Recent     : Tab("recent",     "Recent",   Icons.Default.Home)
+    data object Downloaded : Tab("downloaded", "Library",  Icons.Default.Download)
+    data object Browse     : Tab("browse",     "NAS",      Icons.Default.Storage)
+    data object Now        : Tab("now",        "Player",   Icons.Default.PlayArrow)
+    data object Settings   : Tab("settings",   "Settings", Icons.Default.Settings)
 }
 
-private val tabs = listOf(Tab.Recent, Tab.Browse, Tab.Now, Tab.Settings)
+private val tabs = listOf(Tab.Recent, Tab.Downloaded, Tab.Browse, Tab.Now, Tab.Settings)
 
 @Composable
 fun OdysseyNav() {
@@ -65,6 +67,7 @@ fun OdysseyNav() {
                         }
                     })
                 }
+                composable(Tab.Downloaded.route) { DownloadedScreen() }
                 composable(Tab.Browse.route)   { BrowseNasScreen() }
                 composable(Tab.Now.route)      { NowPlayingScreen() }
                 composable(Tab.Settings.route) {
