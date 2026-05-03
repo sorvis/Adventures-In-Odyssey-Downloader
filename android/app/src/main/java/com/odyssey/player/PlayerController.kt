@@ -67,6 +67,10 @@ class PlayerController @Inject constructor(
         val item = MediaItem.Builder()
             .setMediaId(episodeId.toString())
             .setUri(streamUrl)
+            // Pin cache key to the episode ID so MediaCache hits survive
+            // CDN-token rotation in the streamUrl (oneplace's mp3 URLs
+            // include rotating query params).
+            .setCustomCacheKey(episodeId.toString())
             .setMediaMetadata(MediaMetadata.Builder().setTitle(title).build())
             .build()
         c.setMediaItem(item)

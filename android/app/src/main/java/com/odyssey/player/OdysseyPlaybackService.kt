@@ -2,22 +2,34 @@ package com.odyssey.player
 
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
+import dagger.hilt.android.AndroidEntryPoint
+import javax.inject.Inject
 
 /**
  * MediaSessionService keeps playback alive in background, surfaces lockscreen
  * + notification controls, and handles ±30s skip via custom commands.
  *
  * Position is persisted by PositionTracker (attached when the session is bound).
+ *
+ * @AndroidEntryPoint required for Hilt to inject MediaCache — the service is
+ * an Android-managed entry point, not constructed via Dagger.
  */
+@AndroidEntryPoint
 class OdysseyPlaybackService : MediaSessionService() {
+
+    @Inject lateinit var mediaCache: MediaCache
 
     private var session: MediaSession? = null
 
     override fun onCreate() {
         super.onCreate()
+        val mediaSourceFactory = DefaultMediaSourceFactory(this)
+            .setDataSourceFactory(mediaCache.cacheDataSourceFactory())
         val player = ExoPlayer.Builder(this)
+            .setMediaSourceFactory(mediaSourceFactory)
             .setSeekForwardIncrementMs(30_000)
             .setSeekBackIncrementMs(30_000)
             .build()
