@@ -3,6 +3,7 @@ name: android
 on:
   push:
     branches: [master]
+    tags: ['v*']
     paths:
       - 'android/**'
       - '.github/workflows/android.yml'
@@ -83,6 +84,16 @@ jobs:
           name: odyssey-debug
           path: android/dist/*.apk
           if-no-files-found: error
+
+      - name: Create / update GitHub Release on tag push
+        # On tag push, action-gh-release auto-creates the release at the
+        # tagged commit and attaches the APK as an asset. Uses the default
+        # GITHUB_TOKEN (no PAT required).
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: android/dist/*.apk
+          generate_release_notes: true
 
       - name: Attach APK to release
         if: github.event_name == 'release'
