@@ -25,16 +25,42 @@ cd "$(dirname "$0")/.."
 ROOT="$PWD"
 
 # --------------------- args ---------------------
-if [[ $# -lt 1 ]]; then
-  echo "usage: $0 <version> [release notes…]" >&2
-  echo "       $0 v0.1.2 \"one-line summary\"" >&2
-  exit 64
+# Auto-bump support: if the first argument doesn't look like a version,
+# infer the next one from `git tag --list 'v*'`. Bumps patch by default;
+# pass --minor or --major to bump those instead.
+#
+# Usage:
+#   scripts/release.sh                              # auto-bump patch, default notes
+#   scripts/release.sh "fix the save-loop crash"    # auto-bump patch, custom notes
+#   scripts/release.sh --minor "library tab + …"    # bump minor, reset patch to 0
+#   scripts/release.sh --major "complete rewrite"   # bump major, reset minor+patch
+#   scripts/release.sh v0.2.0 "explicit version"    # explicit override
+
+bump_part="patch"
+if [[ "${1:-}" == "--minor" ]]; then
+  bump_part="minor"; shift
+elif [[ "${1:-}" == "--major" ]]; then
+  bump_part="major"; shift
 fi
 
-VERSION="$1"; shift
-if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  echo "error: version must look like v0.1.2 (got: $VERSION)" >&2
-  exit 64
+# Decide whether arg #1 is an explicit version or the start of release notes.
+if [[ "${1:-}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  VERSION="$1"; shift
+else
+  # Auto-bump from latest `v*` tag (works on any host with the repo's
+  # tag history fetched — release.sh's prior step pushes tags).
+  LATEST=$(git tag --list 'v*' --sort=-v:refname | head -1)
+  if [[ -z "$LATEST" ]]; then
+    VERSION="v0.1.0"
+  else
+    IFS='.' read -r MAJ MIN PAT <<<"${LATEST#v}"
+    case "$bump_part" in
+      patch) VERSION="v${MAJ}.${MIN}.$((PAT + 1))" ;;
+      minor) VERSION="v${MAJ}.$((MIN + 1)).0" ;;
+      major) VERSION="v$((MAJ + 1)).0.0" ;;
+    esac
+  fi
+  printf 'auto-bump (%s): latest %s → next %s\n' "$bump_part" "${LATEST:-none}" "$VERSION"
 fi
 VERSION_NAME="${VERSION#v}"   # strip leading v
 

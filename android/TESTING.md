@@ -99,10 +99,14 @@ cd android
 
 ## Cutting a release
 
-Single command:
+Single command — version auto-bumps from the latest `v*` tag:
 
 ```bash
-scripts/release.sh v0.1.2 "one-line summary of what changed"
+scripts/release.sh                              # auto-bump patch, default notes
+scripts/release.sh "what changed in this build" # auto-bump patch, custom notes
+scripts/release.sh --minor "new feature group"  # bump minor (X.Y+1.0)
+scripts/release.sh --major "complete rewrite"   # bump major (X+1.0.0)
+scripts/release.sh v0.2.0 "explicit override"   # explicit version
 ```
 
 What it does (each step idempotent — safe to re-run on partial failure):
