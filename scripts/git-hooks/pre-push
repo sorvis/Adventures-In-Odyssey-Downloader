@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Runs JVM tests + coverage check before letting a push out. Fails the push
+# if line coverage dropped vs coverage-baseline.txt, or if the baseline was
+# bumped and not yet committed.
+#
+# Wire up once per clone:
+#   git config core.hooksPath scripts/git-hooks
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT"
+
+printf '\n\033[1;34m[pre-push]\033[0m running JVM tests + coverage gate\n'
+"$REPO_ROOT/scripts/run-jvm-tests.sh"
+"$REPO_ROOT/scripts/check-coverage.sh"

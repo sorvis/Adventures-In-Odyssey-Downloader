@@ -77,6 +77,14 @@ fetch "$REPO/junit/junit/4.13.2/junit-4.13.2.jar"
 fetch "$REPO/org/hamcrest/hamcrest-core/1.3/hamcrest-core-1.3.jar"
 fetch "$REPO/org/jetbrains/kotlinx/kotlinx-coroutines-test-jvm/1.8.1/kotlinx-coroutines-test-jvm-1.8.1.jar"
 
+# JaCoCo (code coverage). Agent jar is attached to the test JVM via -javaagent;
+# CLI jar generates HTML/XML reports from the resulting jacoco.exec.
+JACOCO_VERSION="0.8.12"
+fetch "$REPO/org/jacoco/org.jacoco.agent/$JACOCO_VERSION/org.jacoco.agent-$JACOCO_VERSION-runtime.jar"
+fetch "$REPO/org/jacoco/org.jacoco.cli/$JACOCO_VERSION/org.jacoco.cli-$JACOCO_VERSION-nodeps.jar"
+JACOCO_AGENT="$LIBS/org.jacoco.agent-$JACOCO_VERSION-runtime.jar"
+JACOCO_CLI="$LIBS/org.jacoco.cli-$JACOCO_VERSION-nodeps.jar"
+
 # Kotlin stdlib + reflect ship with kotlinc and need to be on the runtime
 # classpath for kotlin-compiled code.
 KOTLIN_RUNTIME="$KOTLIN_DIR/lib/kotlin-stdlib.jar:$KOTLIN_DIR/lib/kotlin-reflect.jar"
@@ -123,12 +131,49 @@ cp -r android/app/src/test/resources/* "$BUILD/test/" 2>/dev/null || true
 # Manifest test reads the manifest directly; expose its path via a system property.
 MANIFEST_PATH="$ROOT/android/app/src/main/AndroidManifest.xml"
 
-# ---------- 5. Run JUnit ----------
-step "Running tests"
+# ---------- 5. Run JUnit (with JaCoCo agent attached) ----------
+COVERAGE_DIR="$TOOLS/coverage"
+rm -rf "$COVERAGE_DIR"
+mkdir -p "$COVERAGE_DIR"
+JACOCO_EXEC="$COVERAGE_DIR/jacoco.exec"
+
+step "Running tests (JaCoCo coverage on)"
 java \
+  -javaagent:"$JACOCO_AGENT"=destfile="$JACOCO_EXEC" \
   -Dodyssey.manifest="$MANIFEST_PATH" \
   -cp "$KOTLIN_RUNTIME:$CP_LIBS:$BUILD/main:$BUILD/test" \
   org.junit.runner.JUnitCore \
   com.odyssey.scrape.OneplaceClientTest \
   com.odyssey.app.AndroidManifestTest \
   com.odyssey.player.PlaySourceTest
+
+# ---------- 6. Coverage report ----------
+step "Generating JaCoCo report"
+java -jar "$JACOCO_CLI" report "$JACOCO_EXEC" \
+  --classfiles "$BUILD/main" \
+  --sourcefiles android/app/src/main/java \
+  --xml "$COVERAGE_DIR/jacoco.xml" \
+  --html "$COVERAGE_DIR/html" \
+  >/dev/null
+
+# Pull the top-level LINE counter out of the XML report. The first <counter
+# type="LINE"…> child of the root <report> element is the project total.
+python3 - "$COVERAGE_DIR/jacoco.xml" >"$COVERAGE_DIR/current.txt" <<'PY'
+import sys, xml.etree.ElementTree as ET
+root = ET.parse(sys.argv[1]).getroot()
+for c in root.findall("./counter"):
+    if c.get("type") == "LINE":
+        missed = int(c.get("missed", "0"))
+        covered = int(c.get("covered", "0"))
+        total = missed + covered
+        pct = 0.0 if total == 0 else (covered * 100.0 / total)
+        # Keep two decimal places — enough resolution for ratchet, not
+        # so noisy that float drift trips the comparison.
+        print(f"{pct:.2f} {covered} {total}")
+        sys.exit(0)
+sys.exit("no LINE counter in jacoco.xml")
+PY
+
+read -r COV_PCT COV_COVERED COV_TOTAL <"$COVERAGE_DIR/current.txt"
+printf '\n    coverage: %s%% lines (%s/%s)\n' "$COV_PCT" "$COV_COVERED" "$COV_TOTAL"
+printf '    html report: %s/html/index.html\n' "$COVERAGE_DIR"
