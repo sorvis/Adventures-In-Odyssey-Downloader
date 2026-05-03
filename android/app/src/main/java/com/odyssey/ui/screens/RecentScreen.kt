@@ -153,7 +153,7 @@ fun RecentScreen(
 }
 
 @Composable
-private fun EpisodeRow(ep: LocalEpisodeEntity, played: Boolean, onPlay: () -> Unit) {
+internal fun EpisodeRow(ep: LocalEpisodeEntity, played: Boolean, onPlay: () -> Unit) {
     ListItem(
         modifier = Modifier
             .clickable(onClick = onPlay)

@@ -48,6 +48,12 @@ android {
             }
         }
     }
+    testOptions {
+        // Robolectric needs the merged manifest + resources on the test
+        // classpath so it can boot a shadow Android runtime for unit tests.
+        unitTests.isIncludeAndroidResources = true
+        unitTests.isReturnDefaultValues = true
+    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -112,4 +118,13 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
+
+    // Robolectric — runs Android-aware unit tests on the JVM (no emulator).
+    // Used for Compose UI / ViewModel tests where we want the real runtime
+    // shape without a device. Slow first run (~10s class init) but free in CI.
+    testImplementation("org.robolectric:robolectric:4.13")
+    testImplementation("androidx.test:core:1.6.1")
+    testImplementation("androidx.test.ext:junit:1.2.1")
+    testImplementation("androidx.compose.ui:ui-test-junit4")
+    testImplementation("androidx.compose.ui:ui-test-manifest")
 }
