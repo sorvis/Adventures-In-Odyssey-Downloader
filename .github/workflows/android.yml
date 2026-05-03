@@ -61,8 +61,13 @@ jobs:
           fi
 
       - name: Unit tests
+        # Debug variant only. The release variant's merged manifest doesn't
+        # include androidx.compose.ui:ui-test-manifest (it's debugImplementation
+        # so createComposeRule() can find ComponentActivity), and the unit
+        # tests are otherwise identical across variants — no value in running
+        # them twice.
         working-directory: android
-        run: ./gradlew test --no-daemon --stacktrace
+        run: ./gradlew :app:testDebugUnitTest --no-daemon --stacktrace
 
       - name: Build release APK
         # Signed with the keystore committed at android/keystore/ (private
