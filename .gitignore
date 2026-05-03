@@ -3,3 +3,6 @@
 .vs
 obj/
 bin/
+
+# Local JVM test toolchain (JDK + Kotlin + Maven jars)
+.tools/
