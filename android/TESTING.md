@@ -97,27 +97,26 @@ cd android
 ./gradlew installDebug          # USB or wireless adb
 ```
 
-## Cutting a release (first time = today's demo)
+## Cutting a release
 
-Goal: get a `v0.1.0` APK on the phone via Obtainium.
+Single command:
 
 ```bash
-# 1. Push current work so CI sees it
-git push origin master
-
-# 2. Watch the android workflow turn green
-gh run watch
-
-# 3. Tag + create the GitHub Release (this fires the release-attach step)
-gh release create v0.1.0 \
-  --title "v0.1.0 — first demo build" \
-  --notes "Daily check + local playback. NAS archival no-ops until configured." \
-  --target master
-
-# 4. CI re-runs on the release event and attaches the APK to the release.
-#    Watch again until the asset shows up:
-gh release view v0.1.0
+scripts/release.sh v0.1.2 "one-line summary of what changed"
 ```
+
+What it does (each step idempotent — safe to re-run on partial failure):
+
+1. Runs JVM tests via `scripts/run-jvm-tests.sh`. Aborts on failure.
+2. Bumps `versionCode` + `versionName` in `android/app/build.gradle.kts`
+   to match the new tag; commits + pushes if anything changed.
+3. Creates and pushes the `vX.Y.Z` tag if it doesn't exist.
+4. Polls GitHub Actions until the tag-triggered build finishes (20-min cap).
+5. Fetches the release via the API and asserts an `.apk` asset is attached.
+6. Prints the release URL + direct APK download URL.
+
+No PAT or `gh` CLI required — git-over-SSH triggers the release; the
+public-repo REST API is queried unauthenticated.
 
 On the phone:
 
