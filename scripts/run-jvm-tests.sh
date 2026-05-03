@@ -115,7 +115,8 @@ kotlinc \
   -d "$BUILD/main" \
   android/app/src/main/java/com/odyssey/scrape/OneplaceClient.kt \
   android/app/src/main/java/com/odyssey/player/PlaySource.kt \
-  android/app/src/main/java/com/odyssey/player/PlaybackFormat.kt
+  android/app/src/main/java/com/odyssey/player/PlaybackFormat.kt \
+  android/app/src/main/java/com/odyssey/ui/screens/RecentListing.kt
 
 step "Compiling test sources"
 kotlinc \
@@ -125,7 +126,8 @@ kotlinc \
   android/app/src/test/java/com/odyssey/scrape/OneplaceClientTest.kt \
   android/app/src/test/java/com/odyssey/app/AndroidManifestTest.kt \
   android/app/src/test/java/com/odyssey/player/PlaySourceTest.kt \
-  android/app/src/test/java/com/odyssey/player/PlaybackFormatTest.kt
+  android/app/src/test/java/com/odyssey/player/PlaybackFormatTest.kt \
+  android/app/src/test/java/com/odyssey/ui/screens/RecentListingTest.kt
 
 # Test resources need to live on the runtime classpath for getResource() to find them.
 cp -r android/app/src/test/resources/* "$BUILD/test/" 2>/dev/null || true
@@ -148,7 +150,8 @@ java \
   com.odyssey.scrape.OneplaceClientTest \
   com.odyssey.app.AndroidManifestTest \
   com.odyssey.player.PlaySourceTest \
-  com.odyssey.player.PlaybackFormatTest
+  com.odyssey.player.PlaybackFormatTest \
+  com.odyssey.ui.screens.RecentListingTest
 
 # ---------- 6. Coverage report ----------
 step "Generating JaCoCo report"

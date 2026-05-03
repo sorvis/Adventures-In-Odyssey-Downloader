@@ -7,16 +7,23 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
+import androidx.compose.ui.Alignment
 import androidx.compose.runtime.*
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTagsAsResourceId
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import coil.compose.AsyncImage
 import androidx.core.content.getSystemService
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
@@ -36,6 +43,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -49,7 +57,18 @@ class RecentVm @Inject constructor(
     private val scheduler: WorkScheduler,
     private val settings: SettingsRepo,
 ) : ViewModel() {
-    val items = episodes.observeAll().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    // Sort by parsed air-date desc, falling back to episodeId desc. The
+    // SQL ORDER BY in EpisodeDao.observeAll() sorts the airDate string,
+    // which works in-year but breaks across year boundaries — re-sorting
+    // here with parseAirDateMillis fixes that.
+    val items = episodes.observeAll()
+        .map { eps ->
+            eps.sortedWith(
+                compareByDescending<LocalEpisodeEntity> { parseAirDateMillis(it.airDate) }
+                    .thenByDescending { it.episodeId },
+            )
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val resume = playback.observeMostRecent().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     // Episodes the user has finished (≥95% per OdysseyPlaybackService). Used
@@ -155,33 +174,49 @@ fun RecentScreen(
             resume?.let { r ->
                 resumeEp?.let { ep ->
                     item {
-                        ListItem(
+                        ElevatedCard(
+                            onClick = { vm.play(ep) },
                             modifier = Modifier
-                                .clickable { vm.play(ep) }
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 6.dp)
                                 .testTag("continue-listening"),
-                            overlineContent = { Text("Continue listening") },
-                            headlineContent = { Text(ep.title) },
-                            supportingContent = {
-                                Text(formatResumeSubtitle(r.positionMs, r.durationMs))
-                            },
-                        )
-                        HorizontalDivider()
+                            colors = CardDefaults.elevatedCardColors(
+                                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                            ),
+                        ) {
+                            ListItem(
+                                colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                                overlineContent = { Text("Continue listening") },
+                                headlineContent = { Text(ep.title) },
+                                supportingContent = {
+                                    Text(formatResumeSubtitle(r.positionMs, r.durationMs))
+                                },
+                            )
+                        }
                     }
                 }
             }
             val completedSet = completedIds.toSet()
-            items(items, key = { it.episodeId }) { ep ->
-                EpisodeRow(
-                    ep = ep,
-                    played = ep.episodeId in completedSet,
-                    expanded = ep.episodeId in expandedIds,
-                    onToggleExpand = {
-                        expandedIds = if (ep.episodeId in expandedIds) expandedIds - ep.episodeId
-                                      else expandedIds + ep.episodeId
-                    },
-                    onPlay = { vm.play(ep) },
-                )
-                HorizontalDivider()
+            // Dedup: don't show the resume episode again in the main list —
+            // it's already represented in the Continue listening card above.
+            val mainList = dedupResume(items, resumeEp?.episodeId) { it.episodeId }
+            items(mainList, key = { it.episodeId }) { ep ->
+                ElevatedCard(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 4.dp),
+                ) {
+                    EpisodeRow(
+                        ep = ep,
+                        played = ep.episodeId in completedSet,
+                        expanded = ep.episodeId in expandedIds,
+                        onToggleExpand = {
+                            expandedIds = if (ep.episodeId in expandedIds) expandedIds - ep.episodeId
+                                          else expandedIds + ep.episodeId
+                        },
+                        onPlay = { vm.play(ep) },
+                    )
+                }
             }
         }
     }
@@ -200,8 +235,55 @@ internal fun EpisodeRow(
             modifier = Modifier
                 .clickable(onClick = onToggleExpand)
                 .testTag(if (ep.filePath != null) "episode-row-playable" else "episode-row-streamable"),
-            headlineContent = { Text(ep.title) },
-            supportingContent = { Text(ep.airDate.orEmpty()) },
+            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+            leadingContent = {
+                AsyncImage(
+                    model = ep.imageUrl,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .size(56.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .testTag("episode-row-thumbnail"),
+                )
+            },
+            headlineContent = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = ep.title,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = "#${ep.episodeId}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.testTag("episode-row-number"),
+                    )
+                }
+            },
+            supportingContent = {
+                Column {
+                    Text(
+                        text = ep.airDate.orEmpty(),
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                    // Show the truncated description only when collapsed —
+                    // the expanded view shows the full description below,
+                    // and showing both makes the same text appear twice.
+                    if (!expanded) {
+                        ep.description?.takeIf { it.isNotBlank() }?.let { desc ->
+                            Text(
+                                text = desc,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.testTag("episode-row-description-collapsed"),
+                            )
+                        }
+                    }
+                }
+            },
             trailingContent = {
                 when {
                     ep.filePath == null -> Text("▶ stream", style = MaterialTheme.typography.labelSmall)

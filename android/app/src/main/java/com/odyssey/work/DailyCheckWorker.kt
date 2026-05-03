@@ -56,6 +56,7 @@ class DailyCheckWorker @AssistedInject constructor(
                     durationMs   = ep.durationSeconds * 1000,
                     downloadedAt = null,
                     archivedAt   = null,
+                    imageUrl     = ep.imageUrl,
                 )
             )
             scheduler.enqueueDownload(ep.episodeId, allowMetered = s.allowMeteredDownloads)

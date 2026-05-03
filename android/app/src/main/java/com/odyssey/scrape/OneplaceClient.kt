@@ -99,4 +99,9 @@ data class OneplaceEpisode(
     val url: String,                                 // episode page URL
     val series: String? = null,                      // album/series — usually null
     val durationSeconds: Long = 0L,
+    // Episode artwork. AIO currently returns the same generic show logo
+    // for every episode (and `imageUrlWebP` is null), but threading it
+    // through gives lockscreen/notification/list-row art today and lets
+    // future per-episode art light up automatically.
+    val imageUrl: String? = null,
 )

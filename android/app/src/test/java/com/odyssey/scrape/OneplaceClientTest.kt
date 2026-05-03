@@ -74,6 +74,22 @@ class OneplaceClientTest {
     }
 
     @Test
+    fun `episodesBefore parses the imageUrl artwork field`() = runTest {
+        server.enqueue(json(fixture("/oneplace/api_page1.json")))
+        val episodes = client.episodesBefore(cursor = 1278295L, pageSize = 20)
+        // Every fixture row carries the AIO show logo at this URL today.
+        // Test asserts the artwork URL flows through the JSON model so the
+        // row thumbnail and lockscreen art have something to render.
+        val expected = "https://i.swncdn.com/cdn/400w/zcast/oneplace/host-images/" +
+            "adventures-in-odyssey/AIO_FOTF_Color_640x480.webp?v=260210-360"
+        assertEquals(expected, episodes.first().imageUrl)
+        assertTrue(
+            "all rows in the fixture should have a non-null imageUrl",
+            episodes.all { !it.imageUrl.isNullOrBlank() },
+        )
+    }
+
+    @Test
     fun `episodesBefore returns empty list for an empty JSON array`() = runTest {
         server.enqueue(json("[]"))
         assertTrue(client.episodesBefore(cursor = 1L, pageSize = 5).isEmpty())

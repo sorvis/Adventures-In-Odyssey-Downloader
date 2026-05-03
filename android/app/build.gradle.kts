@@ -112,6 +112,10 @@ dependencies {
     implementation("androidx.media3:media3-session:1.5.0")
     implementation("androidx.media3:media3-ui:1.5.0")
 
+    // Coil — async image loading for the row thumbnail (and any future
+    // artwork-driven UI). Works against the Compose BOM in use.
+    implementation("io.coil-kt:coil-compose:2.7.0")
+
     debugImplementation("androidx.compose.ui:ui-tooling")
 
     // JVM unit tests

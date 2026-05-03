@@ -37,7 +37,11 @@ class EpisodeRowTest {
     val composeRule = createComposeRule()
 
     @Test
-    fun `collapsed row hides description and play button`() {
+    fun `collapsed row hides the expanded full-description block and play button`() {
+        // Note: the collapsed *truncated* description (testTag
+        // "episode-row-description-collapsed") IS visible per the
+        // visibility tests below. This test pins the EXPANDED slot —
+        // full description + Play button — to expanded == true only.
         composeRule.setContent {
             EpisodeRow(
                 ep = episode(),
@@ -65,7 +69,11 @@ class EpisodeRowTest {
         }
 
         composeRule.onNodeWithTag("episode-row-description").assertIsDisplayed()
-        composeRule.onNodeWithText("A reckless word causes chaos in Odyssey.").assertIsDisplayed()
+        // The collapsed truncated description is hidden when expanded so
+        // the same text doesn't appear twice — assertExists on the
+        // expanded testTag is the cleanest way to verify the expanded
+        // copy specifically.
+        composeRule.onNodeWithTag("episode-row-description-collapsed").assertDoesNotExist()
         composeRule.onNodeWithTag("episode-row-play-button").assertIsDisplayed()
     }
 
@@ -146,6 +154,100 @@ class EpisodeRowTest {
 
         composeRule.onNodeWithTag("episode-row-play-button").performClick()
         assertTrue("Play button should invoke onPlay", played == 1)
+    }
+
+    // ---- Per-row visibility: thumbnail + description ----
+
+    @Test
+    fun `every row renders the thumbnail in the leading slot`() {
+        composeRule.setContent {
+            EpisodeRow(
+                ep = episode(),
+                played = false,
+                expanded = false,
+                onToggleExpand = {},
+                onPlay = {},
+            )
+        }
+        // useUnmergedTree because ListItem's leading/supporting slots fold
+        // their children into the merged semantics tree for accessibility,
+        // hiding inner testTags. assertExists is enough — assertIsDisplayed
+        // doesn't measure ListItem slots reliably without a real window.
+        composeRule.onNodeWithTag("episode-row-thumbnail", useUnmergedTree = true).assertExists()
+    }
+
+    @Test
+    fun `collapsed row shows truncated description in supporting slot`() {
+        composeRule.setContent {
+            EpisodeRow(
+                ep = episode(description = "Eugene's careless word becomes the new insult."),
+                played = false,
+                expanded = false,
+                onToggleExpand = {},
+                onPlay = {},
+            )
+        }
+        // Description is visible WITHOUT expanding — the new contract for
+        // the Recent list. useUnmergedTree because the description Text
+        // lives inside ListItem's supportingContent slot.
+        composeRule.onNodeWithTag(
+            "episode-row-description-collapsed",
+            useUnmergedTree = true,
+        ).assertExists()
+        composeRule.onNodeWithText(
+            "Eugene's careless word becomes the new insult.",
+            useUnmergedTree = true,
+        ).assertExists()
+    }
+
+    @Test
+    fun `every row renders the episode number next to the title`() {
+        composeRule.setContent {
+            EpisodeRow(
+                ep = episode().copy(episodeId = 1278383L),
+                played = false,
+                expanded = false,
+                onToggleExpand = {},
+                onPlay = {},
+            )
+        }
+        composeRule.onNodeWithTag("episode-row-number", useUnmergedTree = true).assertExists()
+        // Format is "#<id>" — locks the user-visible string contract.
+        composeRule.onNodeWithText("#1278383", useUnmergedTree = true).assertExists()
+    }
+
+    @Test
+    fun `collapsed row hides description when episode has none`() {
+        composeRule.setContent {
+            EpisodeRow(
+                ep = episode(description = null),
+                played = false,
+                expanded = false,
+                onToggleExpand = {},
+                onPlay = {},
+            )
+        }
+        composeRule.onNodeWithTag(
+            "episode-row-description-collapsed",
+            useUnmergedTree = true,
+        ).assertDoesNotExist()
+    }
+
+    @Test
+    fun `collapsed row hides description when episode description is blank`() {
+        composeRule.setContent {
+            EpisodeRow(
+                ep = episode(description = "   "),
+                played = false,
+                expanded = false,
+                onToggleExpand = {},
+                onPlay = {},
+            )
+        }
+        composeRule.onNodeWithTag(
+            "episode-row-description-collapsed",
+            useUnmergedTree = true,
+        ).assertDoesNotExist()
     }
 
     // ---- Trailing-chip states (downloaded / streamable / archived / played) ----

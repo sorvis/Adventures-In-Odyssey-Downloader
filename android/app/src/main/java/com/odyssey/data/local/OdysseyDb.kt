@@ -1,6 +1,8 @@
 package com.odyssey.data.local
 
 import androidx.room.*
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.flow.Flow
 
 @Entity(tableName = "local_episodes")
@@ -16,6 +18,7 @@ data class LocalEpisodeEntity(
     val durationMs: Long,
     val downloadedAt: Long?,      // epoch ms
     val archivedAt: Long?,        // epoch ms; null while not pushed to NAS
+    val imageUrl: String? = null, // remote artwork URL; loaded by Coil in the row
 )
 
 @Entity(tableName = "playback_positions")
@@ -76,10 +79,20 @@ interface PlaybackDao {
 
 @Database(
     entities = [LocalEpisodeEntity::class, PlaybackPositionEntity::class],
-    version = 1,
+    version = 2,
     exportSchema = false,
 )
 abstract class OdysseyDb : RoomDatabase() {
     abstract fun episodes(): EpisodeDao
     abstract fun playback(): PlaybackDao
+}
+
+/**
+ * v1 → v2: add LocalEpisodeEntity.imageUrl. Pure additive — old rows
+ * land with imageUrl=null, get backfilled on next daily check.
+ */
+val MIGRATION_1_2: Migration = object : Migration(1, 2) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE local_episodes ADD COLUMN imageUrl TEXT")
+    }
 }
