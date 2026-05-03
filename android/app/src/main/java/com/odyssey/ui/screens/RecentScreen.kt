@@ -25,7 +25,9 @@ import com.odyssey.app.SettingsRepo
 import com.odyssey.data.local.EpisodeDao
 import com.odyssey.data.local.LocalEpisodeEntity
 import com.odyssey.data.local.PlaybackDao
+import com.odyssey.player.PlaySource
 import com.odyssey.player.PlayerController
+import com.odyssey.player.playSourceFor
 import com.odyssey.work.WorkScheduler
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -70,8 +72,12 @@ class RecentVm @Inject constructor(
     }
 
     fun play(ep: LocalEpisodeEntity) {
-        if (ep.filePath == null) return
-        viewModelScope.launch { player.playLocal(ep) }
+        viewModelScope.launch {
+            when (playSourceFor(ep.filePath, ep.downloadUrl)) {
+                is PlaySource.Local -> player.playLocal(ep)
+                is PlaySource.Stream -> player.playStream(ep.episodeId, ep.downloadUrl, ep.title)
+            }
+        }
     }
 }
 
@@ -150,13 +156,13 @@ fun RecentScreen(
 private fun EpisodeRow(ep: LocalEpisodeEntity, played: Boolean, onPlay: () -> Unit) {
     ListItem(
         modifier = Modifier
-            .clickable(enabled = ep.filePath != null, onClick = onPlay)
-            .testTag(if (ep.filePath != null) "episode-row-playable" else "episode-row-pending"),
+            .clickable(onClick = onPlay)
+            .testTag(if (ep.filePath != null) "episode-row-playable" else "episode-row-streamable"),
         headlineContent = { Text(ep.title) },
         supportingContent = { Text(ep.airDate.orEmpty()) },
         trailingContent = {
             when {
-                ep.filePath == null -> Text("⬇", style = MaterialTheme.typography.labelMedium)
+                ep.filePath == null -> Text("▶ stream", style = MaterialTheme.typography.labelSmall)
                 ep.archivedAt != null -> Text("✓ archived", style = MaterialTheme.typography.labelSmall)
                 played -> Text("✓ played", style = MaterialTheme.typography.labelSmall)
                 else -> null

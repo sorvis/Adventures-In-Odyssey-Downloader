@@ -105,7 +105,8 @@ kotlinc \
   -Xplugin="$SERIALIZATION_PLUGIN" \
   -cp "$CP_LIBS" \
   -d "$BUILD/main" \
-  android/app/src/main/java/com/odyssey/scrape/OneplaceClient.kt
+  android/app/src/main/java/com/odyssey/scrape/OneplaceClient.kt \
+  android/app/src/main/java/com/odyssey/player/PlaySource.kt
 
 step "Compiling test sources"
 kotlinc \
@@ -113,7 +114,8 @@ kotlinc \
   -cp "$CP_LIBS:$BUILD/main" \
   -d "$BUILD/test" \
   android/app/src/test/java/com/odyssey/scrape/OneplaceClientTest.kt \
-  android/app/src/test/java/com/odyssey/app/AndroidManifestTest.kt
+  android/app/src/test/java/com/odyssey/app/AndroidManifestTest.kt \
+  android/app/src/test/java/com/odyssey/player/PlaySourceTest.kt
 
 # Test resources need to live on the runtime classpath for getResource() to find them.
 cp -r android/app/src/test/resources/* "$BUILD/test/" 2>/dev/null || true
@@ -128,4 +130,5 @@ java \
   -cp "$KOTLIN_RUNTIME:$CP_LIBS:$BUILD/main:$BUILD/test" \
   org.junit.runner.JUnitCore \
   com.odyssey.scrape.OneplaceClientTest \
-  com.odyssey.app.AndroidManifestTest
+  com.odyssey.app.AndroidManifestTest \
+  com.odyssey.player.PlaySourceTest
