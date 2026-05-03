@@ -88,7 +88,10 @@ class PlayerController @Inject constructor(
                 c.playWhenReady = true
                 return
             }
-            PlayAction.LoadFresh -> Unit
+            PlayAction.LoadFresh -> {
+                // Save the OLD episode's position before we lose it.
+                capturePreviousPositionIfSwitching(c, ep.episodeId)
+            }
         }
         // Diagnostic: ExoPlayer's UnrecognizedInputFormatException points at
         // the file content not matching any known media format (HTML error
@@ -155,7 +158,9 @@ class PlayerController @Inject constructor(
                 c.playWhenReady = true
                 return
             }
-            PlayAction.LoadFresh -> Unit
+            PlayAction.LoadFresh -> {
+                capturePreviousPositionIfSwitching(c, episodeId)
+            }
         }
         val item = MediaItem.Builder()
             .setMediaId(episodeId.toString())
@@ -272,11 +277,53 @@ class PlayerController @Inject constructor(
             DebugLogger.e("PlayerController", "persist — controller read failed", t)
             return
         }
+        // Skip writes during the transient post-prepare/post-seek state where
+        // pos is 0 — persisting (id, 0) would wipe a real saved position.
+        if (!shouldPersist(pos)) {
+            DebugLogger.d("PlayerController", "persist skipped — pos=$pos below threshold (transition artifact)")
+            return
+        }
         val complete = if (shouldMarkComplete(pos, dur)) System.currentTimeMillis() else null
         CoroutineScope(Dispatchers.IO).launch {
             runCatching {
                 playback.upsert(PlaybackPositionEntity(id, pos, dur, System.currentTimeMillis(), complete))
             }.onFailure { DebugLogger.w("PlayerController", "persist — playback.upsert failed", it) }
+        }
+    }
+
+    /**
+     * Capture the OLD episode's last position immediately, before
+     * setMediaItem swaps it out. Otherwise the only mechanism for
+     * saving the old position is the periodic save loop, which can be
+     * up to 5s stale (or 0 if the user navigated within the first
+     * save interval).
+     */
+    private fun capturePreviousPositionIfSwitching(c: MediaController, targetEpisodeId: Long) {
+        val snap = try {
+            capturePreviousIfDifferent(
+                currentMediaId = c.currentMediaItem?.mediaId,
+                currentPositionMs = c.currentPosition,
+                currentDurationMs = c.duration,
+                targetEpisodeId = targetEpisodeId,
+            )
+        } catch (t: Throwable) {
+            DebugLogger.e("PlayerController", "capturePrevious — controller read failed", t)
+            null
+        } ?: return
+        DebugLogger.i(
+            "PlayerController",
+            "capturePrevious — saving old episode ${snap.episodeId} at ${snap.positionMs}ms before switching to $targetEpisodeId",
+        )
+        val complete = if (shouldMarkComplete(snap.positionMs, snap.durationMs)) System.currentTimeMillis() else null
+        CoroutineScope(Dispatchers.IO).launch {
+            runCatching {
+                playback.upsert(
+                    PlaybackPositionEntity(
+                        snap.episodeId, snap.positionMs, snap.durationMs,
+                        System.currentTimeMillis(), complete,
+                    ),
+                )
+            }.onFailure { DebugLogger.w("PlayerController", "capturePrevious — upsert failed", it) }
         }
     }
 

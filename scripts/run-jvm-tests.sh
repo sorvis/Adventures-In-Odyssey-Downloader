@@ -118,6 +118,7 @@ kotlinc \
   android/app/src/main/java/com/odyssey/player/PlaybackFormat.kt \
   android/app/src/main/java/com/odyssey/player/Mp3Validation.kt \
   android/app/src/main/java/com/odyssey/player/PlayAction.kt \
+  android/app/src/main/java/com/odyssey/player/PositionPersistence.kt \
   android/app/src/main/java/com/odyssey/ui/screens/RecentListing.kt \
   android/app/src/main/java/com/odyssey/debug/DebugLog.kt \
   android/app/src/main/java/com/odyssey/download/DownloadProgress.kt
@@ -133,6 +134,7 @@ kotlinc \
   android/app/src/test/java/com/odyssey/player/PlaybackFormatTest.kt \
   android/app/src/test/java/com/odyssey/player/Mp3ValidationTest.kt \
   android/app/src/test/java/com/odyssey/player/PlayActionTest.kt \
+  android/app/src/test/java/com/odyssey/player/PositionPersistenceTest.kt \
   android/app/src/test/java/com/odyssey/ui/screens/RecentListingTest.kt \
   android/app/src/test/java/com/odyssey/debug/DebugLogTest.kt \
   android/app/src/test/java/com/odyssey/download/DownloadProgressTest.kt
@@ -161,6 +163,7 @@ java \
   com.odyssey.player.PlaybackFormatTest \
   com.odyssey.player.Mp3ValidationTest \
   com.odyssey.player.PlayActionTest \
+  com.odyssey.player.PositionPersistenceTest \
   com.odyssey.ui.screens.RecentListingTest \
   com.odyssey.debug.DebugLogTest \
   com.odyssey.download.DownloadProgressTest
