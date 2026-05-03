@@ -4,6 +4,7 @@ import android.content.ComponentName
 import android.content.Context
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
@@ -124,8 +125,44 @@ class PlayerController @Inject constructor(
 
     private fun attachPositionTracker(c: MediaController) {
         c.addListener(object : Player.Listener {
+
             override fun onIsPlayingChanged(isPlaying: Boolean) {
+                DebugLogger.i("ExoPlayer", "isPlaying=$isPlaying")
                 if (isPlaying) startSaveLoop(c) else { saveJob?.cancel(); persist(c) }
+            }
+
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                val name = when (playbackState) {
+                    Player.STATE_IDLE -> "IDLE"
+                    Player.STATE_BUFFERING -> "BUFFERING"
+                    Player.STATE_READY -> "READY"
+                    Player.STATE_ENDED -> "ENDED"
+                    else -> "UNKNOWN($playbackState)"
+                }
+                DebugLogger.i("ExoPlayer", "playbackState → $name")
+            }
+
+            override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                DebugLogger.d("ExoPlayer", "playWhenReady=$playWhenReady reason=$reason")
+            }
+
+            override fun onPlayerError(error: PlaybackException) {
+                // This is the smoking gun for the play-button regression.
+                // PlaybackException's errorCodeName + cause stack tells us
+                // exactly what the upstream pipeline (CacheDataSource →
+                // FileDataSource → decoder) blew up on.
+                DebugLogger.e(
+                    "ExoPlayer",
+                    "onPlayerError code=${error.errorCodeName} (${error.errorCode}) msg=${error.message}",
+                    error,
+                )
+            }
+
+            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                DebugLogger.d(
+                    "ExoPlayer",
+                    "mediaItem transition mediaId=${mediaItem?.mediaId ?: "null"} reason=$reason",
+                )
             }
         })
     }
