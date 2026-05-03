@@ -20,12 +20,14 @@ import javax.inject.Singleton
  * Public endpoint, no auth. CDN MP3 URLs at zcast.swncdn.com support Range.
  */
 @Singleton
-class OneplaceClient @Inject constructor(private val http: OkHttpClient) {
+class OneplaceClient @Inject constructor(
+    private val http: OkHttpClient,
+) {
+    /** URLs are overridable for tests; production paths default to the live site. */
+    var listenUrl: String = "https://www.oneplace.com/ministries/adventures-in-odyssey/listen/"
+    var apiUrl: String    = "https://www.oneplace.com/api/related-episodes"
 
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
-
-    private val listenUrl = "https://www.oneplace.com/ministries/adventures-in-odyssey/listen/"
-    private val apiUrl    = "https://www.oneplace.com/api/related-episodes"
 
     // bare assignment: episodeId=1278294
     private val bootstrapRe = Regex("""episodeId[=:"\s]+(\d{6,})""")
