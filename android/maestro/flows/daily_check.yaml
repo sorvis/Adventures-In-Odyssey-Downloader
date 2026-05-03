@@ -1,0 +1,23 @@
+# Smoke flow: launch the app, trigger a manual daily check, verify at least
+# one episode row lands in the library.
+#
+# Run from android/:
+#   maestro test maestro/flows/daily_check.yaml
+#
+# Requires: Maestro CLI (curl -Ls "https://get.maestro.mobile.dev" | bash)
+#           an Android device or emulator on WiFi (DownloadEpisodeWorker
+#           constraint = UNMETERED) with internet access to oneplace.com
+appId: com.odyssey
+---
+- launchApp:
+    clearState: true
+
+- tapOn:
+    id: "check-now"
+
+# DailyCheck → oneplace API → insert rows. Insert is fast; the actual MP3
+# download happens in a separate worker and may take longer, but the row
+# appears in the list immediately as a "pending" entry (⬇ trailing icon).
+- assertVisible:
+    id: "episode-row-pending"
+    timeout: 30000

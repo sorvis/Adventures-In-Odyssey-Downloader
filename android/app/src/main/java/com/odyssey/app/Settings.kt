@@ -17,6 +17,7 @@ private object Keys {
     val RETENTION = intPreferencesKey("retention_count")
     val LAST_SEEN_EID = longPreferencesKey("last_seen_episode_id")
     val LAST_RUN_AT = longPreferencesKey("last_run_at_ms")
+    val ALLOW_METERED = booleanPreferencesKey("allow_metered_downloads")
 }
 
 data class Settings(
@@ -25,6 +26,7 @@ data class Settings(
     val retentionCount: Int,
     val lastSeenEpisodeId: Long,
     val lastRunAtMs: Long,
+    val allowMeteredDownloads: Boolean,
 ) {
     val nasConfigured: Boolean get() = nasUrl.isNotBlank() && nasToken.isNotBlank()
 }
@@ -39,6 +41,7 @@ class SettingsRepo @Inject constructor(@ApplicationContext private val ctx: Cont
             retentionCount = p[Keys.RETENTION] ?: 7,
             lastSeenEpisodeId = p[Keys.LAST_SEEN_EID] ?: 0L,
             lastRunAtMs = p[Keys.LAST_RUN_AT] ?: 0L,
+            allowMeteredDownloads = p[Keys.ALLOW_METERED] ?: false,
         )
     }
 
@@ -50,4 +53,6 @@ class SettingsRepo @Inject constructor(@ApplicationContext private val ctx: Cont
     suspend fun setRetention(n: Int) = ctx.dataStore.edit { it[Keys.RETENTION] = n.coerceIn(1, 100) }
     suspend fun setLastSeen(id: Long) = ctx.dataStore.edit { it[Keys.LAST_SEEN_EID] = id }
     suspend fun setLastRun(ms: Long) = ctx.dataStore.edit { it[Keys.LAST_RUN_AT] = ms }
+    suspend fun setAllowMeteredDownloads(allow: Boolean) =
+        ctx.dataStore.edit { it[Keys.ALLOW_METERED] = allow }
 }

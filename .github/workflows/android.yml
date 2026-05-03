@@ -1,0 +1,91 @@
+name: android
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'android/**'
+      - '.github/workflows/android.yml'
+  pull_request:
+    paths:
+      - 'android/**'
+      - '.github/workflows/android.yml'
+  release:
+    types: [published]
+  workflow_dispatch: {}
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: build debug APK + run unit tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # only matters for the release-attach step
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platforms;android-35 build-tools;35.0.0 platform-tools'
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('android/**/*.gradle*', 'android/**/gradle-wrapper.properties', 'android/gradle/libs.versions.toml') }}
+          restore-keys: ${{ runner.os }}-gradle-
+
+      - name: Bootstrap Gradle wrapper if missing
+        # First-time CI run before someone commits gradlew; once the wrapper is
+        # in the tree this step becomes a no-op.
+        working-directory: android
+        run: |
+          if [ ! -f gradlew ]; then
+            curl -fsSL https://services.gradle.org/distributions/gradle-8.10-bin.zip -o /tmp/gradle.zip
+            mkdir -p /tmp/gradle && unzip -q /tmp/gradle.zip -d /tmp/gradle
+            /tmp/gradle/gradle-8.10/bin/gradle wrapper --gradle-version 8.10
+          fi
+
+      - name: Unit tests
+        working-directory: android
+        run: ./gradlew test --no-daemon --stacktrace
+
+      - name: Build debug APK
+        working-directory: android
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - name: Rename APK with version + sha
+        working-directory: android
+        run: |
+          mkdir -p dist
+          SHA=$(echo "${GITHUB_SHA}" | cut -c1-7)
+          for apk in app/build/outputs/apk/debug/*.apk; do
+            base=$(basename "$apk" .apk)
+            cp "$apk" "dist/${base}-${SHA}.apk"
+          done
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: odyssey-debug
+          path: android/dist/*.apk
+          if-no-files-found: error
+
+      - name: Attach APK to release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: android/dist/*.apk

@@ -4,11 +4,13 @@ import android.content.Context
 import androidx.hilt.work.HiltWorker
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
+import com.odyssey.app.SettingsRepo
 import com.odyssey.data.local.EpisodeDao
 import com.odyssey.download.EpisodeDownloader
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 
 @HiltWorker
@@ -18,6 +20,7 @@ class DownloadEpisodeWorker @AssistedInject constructor(
     private val episodes: EpisodeDao,
     private val downloader: EpisodeDownloader,
     private val scheduler: WorkScheduler,
+    private val settings: SettingsRepo,
 ) : CoroutineWorker(ctx, params) {
 
     override suspend fun doWork(): Result {
@@ -30,7 +33,7 @@ class DownloadEpisodeWorker @AssistedInject constructor(
             val out = downloader.fileFor(ep.episodeId, ep.title)
             val size = withContext(Dispatchers.IO) { downloader.download(ep.downloadUrl, out) }
             episodes.markDownloaded(ep.episodeId, out.absolutePath, size, System.currentTimeMillis())
-            scheduler.enqueueArchive(ep.episodeId)
+            scheduler.enqueueArchive(ep.episodeId, allowMetered = settings.flow.first().allowMeteredDownloads)
             Result.success()
         }.getOrElse { Result.retry() }
     }

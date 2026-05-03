@@ -1,0 +1,37 @@
+# Smoke flow: open the most recently downloaded episode, hit play, verify
+# the position counter advances.
+#
+# Prerequisite: at least one episode must already be downloaded
+# (filePath != null → testTag = "episode-row-playable"). Run daily_check.yaml
+# first and wait for a download to complete, or sideload an MP3 + db row.
+#
+# Run from android/:
+#   maestro test maestro/flows/playback.yaml
+appId: com.odyssey
+---
+- launchApp:
+    clearState: false       # keep prior downloads
+
+- tapOn:
+    id: "episode-row-playable"
+
+# RecentVm.play() → PlayerController.playLocal() → MediaController starts.
+# Navigate to the player tab to see the position counter.
+- tapOn:
+    text: "Player"
+
+- assertVisible:
+    id: "play-pause"
+    timeout: 10000
+
+# Position should advance — assert the counter is no longer 0:00.
+# We don't pin a specific value because timing varies; just assert *some*
+# non-zero position shows up after waiting.
+- assertVisible:
+    id: "position"
+    timeout: 5000
+
+- extendedWaitUntil:
+    visible:
+      text: "0:0[1-9]|0:[1-9][0-9]"   # any position past 0:00
+    timeout: 15000

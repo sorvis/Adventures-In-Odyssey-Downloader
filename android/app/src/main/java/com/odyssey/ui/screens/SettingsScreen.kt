@@ -5,7 +5,12 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
@@ -23,9 +28,10 @@ class SettingsVm @Inject constructor(private val settings: SettingsRepo) : ViewM
 
     fun saveNas(url: String, token: String) = viewModelScope.launch { settings.setNas(url, token) }
     fun saveRetention(n: Int) = viewModelScope.launch { settings.setRetention(n) }
+    fun setAllowMetered(allow: Boolean) = viewModelScope.launch { settings.setAllowMeteredDownloads(allow) }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalComposeUiApi::class)
 @Composable
 fun SettingsScreen(vm: SettingsVm = hiltViewModel()) {
     val s by vm.state.collectAsState()
@@ -36,7 +42,13 @@ fun SettingsScreen(vm: SettingsVm = hiltViewModel()) {
     var retention by remember(current.retentionCount) { mutableStateOf(current.retentionCount.toString()) }
 
     Scaffold(topBar = { TopAppBar(title = { Text("Settings") }) }) { padding ->
-        Column(Modifier.padding(padding).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(
+            Modifier
+                .padding(padding)
+                .padding(16.dp)
+                .semantics { testTagsAsResourceId = true },
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
             Text("NAS archive (optional)", style = MaterialTheme.typography.titleMedium)
             Text(
                 "Leave blank to run standalone — daily downloads still work without a NAS.",
@@ -53,6 +65,29 @@ fun SettingsScreen(vm: SettingsVm = hiltViewModel()) {
                 singleLine = true, modifier = Modifier.fillMaxWidth(),
             )
             Button(onClick = { vm.saveNas(nasUrl, nasToken) }) { Text("Save NAS settings") }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
+            Text("Downloads", style = MaterialTheme.typography.titleMedium)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Allow downloads on cellular (LTE)")
+                    Text(
+                        if (current.allowMeteredDownloads)
+                            "On — episodes will download on any network, including LTE."
+                        else
+                            "Off — episodes only download on WiFi.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                Switch(
+                    checked = current.allowMeteredDownloads,
+                    onCheckedChange = vm::setAllowMetered,
+                    modifier = Modifier.testTag("allow-metered-toggle"),
+                )
+            }
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
             Text("Retention", style = MaterialTheme.typography.titleMedium)

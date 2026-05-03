@@ -55,7 +55,15 @@ fun OdysseyNav() {
     ) { padding ->
         Box(modifier = Modifier.fillMaxSize().padding(padding)) {
             NavHost(nav, startDestination = Tab.Recent.route) {
-                composable(Tab.Recent.route)   { RecentScreen() }
+                composable(Tab.Recent.route)   {
+                    RecentScreen(onNavigateToSettings = {
+                        nav.navigate(Tab.Settings.route) {
+                            popUpTo(nav.graph.startDestinationId) { saveState = true }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    })
+                }
                 composable(Tab.Browse.route)   { BrowseNasScreen() }
                 composable(Tab.Now.route)      { NowPlayingScreen() }
                 composable(Tab.Settings.route) { SettingsScreen() }

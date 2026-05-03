@@ -39,12 +39,12 @@ class WorkScheduler @Inject constructor(@ApplicationContext private val ctx: Con
         wm.enqueueUniqueWork("odyssey-check-now", ExistingWorkPolicy.REPLACE, req)
     }
 
-    fun enqueueDownload(episodeId: Long) {
+    fun enqueueDownload(episodeId: Long, allowMetered: Boolean) {
         val req = OneTimeWorkRequestBuilder<DownloadEpisodeWorker>()
             .setInputData(workDataOf(DownloadEpisodeWorker.KEY_EPISODE_ID to episodeId))
             .setConstraints(
                 Constraints.Builder()
-                    .setRequiredNetworkType(NetworkType.UNMETERED)
+                    .setRequiredNetworkType(if (allowMetered) NetworkType.CONNECTED else NetworkType.UNMETERED)
                     .setRequiresStorageNotLow(true)
                     .build()
             )
@@ -53,12 +53,12 @@ class WorkScheduler @Inject constructor(@ApplicationContext private val ctx: Con
         wm.enqueueUniqueWork("download-$episodeId", ExistingWorkPolicy.KEEP, req)
     }
 
-    fun enqueueArchive(episodeId: Long) {
+    fun enqueueArchive(episodeId: Long, allowMetered: Boolean) {
         val req = OneTimeWorkRequestBuilder<ArchiveEpisodeWorker>()
             .setInputData(workDataOf(DownloadEpisodeWorker.KEY_EPISODE_ID to episodeId))
             .setConstraints(
                 Constraints.Builder()
-                    .setRequiredNetworkType(NetworkType.UNMETERED)
+                    .setRequiredNetworkType(if (allowMetered) NetworkType.CONNECTED else NetworkType.UNMETERED)
                     .build()
             )
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 15, TimeUnit.MINUTES)

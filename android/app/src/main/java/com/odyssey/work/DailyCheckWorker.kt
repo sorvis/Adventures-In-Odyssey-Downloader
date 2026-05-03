@@ -58,7 +58,7 @@ class DailyCheckWorker @AssistedInject constructor(
                     archivedAt   = null,
                 )
             )
-            scheduler.enqueueDownload(ep.episodeId)
+            scheduler.enqueueDownload(ep.episodeId, allowMetered = s.allowMeteredDownloads)
         }
         settings.setLastSeen(newest.first().episodeId) // newest-first
         settings.setLastRun(System.currentTimeMillis())

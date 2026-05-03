@@ -6,7 +6,11 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
@@ -45,30 +49,46 @@ class NowPlayingVm @Inject constructor(private val player: PlayerController) : V
     fun fwd30()      { controller?.let { it.seekTo((it.currentPosition + 30_000).coerceAtMost(it.duration)) } }
 }
 
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun NowPlayingScreen(vm: NowPlayingVm = hiltViewModel()) {
     Column(
-        modifier = Modifier.fillMaxSize().padding(16.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+            .semantics { testTagsAsResourceId = true }
+            .testTag("now-playing"),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        Text(vm.title.ifBlank { "Nothing playing" }, style = MaterialTheme.typography.headlineSmall)
+        Text(
+            vm.title.ifBlank { "Nothing playing" },
+            style = MaterialTheme.typography.headlineSmall,
+            modifier = Modifier.testTag("now-playing-title"),
+        )
         Spacer(Modifier.height(24.dp))
         if (vm.durationMs > 0) {
             LinearProgressIndicator(
                 progress = { (vm.positionMs.toFloat() / vm.durationMs).coerceIn(0f, 1f) },
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().testTag("progress"),
             )
             Spacer(Modifier.height(8.dp))
-            Text("${fmt(vm.positionMs)} / ${fmt(vm.durationMs)}")
+            Text("${fmt(vm.positionMs)} / ${fmt(vm.durationMs)}", modifier = Modifier.testTag("position"))
         }
         Spacer(Modifier.height(24.dp))
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            IconButton(onClick = vm::back30) { Icon(Icons.Default.Replay, "−30s") }
-            FilledIconButton(onClick = vm::togglePlay, modifier = Modifier.size(72.dp)) {
+            IconButton(onClick = vm::back30, modifier = Modifier.testTag("back-30")) {
+                Icon(Icons.Default.Replay, "−30s")
+            }
+            FilledIconButton(
+                onClick = vm::togglePlay,
+                modifier = Modifier.size(72.dp).testTag("play-pause"),
+            ) {
                 Icon(if (vm.playing) Icons.Default.Pause else Icons.Default.PlayArrow, "play/pause")
             }
-            IconButton(onClick = vm::fwd30) { Icon(Icons.Default.Forward30, "+30s") }
+            IconButton(onClick = vm::fwd30, modifier = Modifier.testTag("fwd-30")) {
+                Icon(Icons.Default.Forward30, "+30s")
+            }
         }
     }
 }
