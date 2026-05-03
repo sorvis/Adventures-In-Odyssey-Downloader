@@ -75,6 +75,33 @@ class PlayerController @Inject constructor(
             DebugLogger.w("PlayerController", "playLocal called with null filePath — bailing")
             return
         }
+        // Diagnostic: ExoPlayer's UnrecognizedInputFormatException points at
+        // the file content not matching any known media format (HTML error
+        // page, truncated download, mangled resume-append). First 64 bytes
+        // tell us instantly which: ID3 / 0xFF 0xFB → real MP3; <!DOC → HTML.
+        runCatching {
+            val f = java.io.File(path)
+            if (!f.exists()) {
+                DebugLogger.w("PlayerController", "playLocal — file missing on disk: $path")
+            } else {
+                val first = f.inputStream().use { stream ->
+                    val buf = ByteArray(64)
+                    val n = stream.read(buf)
+                    if (n <= 0) ByteArray(0) else buf.copyOf(n)
+                }
+                val asAscii = first.map { b ->
+                    val c = b.toInt() and 0xFF
+                    if (c in 0x20..0x7E) c.toChar() else '.'
+                }.joinToString("")
+                val asHex = first.joinToString(" ") { "%02x".format(it.toInt() and 0xFF) }
+                DebugLogger.i(
+                    "PlayerController",
+                    "playLocal — file size=${f.length()} bytes first64=[$asAscii] hex=$asHex",
+                )
+            }
+        }.onFailure {
+            DebugLogger.w("PlayerController", "playLocal — could not inspect file at $path", it)
+        }
         val item = MediaItem.Builder()
             .setMediaId(ep.episodeId.toString())
             .setUri(android.net.Uri.fromFile(java.io.File(path)))
