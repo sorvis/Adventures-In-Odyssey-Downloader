@@ -30,7 +30,7 @@ class OdysseyPlaybackService : MediaSessionService() {
         DebugLogger.i("PlaybackService", "onCreate — Hilt graph + MediaCache injected OK")
         try {
             val mediaSourceFactory = DefaultMediaSourceFactory(this)
-                .setDataSourceFactory(mediaCache.cacheDataSourceFactory())
+                .setDataSourceFactory(mediaCache.mediaSourceDataFactory())
             DebugLogger.d("PlaybackService", "onCreate — DataSourceFactory built")
             val player = ExoPlayer.Builder(this)
                 .setMediaSourceFactory(mediaSourceFactory)

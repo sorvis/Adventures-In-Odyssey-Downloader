@@ -38,11 +38,11 @@ class MediaCacheTest {
     }
 
     @Test
-    fun `cacheDataSourceFactory constructs a non-null factory`() {
+    fun `mediaSourceDataFactory constructs a non-null factory`() {
         val ctx = ApplicationProvider.getApplicationContext<Application>()
         val mediaCache = MediaCache(ctx)
         try {
-            val factory = mediaCache.cacheDataSourceFactory()
+            val factory = mediaCache.mediaSourceDataFactory()
             // createDataSource() must succeed without throwing — proves the
             // upstream + sink + cache are all wired correctly.
             val ds = factory.createDataSource()

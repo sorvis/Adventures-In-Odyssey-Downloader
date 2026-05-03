@@ -3,6 +3,8 @@ package com.odyssey.player
 import android.content.Context
 import androidx.media3.database.StandaloneDatabaseProvider
 import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.datasource.DataSource
+import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.cache.CacheDataSink
 import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
@@ -47,20 +49,33 @@ class MediaCache @Inject constructor(@ApplicationContext private val ctx: Contex
     }
 
     /**
-     * Build a CacheDataSource.Factory for the ExoPlayer to use. Wraps
-     * DefaultDataSource (which itself dispatches by URI scheme — http→net,
-     * file→FileDataSource, etc.) so the same factory handles both streaming
-     * and local file playback.
+     * Build the player's DataSource.Factory: file:// (and other local
+     * schemes) bypass the cache entirely; HTTP streams flow through
+     * CacheDataSource so they get progressively cached on disk.
+     *
+     * Why local files bypass: we used to wrap CacheDataSource around
+     * DefaultDataSource for everything. That produced a cache-poisoning
+     * bug — see CacheBypassingDataSource for the full story.
      */
-    fun cacheDataSourceFactory(): CacheDataSource.Factory = CacheDataSource.Factory()
-        .setCache(cache)
-        .setUpstreamDataSourceFactory(DefaultDataSource.Factory(ctx))
-        .setCacheWriteDataSinkFactory(
-            CacheDataSink.Factory().setCache(cache),
-        )
-        // If writing to cache fails (disk full, evictor mid-prune), don't
-        // fail the read — just stream straight from upstream.
-        .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
+    fun mediaSourceDataFactory(): DataSource.Factory = CacheBypassingDataSourceFactory(
+        cachedFactory = CacheDataSource.Factory()
+            .setCache(cache)
+            // Cached upstream is HTTP-only — local schemes are handled by
+            // the plain factory below, so we don't need a DefaultDataSource
+            // here that includes a FileDataSource.
+            .setUpstreamDataSourceFactory(DefaultHttpDataSource.Factory())
+            .setCacheWriteDataSinkFactory(CacheDataSink.Factory().setCache(cache))
+            // Don't fail reads when cache writes hit disk-full / evictor.
+            .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR),
+        plainFactory = DefaultDataSource.Factory(ctx),
+    )
+
+    /**
+     * @deprecated kept temporarily for any caller still on the old name.
+     * Use [mediaSourceDataFactory] for new code.
+     */
+    @Deprecated("Use mediaSourceDataFactory()", ReplaceWith("mediaSourceDataFactory()"))
+    fun cacheDataSourceFactory(): DataSource.Factory = mediaSourceDataFactory()
 
     companion object {
         const val CACHE_DIR_NAME = "media-cache"
