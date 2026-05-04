@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
-# Runs JVM tests + coverage check before letting a push out. Fails the push
-# if line coverage dropped vs coverage-baseline.txt, or if the baseline was
-# bumped and not yet committed.
+# Pre-push gate. Fails the push if line coverage dropped or the
+# baseline was bumped and not yet committed.
+#
+# Two parallel coverage ratchets:
+#   - Android JVM:    coverage-baseline.txt        (run-jvm-tests.sh)
+#   - archive-service: archive-service/coverage-baseline.txt
+#                                                  (run-tests.sh)
 #
 # Wire up once per clone:
 #   git config core.hooksPath scripts/git-hooks
@@ -10,6 +14,12 @@ set -euo pipefail
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 cd "$REPO_ROOT"
 
-printf '\n\033[1;34m[pre-push]\033[0m running JVM tests + coverage gate\n'
+step() { printf '\n\033[1;34m[pre-push]\033[0m %s\n' "$*"; }
+
+step "Android JVM tests + coverage gate"
 "$REPO_ROOT/scripts/run-jvm-tests.sh"
 "$REPO_ROOT/scripts/check-coverage.sh"
+
+step "archive-service pytest + coverage gate"
+"$REPO_ROOT/archive-service/scripts/run-tests.sh"
+"$REPO_ROOT/scripts/check-server-coverage.sh"
