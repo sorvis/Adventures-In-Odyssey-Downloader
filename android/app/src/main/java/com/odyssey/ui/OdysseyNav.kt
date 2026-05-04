@@ -9,10 +9,14 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
+import com.odyssey.ui.screens.AlbumDetailScreen
+import com.odyssey.ui.screens.AlbumListScreen
 import com.odyssey.ui.screens.BrowseNasScreen
 import com.odyssey.ui.screens.DebugScreen
 import com.odyssey.ui.screens.DownloadedScreen
@@ -22,26 +26,31 @@ import com.odyssey.ui.screens.SettingsScreen
 
 private sealed class Tab(val route: String, val label: String, val icon: androidx.compose.ui.graphics.vector.ImageVector) {
     data object Recent     : Tab("recent",     "Recent",   Icons.Default.Home)
+    data object Albums     : Tab("albums",     "Albums",   Icons.Default.Album)
     data object Downloaded : Tab("downloaded", "Library",  Icons.Default.Download)
-    data object Browse     : Tab("browse",     "NAS",      Icons.Default.Storage)
+    // Backup = self-hosted backup server (was "NAS", but the user-facing
+    // concept is "your own backup", not a Synology jargon term).
+    data object Backup     : Tab("backup",     "Backup",   Icons.Default.CloudDone)
     data object Now        : Tab("now",        "Player",   Icons.Default.PlayArrow)
     data object Settings   : Tab("settings",   "Settings", Icons.Default.Settings)
 }
 
-private val tabs = listOf(Tab.Recent, Tab.Downloaded, Tab.Browse, Tab.Now, Tab.Settings)
+private val tabs = listOf(Tab.Recent, Tab.Albums, Tab.Downloaded, Tab.Backup, Tab.Now, Tab.Settings)
 
 @Composable
 fun OdysseyNav() {
     val nav = rememberNavController()
     val backStack by nav.currentBackStackEntryAsState()
-    val current = backStack?.destination?.route ?: Tab.Recent.route
+    val currentRoute = backStack?.destination?.route ?: Tab.Recent.route
+    // Sub-routes (album/{key}, debug) shouldn't deselect the parent tab.
+    val tabRoute = tabs.firstOrNull { currentRoute.startsWith(it.route) }?.route ?: currentRoute
 
     Scaffold(
         bottomBar = {
             NavigationBar {
                 tabs.forEach { tab ->
                     NavigationBarItem(
-                        selected = current == tab.route,
+                        selected = tabRoute == tab.route,
                         onClick = {
                             nav.navigate(tab.route) {
                                 popUpTo(nav.graph.startDestinationId) { saveState = true }
@@ -58,7 +67,7 @@ fun OdysseyNav() {
     ) { padding ->
         Box(modifier = Modifier.fillMaxSize().padding(padding)) {
             NavHost(nav, startDestination = Tab.Recent.route) {
-                composable(Tab.Recent.route)   {
+                composable(Tab.Recent.route) {
                     RecentScreen(onNavigateToSettings = {
                         nav.navigate(Tab.Settings.route) {
                             popUpTo(nav.graph.startDestinationId) { saveState = true }
@@ -67,9 +76,18 @@ fun OdysseyNav() {
                         }
                     })
                 }
+                composable(Tab.Albums.route) {
+                    AlbumListScreen(onOpenAlbum = { key -> nav.navigate("album/$key") })
+                }
+                composable(
+                    route = "album/{albumKey}",
+                    arguments = listOf(navArgument("albumKey") { type = NavType.StringType }),
+                ) {
+                    AlbumDetailScreen(onBack = { nav.popBackStack() })
+                }
                 composable(Tab.Downloaded.route) { DownloadedScreen() }
-                composable(Tab.Browse.route)   { BrowseNasScreen() }
-                composable(Tab.Now.route)      { NowPlayingScreen() }
+                composable(Tab.Backup.route)     { BrowseNasScreen() }
+                composable(Tab.Now.route)        { NowPlayingScreen() }
                 composable(Tab.Settings.route) {
                     SettingsScreen(onOpenDebug = { nav.navigate("debug") })
                 }

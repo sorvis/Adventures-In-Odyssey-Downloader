@@ -122,6 +122,7 @@ kotlinc \
   android/app/src/main/java/com/odyssey/player/SeekTarget.kt \
   android/app/src/main/java/com/odyssey/catalog/AioCatalog.kt \
   android/app/src/main/java/com/odyssey/catalog/AioCatalogMatch.kt \
+  android/app/src/main/java/com/odyssey/catalog/AlbumOwnership.kt \
   android/app/src/main/java/com/odyssey/ui/screens/RecentListing.kt \
   android/app/src/main/java/com/odyssey/debug/DebugLog.kt \
   android/app/src/main/java/com/odyssey/download/DownloadProgress.kt
@@ -140,6 +141,7 @@ kotlinc \
   android/app/src/test/java/com/odyssey/player/PositionPersistenceTest.kt \
   android/app/src/test/java/com/odyssey/player/SeekTargetTest.kt \
   android/app/src/test/java/com/odyssey/catalog/AioCatalogMatchTest.kt \
+  android/app/src/test/java/com/odyssey/catalog/AlbumOwnershipTest.kt \
   android/app/src/test/java/com/odyssey/ui/screens/RecentListingTest.kt \
   android/app/src/test/java/com/odyssey/debug/DebugLogTest.kt \
   android/app/src/test/java/com/odyssey/download/DownloadProgressTest.kt
@@ -171,6 +173,7 @@ java \
   com.odyssey.player.PositionPersistenceTest \
   com.odyssey.player.SeekTargetTest \
   com.odyssey.catalog.AioCatalogMatchTest \
+  com.odyssey.catalog.AlbumOwnershipTest \
   com.odyssey.ui.screens.RecentListingTest \
   com.odyssey.debug.DebugLogTest \
   com.odyssey.download.DownloadProgressTest
