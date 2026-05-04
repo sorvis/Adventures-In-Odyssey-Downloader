@@ -29,6 +29,8 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.odyssey.app.SettingsRepo
+import com.odyssey.catalog.AioCatalogRepo
+import com.odyssey.catalog.AioMatch
 import com.odyssey.data.local.EpisodeDao
 import com.odyssey.data.local.LocalEpisodeEntity
 import com.odyssey.data.local.PlaybackDao
@@ -60,6 +62,7 @@ class RecentVm @Inject constructor(
     private val scheduler: WorkScheduler,
     private val settings: SettingsRepo,
     private val downloadProgress: DownloadProgressTracker,
+    val catalog: AioCatalogRepo,
 ) : ViewModel() {
 
     val progress = downloadProgress.progress
@@ -256,6 +259,7 @@ fun RecentScreen(
                         played = ep.episodeId in completedSet,
                         expanded = ep.episodeId in expandedIds,
                         downloadProgress = progress[ep.episodeId],
+                        match = vm.catalog.match(ep.title),
                         onToggleExpand = {
                             expandedIds = if (ep.episodeId in expandedIds) expandedIds - ep.episodeId
                                           else expandedIds + ep.episodeId
@@ -280,7 +284,15 @@ internal fun EpisodeRow(
     onDelete: (() -> Unit)? = null,
     onDownload: (() -> Unit)? = null,
     downloadProgress: DownloadProgressEntry? = null,
+    match: AioMatch? = null,
 ) {
+    // Catalog enrichment overrides oneplace's data when we have a match:
+    //   - Title becomes the canonical "#NNN: Title" (e.g. "#657: Clutter")
+    //   - Thumbnail comes from the per-episode catalog art (real episode-
+    //     specific image), not the generic show logo.
+    // Falls back to the unenriched values when no match.
+    val displayTitle = match?.displayName ?: ep.title
+    val thumbnailUrl = match?.thumbnailUrl ?: ep.imageUrl
     Column {
         ListItem(
             modifier = Modifier
@@ -289,7 +301,7 @@ internal fun EpisodeRow(
             colors = ListItemDefaults.colors(containerColor = Color.Transparent),
             leadingContent = {
                 AsyncImage(
-                    model = ep.imageUrl,
+                    model = thumbnailUrl,
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier
@@ -298,15 +310,10 @@ internal fun EpisodeRow(
                         .testTag("episode-row-thumbnail"),
                 )
             },
-            // Headline is just the title for now — we used to render
-            // "#${ep.episodeId}" but that's the oneplace.com CMS id
-            // (~1.27M), NOT the canonical AIO album/episode number
-            // (e.g. "#657 Clutter"). The real number is only available
-            // from app.adventuresinodyssey.com — see BACKLOG.md ("Better
-            // data sources for artwork + descriptions") for the plan to
-            // pull it. Until then, hide the misleading id rather than
-            // show a meaningless 7-digit number next to the title.
-            headlineContent = { Text(ep.title) },
+            // Headline shows the canonical "#NNN: Title" when the AIO
+            // catalog match exists; otherwise falls back to the bare
+            // oneplace title.
+            headlineContent = { Text(displayTitle) },
             supportingContent = {
                 Column {
                     Text(

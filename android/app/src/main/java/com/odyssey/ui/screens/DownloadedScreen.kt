@@ -17,6 +17,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.odyssey.catalog.AioCatalogRepo
 import com.odyssey.data.local.EpisodeDao
 import com.odyssey.data.local.LocalEpisodeEntity
 import com.odyssey.data.local.PlaybackDao
@@ -49,6 +50,7 @@ class DownloadedVm @Inject constructor(
     private val player: EpisodePlayer,
     private val scheduler: WorkScheduler,
     private val downloadProgress: DownloadProgressTracker,
+    val catalog: AioCatalogRepo,
 ) : ViewModel() {
 
     val progress = downloadProgress.progress
@@ -154,6 +156,7 @@ fun DownloadedScreen(vm: DownloadedVm = hiltViewModel()) {
                         played = ep.episodeId in completedSet,
                         expanded = ep.episodeId in expandedIds,
                         downloadProgress = progress[ep.episodeId],
+                        match = vm.catalog.match(ep.title),
                         onToggleExpand = {
                             expandedIds = if (ep.episodeId in expandedIds) expandedIds - ep.episodeId
                                           else expandedIds + ep.episodeId

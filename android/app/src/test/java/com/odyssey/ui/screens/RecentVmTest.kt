@@ -3,6 +3,7 @@ package com.odyssey.ui.screens
 import android.app.Application
 import androidx.test.core.app.ApplicationProvider
 import com.odyssey.app.SettingsRepo
+import com.odyssey.catalog.AioCatalogRepo
 import com.odyssey.data.local.EpisodeDao
 import com.odyssey.data.local.LocalEpisodeEntity
 import com.odyssey.data.local.PlaybackDao
@@ -111,6 +112,7 @@ class RecentVmTest {
         scheduler = WorkScheduler(ApplicationProvider.getApplicationContext()),
         settings = SettingsRepo(ApplicationProvider.getApplicationContext()),
         downloadProgress = DownloadProgressTracker(),
+        catalog = AioCatalogRepo(ApplicationProvider.getApplicationContext()),
     )
 
     private fun makeEp(
