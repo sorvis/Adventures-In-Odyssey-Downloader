@@ -71,7 +71,17 @@ class DownloadedVm @Inject constructor(
         .map { list -> list.associateBy { it.episodeId } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
+    val playerState = player.state
+
     fun play(ep: LocalEpisodeEntity) {
+        // Pause-in-place when the row's button is tapped on a row that's
+        // already playing — same Play↔Pause toggle as Recent.
+        val s = player.state.value
+        if (s.currentEpisodeId == ep.episodeId && s.isPlaying) {
+            DebugLogger.i("DownloadedVm", "play(${ep.episodeId}) — pausing in-place")
+            viewModelScope.launch { runCatching { player.pause() } }
+            return
+        }
         val src = playSourceFor(ep.filePath, ep.downloadUrl)
         val artwork = catalog.match(ep.title)?.thumbnailUrl ?: ep.imageUrl
         DebugLogger.i(
@@ -124,6 +134,7 @@ fun DownloadedScreen(vm: DownloadedVm = hiltViewModel()) {
     val completedIds by vm.completedIds.collectAsState()
     val positions by vm.positions.collectAsState()
     val progress by vm.progress.collectAsState()
+    val playerState by vm.playerState.collectAsState()
     var expandedIds by remember { mutableStateOf(setOf<Long>()) }
 
     Scaffold(topBar = { TopAppBar(title = { Text("Library") }) }) { padding ->
@@ -164,6 +175,8 @@ fun DownloadedScreen(vm: DownloadedVm = hiltViewModel()) {
                         downloadProgress = progress[ep.episodeId],
                         match = vm.catalog.match(ep.title),
                         playback = positions[ep.episodeId],
+                        isCurrentlyPlaying = playerState.currentEpisodeId == ep.episodeId &&
+                                playerState.isPlaying,
                         onToggleExpand = {
                             expandedIds = if (ep.episodeId in expandedIds) expandedIds - ep.episodeId
                                           else expandedIds + ep.episodeId

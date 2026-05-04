@@ -8,6 +8,10 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.*
 import androidx.compose.ui.Alignment
 import androidx.compose.runtime.*
@@ -120,7 +124,22 @@ class RecentVm @Inject constructor(
         return !caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)
     }
 
+    /**
+     * Live player state — exposed so the row UI can flip its primary
+     * button to a Pause icon while THIS episode is the one playing.
+     */
+    val playerState = player.state
+
     fun play(ep: LocalEpisodeEntity) {
+        // Tap on the row's button while THIS episode is already playing
+        // → pause instead of re-issuing playLocal/playStream. Otherwise
+        // dispatch as before.
+        val s = player.state.value
+        if (s.currentEpisodeId == ep.episodeId && s.isPlaying) {
+            DebugLogger.i("RecentVm", "play(${ep.episodeId}) — pausing in-place")
+            viewModelScope.launch { runCatching { player.pause() } }
+            return
+        }
         val src = playSourceFor(ep.filePath, ep.downloadUrl)
         val artwork = catalog.match(ep.title)?.thumbnailUrl ?: ep.imageUrl
         DebugLogger.i(
@@ -182,6 +201,7 @@ fun RecentScreen(
     val positions by vm.positions.collectAsState()
     val showWarning by vm.showMeteredWarning.collectAsState()
     val progress by vm.progress.collectAsState()
+    val playerState by vm.playerState.collectAsState()
     var expandedIds by remember { mutableStateOf(setOf<Long>()) }
 
     if (showWarning) {
@@ -270,6 +290,8 @@ fun RecentScreen(
                         downloadProgress = progress[ep.episodeId],
                         match = vm.catalog.match(ep.title),
                         playback = positions[ep.episodeId],
+                        isCurrentlyPlaying = playerState.currentEpisodeId == ep.episodeId &&
+                                playerState.isPlaying,
                         onToggleExpand = {
                             expandedIds = if (ep.episodeId in expandedIds) expandedIds - ep.episodeId
                                           else expandedIds + ep.episodeId
@@ -296,6 +318,13 @@ internal fun EpisodeRow(
     downloadProgress: DownloadProgressEntry? = null,
     match: AioMatch? = null,
     playback: PlaybackPositionEntity? = null,
+    /**
+     * True when THIS episode is the one the player is currently playing
+     * (vs paused or playing a different episode). Drives the Play→Pause
+     * label/icon flip on the row's primary button so transport feels
+     * continuous between row + mini-player + full player.
+     */
+    isCurrentlyPlaying: Boolean = false,
 ) {
     // Catalog enrichment overrides oneplace's data when we have a match:
     //   - Title becomes the canonical "#NNN: Title" (e.g. "#657: Clutter")
@@ -393,11 +422,31 @@ internal fun EpisodeRow(
             }
         }
         if (expanded) {
+            // "Are you sure?" gate for delete — accidental taps on the
+            // trash icon would otherwise destroy the local mp3.
+            var confirmDelete by remember { mutableStateOf(false) }
+
             Column(
                 modifier = Modifier
                     .testTag("episode-row-expanded")
                     .padding(horizontal = 16.dp, vertical = 8.dp),
             ) {
+                // Trash icon at the top-left of the expanded panel —
+                // separated from the primary action area so the user
+                // doesn't blow it away while reaching for Play.
+                if (ep.filePath != null && onDelete != null) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(
+                            onClick = { confirmDelete = true },
+                            modifier = Modifier.testTag("episode-row-delete-button"),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Delete,
+                                contentDescription = "Delete download",
+                            )
+                        }
+                    }
+                }
                 Text(
                     text = ep.description ?: "No description available.",
                     style = MaterialTheme.typography.bodyMedium,
@@ -405,23 +454,25 @@ internal fun EpisodeRow(
                 )
                 Spacer(Modifier.height(8.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    // Same button doubles as Play/Pause — when this row's
+                    // episode is the active one, the icon flips to a
+                    // pause glyph and the click pauses instead of issuing
+                    // a redundant playLocal/playStream.
                     Button(
                         onClick = onPlay,
-                        modifier = Modifier.testTag("episode-row-play-button"),
+                        modifier = Modifier.testTag(
+                            if (isCurrentlyPlaying) "episode-row-pause-button"
+                            else "episode-row-play-button",
+                        ),
                     ) {
-                        Text("Play")
-                    }
-                    // Delete is offered only when there's actually a local
-                    // file to delete (downloaded eps) AND the screen wires
-                    // a delete handler. Streaming-only rows don't show it.
-                    if (ep.filePath != null && onDelete != null) {
-                        Spacer(Modifier.width(8.dp))
-                        OutlinedButton(
-                            onClick = onDelete,
-                            modifier = Modifier.testTag("episode-row-delete-button"),
-                        ) {
-                            Text("Delete download")
-                        }
+                        Icon(
+                            imageVector = if (isCurrentlyPlaying) Icons.Default.Pause
+                                          else Icons.Default.PlayArrow,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(if (isCurrentlyPlaying) "Pause" else "Play")
                     }
                     // Download offered only on streamable rows (no local
                     // file yet) AND with a download handler wired. Lets
@@ -437,6 +488,35 @@ internal fun EpisodeRow(
                         }
                     }
                 }
+            }
+
+            if (confirmDelete && onDelete != null) {
+                AlertDialog(
+                    onDismissRequest = { confirmDelete = false },
+                    title = { Text("Delete download?") },
+                    text = {
+                        Text(
+                            "“${match?.displayName ?: ep.title}” will be removed from " +
+                                "the phone. You can re-download it later from the row.",
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(
+                            onClick = {
+                                confirmDelete = false
+                                onDelete()
+                            },
+                            modifier = Modifier.testTag("episode-row-delete-confirm"),
+                        ) { Text("Delete") }
+                    },
+                    dismissButton = {
+                        TextButton(
+                            onClick = { confirmDelete = false },
+                            modifier = Modifier.testTag("episode-row-delete-cancel"),
+                        ) { Text("Cancel") }
+                    },
+                    modifier = Modifier.testTag("episode-row-delete-dialog"),
+                )
             }
         }
     }

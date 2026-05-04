@@ -287,7 +287,11 @@ class EpisodeRowTest {
     }
 
     @Test
-    fun `tapping the delete button invokes onDelete and not onPlay`() {
+    fun `tapping the delete icon opens a confirm dialog instead of deleting immediately`() {
+        // The trash icon is intentionally gated by an "are you sure?"
+        // dialog because accidental presses would destroy the local mp3.
+        // Tapping the trash itself MUST NOT fire onDelete — the user has
+        // to confirm.
         var played = 0
         var deleted = 0
         composeRule.setContent {
@@ -301,8 +305,46 @@ class EpisodeRowTest {
             )
         }
         composeRule.onNodeWithTag("episode-row-delete-button").performClick()
-        assertTrue("onDelete should fire", deleted == 1)
-        assertTrue("onPlay should not fire from a delete tap", played == 0)
+        composeRule.onNodeWithTag("episode-row-delete-dialog").assertExists()
+        assertTrue("onDelete must NOT fire on the trash tap alone", deleted == 0)
+        assertTrue("onPlay must not fire from a delete tap", played == 0)
+    }
+
+    @Test
+    fun `confirming the delete dialog fires onDelete`() {
+        var deleted = 0
+        composeRule.setContent {
+            EpisodeRow(
+                ep = episode(filePath = "/data/odyssey/123.mp3"),
+                played = false,
+                expanded = true,
+                onToggleExpand = {},
+                onPlay = {},
+                onDelete = { deleted++ },
+            )
+        }
+        composeRule.onNodeWithTag("episode-row-delete-button").performClick()
+        composeRule.onNodeWithTag("episode-row-delete-confirm").performClick()
+        assertTrue("onDelete should fire after confirm", deleted == 1)
+    }
+
+    @Test
+    fun `cancelling the delete dialog does not fire onDelete`() {
+        var deleted = 0
+        composeRule.setContent {
+            EpisodeRow(
+                ep = episode(filePath = "/data/odyssey/123.mp3"),
+                played = false,
+                expanded = true,
+                onToggleExpand = {},
+                onPlay = {},
+                onDelete = { deleted++ },
+            )
+        }
+        composeRule.onNodeWithTag("episode-row-delete-button").performClick()
+        composeRule.onNodeWithTag("episode-row-delete-cancel").performClick()
+        assertTrue("onDelete must not fire on cancel", deleted == 0)
+        composeRule.onNodeWithTag("episode-row-delete-dialog").assertDoesNotExist()
     }
 
     @Test

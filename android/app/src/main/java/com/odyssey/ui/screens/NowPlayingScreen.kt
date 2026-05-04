@@ -3,9 +3,7 @@ package com.odyssey.ui.screens
 import android.net.Uri
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -177,45 +175,54 @@ fun NowPlayingScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 24.dp)
                 .semantics { testTagsAsResourceId = true }
                 .testTag("now-playing"),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Spacer(Modifier.height(8.dp))
-            // Big square artwork — visual anchor of the screen.
-            AsyncImage(
-                model = vm.artworkUri,
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
+            Spacer(Modifier.height(4.dp))
+            // Artwork sits inside a flexible Box so it shrinks on small
+            // screens to keep the transport row visible without scroll.
+            // weight(1f, fill = false) lets it claim leftover space but
+            // not inflate beyond its 1:1 aspect ratio.
+            Box(
                 modifier = Modifier
-                    .fillMaxWidth(0.85f)
-                    .aspectRatio(1f)
-                    .clip(RoundedCornerShape(12.dp))
-                    .testTag("now-playing-art"),
-            )
+                    .fillMaxWidth()
+                    .weight(1f, fill = false),
+                contentAlignment = Alignment.Center,
+            ) {
+                AsyncImage(
+                    model = vm.artworkUri,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .aspectRatio(1f)
+                        .clip(RoundedCornerShape(12.dp))
+                        .testTag("now-playing-art"),
+                )
+            }
 
             // Title.
             Text(
                 text = vm.title.ifBlank { "Nothing playing" },
-                style = MaterialTheme.typography.headlineSmall,
+                style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.testTag("now-playing-title"),
             )
 
-            // Description (oneplace blurb / catalog full description) —
-            // rendered when present, capped to 4 lines so it doesn't push
-            // the seek bar off-screen on small devices.
+            // Description capped to 2 lines so transport always fits
+            // without scroll. The full text lives on the row's expand
+            // panel for users who want to read all of it.
             if (vm.description.isNotBlank()) {
                 Text(
                     text = vm.description,
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 4,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.testTag("now-playing-description"),
                 )
@@ -250,30 +257,29 @@ fun NowPlayingScreen(
                 }
             }
 
-            Spacer(Modifier.height(8.dp))
             // Transport controls.
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(24.dp),
             ) {
                 IconButton(onClick = vm::back30, modifier = Modifier.testTag("back-30")) {
-                    Icon(Icons.Default.Replay, "−30s", modifier = Modifier.size(36.dp))
+                    Icon(Icons.Default.Replay, "−30s", modifier = Modifier.size(32.dp))
                 }
                 FilledIconButton(
                     onClick = vm::togglePlay,
-                    modifier = Modifier.size(80.dp).testTag("play-pause"),
+                    modifier = Modifier.size(72.dp).testTag("play-pause"),
                 ) {
                     Icon(
                         if (vm.playing) Icons.Default.Pause else Icons.Default.PlayArrow,
                         contentDescription = if (vm.playing) "Pause" else "Play",
-                        modifier = Modifier.size(40.dp),
+                        modifier = Modifier.size(36.dp),
                     )
                 }
                 IconButton(onClick = vm::fwd30, modifier = Modifier.testTag("fwd-30")) {
-                    Icon(Icons.Default.Forward30, "+30s", modifier = Modifier.size(36.dp))
+                    Icon(Icons.Default.Forward30, "+30s", modifier = Modifier.size(32.dp))
                 }
             }
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(16.dp))
         }
     }
 }

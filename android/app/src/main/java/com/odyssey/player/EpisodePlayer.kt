@@ -1,6 +1,7 @@
 package com.odyssey.player
 
 import com.odyssey.data.local.LocalEpisodeEntity
+import kotlinx.coroutines.flow.StateFlow
 
 /**
  * Minimal play surface that RecentVm depends on. Existing only so a fake
@@ -28,4 +29,31 @@ interface EpisodePlayer {
         title: String,
         artworkUrl: String? = null,
     )
+
+    /**
+     * Pauses whatever is currently playing. No-op when nothing is loaded
+     * or playback is already paused. Used by row-level Play/Pause toggles.
+     */
+    suspend fun pause()
+
+    /**
+     * Live snapshot of "what's loaded" + "is it playing right now."
+     * Row UIs collect this so the play button can flip to a pause icon
+     * when the row's episode IS the one currently playing.
+     */
+    val state: StateFlow<PlayerStateSnapshot>
+}
+
+/**
+ * What the player is doing. Updated whenever a track loads or the
+ * play/pause state changes — on a 500ms-ish cadence at worst, since
+ * Media3's onIsPlayingChanged fires synchronously on transport ticks.
+ */
+data class PlayerStateSnapshot(
+    val currentEpisodeId: Long?,
+    val isPlaying: Boolean,
+) {
+    companion object {
+        val IDLE = PlayerStateSnapshot(currentEpisodeId = null, isPlaying = false)
+    }
 }

@@ -97,18 +97,30 @@ class DownloadedVmTest {
 
     private class FakeEpisodePlayer(
         private val throwOnLocal: Boolean = false,
+        initialState: com.odyssey.player.PlayerStateSnapshot = com.odyssey.player.PlayerStateSnapshot.IDLE,
     ) : EpisodePlayer {
         val playLocalCalls = mutableListOf<LocalEpisodeEntity>()
         data class StreamCall(val episodeId: Long, val streamUrl: String, val title: String)
         val playStreamCalls = mutableListOf<StreamCall>()
+        var pauseCalls = 0
+
+        private val _state = kotlinx.coroutines.flow.MutableStateFlow(initialState)
+        override val state = _state
 
         override suspend fun playLocal(ep: LocalEpisodeEntity, artworkUrl: String?) {
             playLocalCalls += ep
             if (throwOnLocal) error("simulated playLocal failure")
+            _state.value = com.odyssey.player.PlayerStateSnapshot(ep.episodeId, isPlaying = true)
         }
 
         override suspend fun playStream(episodeId: Long, streamUrl: String, title: String, artworkUrl: String?) {
             playStreamCalls += StreamCall(episodeId, streamUrl, title)
+            _state.value = com.odyssey.player.PlayerStateSnapshot(episodeId, isPlaying = true)
+        }
+
+        override suspend fun pause() {
+            pauseCalls++
+            _state.value = _state.value.copy(isPlaying = false)
         }
     }
 

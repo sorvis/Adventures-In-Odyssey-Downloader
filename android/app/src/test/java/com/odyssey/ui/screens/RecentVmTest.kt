@@ -90,6 +90,41 @@ class RecentVmTest {
     }
 
     @Test
+    fun `play(currently-playing same ep) pauses instead of re-issuing playLocal`() = runTest {
+        // Row's button is the user-facing toggle: when this row's
+        // episode IS the one playing, tapping it must pause the player,
+        // not call playLocal/playStream again. Locks the row UX
+        // continuity the user asked for ("hit play, turns into pause").
+        val ep = makeEp(filePath = "/data/odyssey/123.mp3")
+        val fakePlayer = FakePlayer(
+            initialState = com.odyssey.player.PlayerStateSnapshot(ep.episodeId, isPlaying = true),
+        )
+        val vm = makeVm(fakePlayer)
+
+        vm.play(ep)
+
+        assertEquals("pause must be called once", 1, fakePlayer.pauseCalls)
+        assertTrue("playLocal must not fire while paused-pivoting", fakePlayer.playLocalCalls.isEmpty())
+        assertTrue("playStream must not fire either", fakePlayer.playStreamCalls.isEmpty())
+    }
+
+    @Test
+    fun `play(same ep but paused) starts playback again`() = runTest {
+        // Same episode is loaded but currently paused — tap should
+        // resume playback (call playLocal), not double-pause.
+        val ep = makeEp(filePath = "/data/odyssey/123.mp3")
+        val fakePlayer = FakePlayer(
+            initialState = com.odyssey.player.PlayerStateSnapshot(ep.episodeId, isPlaying = false),
+        )
+        val vm = makeVm(fakePlayer)
+
+        vm.play(ep)
+
+        assertEquals(0, fakePlayer.pauseCalls)
+        assertEquals(1, fakePlayer.playLocalCalls.size)
+    }
+
+    @Test
     fun `play swallows exceptions thrown by Player and logs them`() = runTest {
         val fakePlayer = FakePlayer(throwOnLocal = true)
         val vm = makeVm(fakePlayer)
@@ -136,19 +171,31 @@ class RecentVmTest {
     private class FakePlayer(
         private val throwOnLocal: Boolean = false,
         private val throwOnStream: Boolean = false,
+        initialState: com.odyssey.player.PlayerStateSnapshot = com.odyssey.player.PlayerStateSnapshot.IDLE,
     ) : EpisodePlayer {
         val playLocalCalls = mutableListOf<LocalEpisodeEntity>()
         data class StreamCall(val episodeId: Long, val streamUrl: String, val title: String)
         val playStreamCalls = mutableListOf<StreamCall>()
+        var pauseCalls = 0
+
+        private val _state = kotlinx.coroutines.flow.MutableStateFlow(initialState)
+        override val state = _state
 
         override suspend fun playLocal(ep: LocalEpisodeEntity, artworkUrl: String?) {
             playLocalCalls += ep
             if (throwOnLocal) error("simulated playLocal failure")
+            _state.value = com.odyssey.player.PlayerStateSnapshot(ep.episodeId, isPlaying = true)
         }
 
         override suspend fun playStream(episodeId: Long, streamUrl: String, title: String, artworkUrl: String?) {
             playStreamCalls += StreamCall(episodeId, streamUrl, title)
             if (throwOnStream) error("simulated playStream failure")
+            _state.value = com.odyssey.player.PlayerStateSnapshot(episodeId, isPlaying = true)
+        }
+
+        override suspend fun pause() {
+            pauseCalls++
+            _state.value = _state.value.copy(isPlaying = false)
         }
     }
 

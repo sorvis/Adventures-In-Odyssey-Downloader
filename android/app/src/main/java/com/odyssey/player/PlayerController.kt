@@ -20,7 +20,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.coroutines.resume
@@ -35,6 +39,9 @@ class PlayerController @Inject constructor(
 ) : EpisodePlayer {
     private var controller: MediaController? = null
     private var saveJob: Job? = null
+
+    private val _state = MutableStateFlow(PlayerStateSnapshot.IDLE)
+    override val state: StateFlow<PlayerStateSnapshot> = _state.asStateFlow()
 
     suspend fun connect(): MediaController {
         controller?.let {
@@ -147,6 +154,10 @@ class PlayerController @Inject constructor(
             c.setMediaItem(item, resumeMs)
             c.prepare()
             c.playWhenReady = true
+            // Optimistic state push so the row's Play→Pause flip is
+            // immediate; onIsPlayingChanged refines it once Media3's
+            // listeners run.
+            _state.value = PlayerStateSnapshot(currentEpisodeId = ep.episodeId, isPlaying = true)
             DebugLogger.d("PlayerController", "playLocal — prepare+playWhenReady issued (resume@${resumeMs}ms)")
         }.onFailure {
             DebugLogger.e("PlayerController", "playLocal — controller call threw", it)
@@ -202,6 +213,7 @@ class PlayerController @Inject constructor(
             c.setMediaItem(item, resumeMs)
             c.prepare()
             c.playWhenReady = true
+            _state.value = PlayerStateSnapshot(currentEpisodeId = episodeId, isPlaying = true)
             DebugLogger.d("PlayerController", "playStream — prepare+playWhenReady issued (resume@${resumeMs}ms)")
         }.onFailure {
             DebugLogger.e("PlayerController", "playStream — controller call threw", it)
@@ -214,6 +226,10 @@ class PlayerController @Inject constructor(
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 DebugLogger.i("ExoPlayer", "isPlaying=$isPlaying")
                 if (isPlaying) startSaveLoop(c) else { saveJob?.cancel(); persist(c) }
+                // Keep the row-level "is this the currently-playing episode"
+                // flag fresh. mediaId is the episodeId stringified.
+                val id = c.currentMediaItem?.mediaId?.toLongOrNull()
+                _state.value = PlayerStateSnapshot(currentEpisodeId = id, isPlaying = isPlaying)
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
@@ -262,8 +278,21 @@ class PlayerController @Inject constructor(
                     "ExoPlayer",
                     "mediaItem transition mediaId=${mediaItem?.mediaId ?: "null"} reason=$reason",
                 )
+                // Reflect the new media id immediately so row UIs update
+                // without waiting for the next isPlaying tick.
+                val id = mediaItem?.mediaId?.toLongOrNull()
+                _state.value = _state.value.copy(currentEpisodeId = id)
             }
         })
+    }
+
+    override suspend fun pause() {
+        // MediaController has main-thread affinity (see save-loop comment).
+        val c = controller ?: return
+        withContext(Dispatchers.Main) {
+            runCatching { c.pause() }
+                .onFailure { DebugLogger.e("PlayerController", "pause() — controller call threw", it) }
+        }
     }
 
     // MediaController has thread affinity — every read of currentMediaItem,
