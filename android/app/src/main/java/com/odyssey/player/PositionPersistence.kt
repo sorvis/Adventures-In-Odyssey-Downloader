@@ -63,3 +63,21 @@ data class PositionSnapshot(
  * post-prepare "pos=0" or post-seek "pos=savedPos but didn't play yet".
  */
 const val MIN_PERSIST_POSITION_MS: Long = 1_000L
+
+/**
+ * Where playback should start when a user taps an episode. PlayerController
+ * passes this to [androidx.media3.common.Player.setMediaItem] (the
+ * `mediaItem, startPositionMs` overload) so the load + seek happen
+ * atomically — eliminating the race where the player previously briefly
+ * played from 0 before our seekTo arrived.
+ *
+ * Pure so the resume contract can be JVM-tested without a MediaController.
+ *
+ * Returns 0 when there's no saved position OR the saved position is below
+ * MIN_PERSIST_POSITION_MS (transient artifacts that should not be honored
+ * as a resume point).
+ */
+fun resumeStartPositionMs(savedPositionMs: Long?): Long {
+    val pos = savedPositionMs ?: return 0L
+    return if (pos > MIN_PERSIST_POSITION_MS) pos else 0L
+}

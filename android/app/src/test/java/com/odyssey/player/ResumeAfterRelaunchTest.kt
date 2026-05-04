@@ -22,13 +22,16 @@ import org.robolectric.annotation.Config
  *
  * The seek-to-saved-position step itself happens on a real
  * MediaController inside PlayerController.playLocal/playStream, which
- * we can't run on the JVM. What WE can lock is the data leg of the
- * contract — saved positions survive an app shutdown and come back as
- * the right Long for PlayerController to seek to.
+ * we can't run on the JVM. The previous version of this test only
+ * proved that the *DB layer* round-tripped the position — it didn't
+ * cover the actual logic PlayerController uses to derive the start
+ * position passed to setMediaItem(item, startMs). That gap is exactly
+ * what let the "resume doesn't work" bug ship.
  *
- * This test runs against a file-backed Room DB so close + reopen
- * actually goes through SQLite persistence (not in-memory state),
- * matching what the real app does between launches.
+ * This test now exercises both legs: file-backed Room close+reopen
+ * AND `resumeStartPositionMs(...)` — the same pure helper
+ * PlayerController feeds into Media3's atomic setMediaItem-with-start
+ * overload.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(application = Application::class, sdk = [33])
@@ -81,6 +84,15 @@ class ResumeAfterRelaunchTest {
         val ep = db2.episodes().byId(episodeId)
         assertNotNull("episode row must come back after relaunch", ep)
         assertEquals("War of the Words", ep!!.title)
+        // Same call PlayerController makes when starting playback. The
+        // value returned here is what gets handed to setMediaItem(item,
+        // startMs) — verifying it equals the saved offset locks the
+        // user-visible "tap → resume from 10:00" contract.
+        assertEquals(
+            "resume helper must return the saved offset",
+            resumeAtMs,
+            resumeStartPositionMs(saved.positionMs),
+        )
         db2.close()
     }
 
@@ -96,7 +108,11 @@ class ResumeAfterRelaunchTest {
         db1.close()
 
         val db2 = openDb()
-        assertEquals(null, db2.playback().get(episodeId))
+        val saved = db2.playback().get(episodeId)
+        assertEquals(null, saved)
+        // PlayerController feeds the (null) offset into the helper —
+        // the resume target must be 0 so playback starts at the top.
+        assertEquals(0L, resumeStartPositionMs(saved?.positionMs))
         db2.close()
     }
 
@@ -122,7 +138,9 @@ class ResumeAfterRelaunchTest {
         db1.close()
 
         val db2 = openDb()
-        assertEquals(mostRecentMs, db2.playback().get(episodeId)!!.positionMs)
+        val saved = db2.playback().get(episodeId)!!
+        assertEquals(mostRecentMs, saved.positionMs)
+        assertEquals(mostRecentMs, resumeStartPositionMs(saved.positionMs))
         db2.close()
     }
 

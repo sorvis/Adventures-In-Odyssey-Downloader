@@ -2,6 +2,7 @@ package com.odyssey.player
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -137,5 +138,42 @@ class PositionPersistenceTest {
     @Test
     fun `shouldPersist rejects negative input defensively`() {
         assertFalse(shouldPersist(-1L))
+    }
+
+    // ----- resumeStartPositionMs -------------------------------------
+    //
+    // This is the helper PlayerController feeds into setMediaItem(item,
+    // startPositionMs). The user-reported "resume doesn't work after
+    // relaunch / Continue listening" bug lived in that pipeline — these
+    // tests pin the contract.
+
+    @Test
+    fun `resumeStartPositionMs is 0 when nothing was ever saved`() {
+        // Fresh-install or brand-new episode: no row in playback table.
+        assertEquals(0L, resumeStartPositionMs(null))
+    }
+
+    @Test
+    fun `resumeStartPositionMs returns saved offset for a real listening position`() {
+        // The realistic scenario from the user report: closed app at
+        // 10:00 of a 25:00 episode, reopen, tap → resume.
+        val tenMin = 10 * 60_000L
+        assertEquals(tenMin, resumeStartPositionMs(tenMin))
+        // And a couple representative offsets to make sure we're not
+        // accidentally clamping or rounding.
+        assertEquals(45_000L, resumeStartPositionMs(45_000L))
+        assertEquals(1_530_000L, resumeStartPositionMs(1_530_000L))
+    }
+
+    @Test
+    fun `resumeStartPositionMs ignores transient sub-threshold artifacts`() {
+        // The same threshold logic as shouldPersist — a saved offset
+        // below MIN_PERSIST_POSITION_MS came from a setMediaItem
+        // transient and should not be honored as a resume target.
+        assertEquals(0L, resumeStartPositionMs(0L))
+        assertEquals(0L, resumeStartPositionMs(MIN_PERSIST_POSITION_MS))
+        assertEquals(0L, resumeStartPositionMs(500L))
+        // Just above threshold: honored.
+        assertNotEquals(0L, resumeStartPositionMs(MIN_PERSIST_POSITION_MS + 1))
     }
 }

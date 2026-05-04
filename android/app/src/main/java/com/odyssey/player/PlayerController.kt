@@ -136,12 +136,18 @@ class PlayerController @Inject constructor(
                     .build()
             )
             .build()
+        // Look up resume position BEFORE touching the controller so the
+        // load+seek can happen atomically via setMediaItem(item, startMs).
+        // Doing them as separate setMediaItem→prepare→seekTo calls used
+        // to race: the player would briefly play from 0 before our seek
+        // landed (or drop the seek entirely if prepare hadn't built the
+        // timeline yet).
+        val resumeMs = resumeStartPositionMs(playback.get(ep.episodeId)?.positionMs)
         runCatching {
-            c.setMediaItem(item)
+            c.setMediaItem(item, resumeMs)
             c.prepare()
-            playback.get(ep.episodeId)?.let { c.seekTo(it.positionMs) }
             c.playWhenReady = true
-            DebugLogger.d("PlayerController", "playLocal — prepare+playWhenReady issued")
+            DebugLogger.d("PlayerController", "playLocal — prepare+playWhenReady issued (resume@${resumeMs}ms)")
         }.onFailure {
             DebugLogger.e("PlayerController", "playLocal — controller call threw", it)
         }
@@ -191,12 +197,12 @@ class PlayerController @Inject constructor(
                     .build()
             )
             .build()
+        val resumeMs = resumeStartPositionMs(playback.get(episodeId)?.positionMs)
         runCatching {
-            c.setMediaItem(item)
+            c.setMediaItem(item, resumeMs)
             c.prepare()
-            playback.get(episodeId)?.let { c.seekTo(it.positionMs) }
             c.playWhenReady = true
-            DebugLogger.d("PlayerController", "playStream — prepare+playWhenReady issued")
+            DebugLogger.d("PlayerController", "playStream — prepare+playWhenReady issued (resume@${resumeMs}ms)")
         }.onFailure {
             DebugLogger.e("PlayerController", "playStream — controller call threw", it)
         }
