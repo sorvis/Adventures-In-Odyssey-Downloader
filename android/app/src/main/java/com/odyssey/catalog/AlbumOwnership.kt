@@ -48,6 +48,48 @@ fun ownershipSummary(row: AlbumWithOwnership): String = buildString {
 }
 
 /**
+ * User-selectable orderings for the Albums tab.
+ *
+ *   Default       – the canonical AIO ordering (numeric desc, non-numeric
+ *                   collections at the bottom). Same shape joinAlbumOwnership
+ *                   produces; matches what shipped before sort was added.
+ *   Chronological – ascending numeric (oldest first), so a listener who
+ *                   wants to start at #1 and work forward gets that order.
+ *   MostDownloaded – highest fraction of downloaded episodes first, so
+ *                   the albums you're actively collecting float to the top.
+ */
+enum class AlbumSort { Default, Chronological, MostDownloaded }
+
+/**
+ * Pure sort helper. Stable secondary key on [albumOrder] so ties (e.g.
+ * a bunch of albums all at 0% downloaded) don't shuffle on recompose.
+ */
+fun sortAlbums(
+    albums: List<AlbumWithOwnership>,
+    mode: AlbumSort,
+): List<AlbumWithOwnership> = when (mode) {
+    AlbumSort.Default -> albums.sortedWith(albumOrder)
+    AlbumSort.Chronological -> albums.sortedWith(chronologicalOrder.then(albumOrder))
+    AlbumSort.MostDownloaded -> albums.sortedWith(
+        compareByDescending<AlbumWithOwnership> { downloadedRatio(it) }.then(albumOrder),
+    )
+}
+
+private fun downloadedRatio(row: AlbumWithOwnership): Double =
+    if (row.totalCount == 0) 0.0 else row.downloadedCount.toDouble() / row.totalCount
+
+private val chronologicalOrder: Comparator<AlbumWithOwnership> = Comparator { a, b ->
+    val aNum = a.album.albumNumber?.toDoubleOrNull()
+    val bNum = b.album.albumNumber?.toDoubleOrNull()
+    when {
+        aNum != null && bNum != null -> aNum.compareTo(bNum)        // numeric asc
+        aNum != null -> -1                                          // numeric before non-numeric
+        bNum != null -> 1
+        else -> (a.album.albumNumber ?: "").compareTo(b.album.albumNumber ?: "")
+    }
+}
+
+/**
  * A minimal view of a local episode that the joiner needs. Keeps the
  * pure helper free of Room dependencies — callers map their
  * LocalEpisodeEntity to this shape.

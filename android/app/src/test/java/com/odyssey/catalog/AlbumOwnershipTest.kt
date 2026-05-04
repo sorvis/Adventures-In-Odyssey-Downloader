@@ -126,4 +126,50 @@ class AlbumOwnershipTest {
         val a51 = joinAlbumOwnership(sampleCatalog, locals).first { it.album.albumNumber == "51" }
         assertEquals("3 of 3 downloaded", ownershipSummary(a51))
     }
+
+    // ---- sortAlbums --------------------------------------------------
+
+    @Test
+    fun `sortAlbums Default matches the joined order`() {
+        // joinAlbumOwnership already applies albumOrder; Default mode
+        // must be a no-op so users who never touch the menu see
+        // unchanged behavior.
+        val joined = joinAlbumOwnership(sampleCatalog, emptyList())
+        assertEquals(joined, sortAlbums(joined, AlbumSort.Default))
+    }
+
+    @Test
+    fun `sortAlbums Chronological lists oldest first numerically`() {
+        // Default sort returns 81, 51, OHC. Chronological is 51, 81, OHC
+        // (numeric asc; non-numeric still at the bottom).
+        val joined = joinAlbumOwnership(sampleCatalog, emptyList())
+        val chrono = sortAlbums(joined, AlbumSort.Chronological)
+        assertEquals(listOf("51", "81", "OHC"), chrono.map { it.album.albumNumber })
+    }
+
+    @Test
+    fun `sortAlbums MostDownloaded floats high-fraction albums to the top`() {
+        // Album 51 has 3 episodes, 2 downloaded → 66%.
+        // Album 81 has 1 episode,  1 downloaded → 100%.
+        // Album OHC has 1 episode,  0 downloaded → 0%.
+        // Expected order: 81 (100%), 51 (66%), OHC (0%).
+        val locals = listOf(
+            LocalEpisodeKey("Clutter", hasFile = true),
+            LocalEpisodeKey("War of the Words", hasFile = true),
+            LocalEpisodeKey("Never a Dull Moment", hasFile = true),
+        )
+        val joined = joinAlbumOwnership(sampleCatalog, locals)
+        val byPct = sortAlbums(joined, AlbumSort.MostDownloaded)
+        assertEquals(listOf("81", "51", "OHC"), byPct.map { it.album.albumNumber })
+    }
+
+    @Test
+    fun `sortAlbums MostDownloaded breaks ties stably with albumOrder`() {
+        // All three albums at 0% — secondary sort by albumOrder must
+        // give a deterministic ordering (numeric desc, non-numeric at
+        // bottom) so the list doesn't shuffle on recompose.
+        val joined = joinAlbumOwnership(sampleCatalog, emptyList())
+        val byPct = sortAlbums(joined, AlbumSort.MostDownloaded)
+        assertEquals(listOf("81", "51", "OHC"), byPct.map { it.album.albumNumber })
+    }
 }
