@@ -135,10 +135,10 @@ oneplace.com's API:
   the `setMediaSourceFactory` + the `@Inject MediaCache` until we add
   a service-construction Robolectric test.
 
-- **Settings → retention field looks broken.** The control for
-  "downloaded-episode retention" doesn't appear to behave correctly in
-  the UI. Need to reproduce, narrow down (is it the editor, the saved
-  value, or the worker that uses it?), and fix.
+- ~~**Settings → retention field looks broken.**~~ Likely resolved
+  by the verticalScroll fix in commit `139bc20` — the field was
+  below the fold and clipped, so the Save button wasn't reachable.
+  Re-test on v0.1.16+ before reopening if it still misbehaves.
 
 ---
 

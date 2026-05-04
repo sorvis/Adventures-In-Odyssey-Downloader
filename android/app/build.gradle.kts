@@ -67,7 +67,7 @@ android {
 }
 
 dependencies {
-    val composeBom = platform("androidx.compose:compose-bom:2024.11.00")
+    val composeBom = platform("androidx.compose:compose-bom:2024.12.01")
     implementation(composeBom)
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
@@ -104,13 +104,15 @@ dependencies {
     implementation("com.jakewharton.retrofit:retrofit2-kotlinx-serialization-converter:1.0.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
 
-    // HTML scraping (oneplace bootstrap regex is regex-only; jsoup kept for AIO fallback)
-    implementation("org.jsoup:jsoup:1.18.1")
+    // HTML scraping (oneplace bootstrap regex is regex-only; jsoup kept for AIO fallback).
+    // 1.18.3+ patches CVE-2024-36041 (DoS via maliciously crafted HTML) flagged
+    // in earlier versions.
+    implementation("org.jsoup:jsoup:1.18.3")
 
     // Media3 (ExoPlayer + MediaSession)
-    implementation("androidx.media3:media3-exoplayer:1.5.0")
-    implementation("androidx.media3:media3-session:1.5.0")
-    implementation("androidx.media3:media3-ui:1.5.0")
+    implementation("androidx.media3:media3-exoplayer:1.5.1")
+    implementation("androidx.media3:media3-session:1.5.1")
+    implementation("androidx.media3:media3-ui:1.5.1")
 
     // Coil — async image loading for the row thumbnail (and any future
     // artwork-driven UI). Works against the Compose BOM in use.
