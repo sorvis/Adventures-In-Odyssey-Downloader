@@ -73,12 +73,16 @@ class AlbumDetailVm @Inject constructor(
             DebugLogger.w("AlbumDetailVm", "play() — no local row for ${row.catalogEp.name}")
             return
         }
+        // Album detail already has a high-quality catalog thumbnail —
+        // pass it through to the player so MiniPlayer + NowPlayingScreen
+        // get the right per-episode art on lockscreen.
+        val artwork = row.catalogEp.thumbnailMedium ?: row.catalogEp.thumbnailSmall ?: local.imageUrl
         DebugLogger.i("AlbumDetailVm", "play(${local.episodeId}) from album detail")
         viewModelScope.launch {
             try {
                 when (playSourceFor(local.filePath, local.downloadUrl)) {
-                    is PlaySource.Local -> player.playLocal(local)
-                    is PlaySource.Stream -> player.playStream(local.episodeId, local.downloadUrl, local.title)
+                    is PlaySource.Local -> player.playLocal(local, artwork)
+                    is PlaySource.Stream -> player.playStream(local.episodeId, local.downloadUrl, local.title, artwork)
                 }
             } catch (t: Throwable) {
                 DebugLogger.e("AlbumDetailVm", "play threw", t)

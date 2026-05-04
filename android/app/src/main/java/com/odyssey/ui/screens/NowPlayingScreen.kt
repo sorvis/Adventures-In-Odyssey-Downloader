@@ -1,6 +1,9 @@
 package com.odyssey.ui.screens
 
+import android.net.Uri
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -8,14 +11,19 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTagsAsResourceId
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.media3.session.MediaController
+import coil.compose.AsyncImage
 import com.odyssey.player.PlayerController
 import com.odyssey.player.seekTargetMs
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -30,6 +38,10 @@ class NowPlayingVm @Inject constructor(private val player: PlayerController) : V
     var durationMs by mutableStateOf(0L); private set
     var playing by mutableStateOf(false); private set
     var title by mutableStateOf(""); private set
+    var artworkUri by mutableStateOf<Uri?>(null); private set
+
+    /** Has anything ever been loaded? Drives MiniPlayer visibility. */
+    val hasContent: Boolean get() = title.isNotEmpty() || artworkUri != null
 
     init {
         viewModelScope.launch {
@@ -39,7 +51,9 @@ class NowPlayingVm @Inject constructor(private val player: PlayerController) : V
                 positionMs = c.currentPosition
                 durationMs = c.duration.coerceAtLeast(0)
                 playing = c.isPlaying
-                title = c.currentMediaItem?.mediaMetadata?.title?.toString().orEmpty()
+                val item = c.currentMediaItem
+                title = item?.mediaMetadata?.title?.toString().orEmpty()
+                artworkUri = item?.mediaMetadata?.artworkUri
                 delay(500)
             }
         }
@@ -56,11 +70,80 @@ class NowPlayingVm @Inject constructor(private val player: PlayerController) : V
     }
 }
 
-@OptIn(ExperimentalComposeUiApi::class)
+/**
+ * Persistent mini-player above the bottom NavigationBar. Renders only
+ * when there's something to show. Tap → onExpand (caller navigates to
+ * full NowPlayingScreen).
+ */
 @Composable
-fun NowPlayingScreen(vm: NowPlayingVm = hiltViewModel()) {
-    // While the user is dragging the seek bar, the position observer
-    // shouldn't fight the gesture — show the dragged value instead.
+fun MiniPlayerBar(
+    onExpand: () -> Unit,
+    vm: NowPlayingVm = hiltViewModel(),
+) {
+    if (!vm.hasContent) return
+    Surface(
+        tonalElevation = 3.dp,
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("mini-player"),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .clickable(onClick = onExpand)
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+        ) {
+            AsyncImage(
+                model = vm.artworkUri,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(RoundedCornerShape(6.dp)),
+            )
+            Spacer(Modifier.width(10.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = vm.title.ifBlank { "Nothing playing" },
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (vm.durationMs > 0) {
+                    LinearProgressIndicator(
+                        progress = { (vm.positionMs.toFloat() / vm.durationMs).coerceIn(0f, 1f) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 4.dp)
+                            .testTag("mini-progress"),
+                    )
+                }
+            }
+            IconButton(
+                onClick = vm::togglePlay,
+                modifier = Modifier.testTag("mini-play-pause"),
+            ) {
+                Icon(
+                    if (vm.playing) Icons.Default.Pause else Icons.Default.PlayArrow,
+                    contentDescription = if (vm.playing) "Pause" else "Play",
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Full-screen player. Modeled on BeyondPod's player: down-arrow back
+ * at top, big square artwork, title, position/-remaining time labels,
+ * draggable seek bar, ±30s skip + big play/pause.
+ */
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalComposeUiApi::class)
+@Composable
+fun NowPlayingScreen(
+    onBack: () -> Unit = {},
+    vm: NowPlayingVm = hiltViewModel(),
+) {
     var dragging by remember { mutableStateOf(false) }
     var dragFrac by remember { mutableStateOf(0f) }
 
@@ -68,71 +151,117 @@ fun NowPlayingScreen(vm: NowPlayingVm = hiltViewModel()) {
     val knownDuration = durationMs > 0
     val livePos = vm.positionMs
     val displayPos = if (dragging) (dragFrac * durationMs).toLong() else livePos
-    val sliderValue = if (dragging) {
-        dragFrac
-    } else if (knownDuration) {
-        (livePos.toFloat() / durationMs).coerceIn(0f, 1f)
-    } else 0f
+    val sliderValue = if (dragging) dragFrac else if (knownDuration)
+        (livePos.toFloat() / durationMs).coerceIn(0f, 1f) else 0f
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp)
-            .semantics { testTagsAsResourceId = true }
-            .testTag("now-playing"),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-    ) {
-        Text(
-            vm.title.ifBlank { "Nothing playing" },
-            style = MaterialTheme.typography.headlineSmall,
-            modifier = Modifier.testTag("now-playing-title"),
-        )
-        Spacer(Modifier.height(24.dp))
-        if (knownDuration) {
-            // Draggable seek bar — Material3 Slider is the standard
-            // Compose-native answer; releasing the thumb commits the
-            // seek via vm.seekTo. While dragging we show the drag
-            // value so the time label tracks the user's finger.
-            Slider(
-                value = sliderValue,
-                onValueChange = { v ->
-                    dragging = true
-                    dragFrac = v
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = {},
+                navigationIcon = {
+                    IconButton(
+                        onClick = onBack,
+                        modifier = Modifier.testTag("now-playing-collapse"),
+                    ) {
+                        Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Back to list")
+                    }
                 },
-                onValueChangeFinished = {
-                    vm.seekTo(seekTargetMs(dragFrac, durationMs))
-                    dragging = false
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("seek-bar"),
             )
+        },
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .padding(horizontal = 24.dp)
+                .semantics { testTagsAsResourceId = true }
+                .testTag("now-playing"),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
             Spacer(Modifier.height(8.dp))
-            Text(
-                text = "${fmt(displayPos)} / ${fmt(durationMs)}",
-                modifier = Modifier.testTag("position"),
+            // Big square artwork — visual anchor of the screen.
+            AsyncImage(
+                model = vm.artworkUri,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .fillMaxWidth(0.85f)
+                    .aspectRatio(1f)
+                    .clip(RoundedCornerShape(12.dp))
+                    .testTag("now-playing-art"),
             )
-        }
-        Spacer(Modifier.height(24.dp))
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            IconButton(onClick = vm::back30, modifier = Modifier.testTag("back-30")) {
-                Icon(Icons.Default.Replay, "−30s")
+
+            // Title.
+            Text(
+                text = vm.title.ifBlank { "Nothing playing" },
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.testTag("now-playing-title"),
+            )
+
+            // Seek bar + position/remaining row.
+            if (knownDuration) {
+                Slider(
+                    value = sliderValue,
+                    onValueChange = { v -> dragging = true; dragFrac = v },
+                    onValueChangeFinished = {
+                        vm.seekTo(seekTargetMs(dragFrac, durationMs))
+                        dragging = false
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("seek-bar"),
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(fmt(displayPos), style = MaterialTheme.typography.labelMedium,
+                        modifier = Modifier.testTag("position"))
+                    // Remaining time as a negative — matches BeyondPod and
+                    // most podcast apps.
+                    Text(
+                        text = "-" + fmt((durationMs - displayPos).coerceAtLeast(0)),
+                        style = MaterialTheme.typography.labelMedium,
+                        modifier = Modifier.testTag("remaining"),
+                    )
+                }
             }
-            FilledIconButton(
-                onClick = vm::togglePlay,
-                modifier = Modifier.size(72.dp).testTag("play-pause"),
+
+            Spacer(Modifier.height(8.dp))
+            // Transport controls.
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(24.dp),
             ) {
-                Icon(if (vm.playing) Icons.Default.Pause else Icons.Default.PlayArrow, "play/pause")
-            }
-            IconButton(onClick = vm::fwd30, modifier = Modifier.testTag("fwd-30")) {
-                Icon(Icons.Default.Forward30, "+30s")
+                IconButton(onClick = vm::back30, modifier = Modifier.testTag("back-30")) {
+                    Icon(Icons.Default.Replay, "−30s", modifier = Modifier.size(36.dp))
+                }
+                FilledIconButton(
+                    onClick = vm::togglePlay,
+                    modifier = Modifier.size(80.dp).testTag("play-pause"),
+                ) {
+                    Icon(
+                        if (vm.playing) Icons.Default.Pause else Icons.Default.PlayArrow,
+                        contentDescription = if (vm.playing) "Pause" else "Play",
+                        modifier = Modifier.size(40.dp),
+                    )
+                }
+                IconButton(onClick = vm::fwd30, modifier = Modifier.testTag("fwd-30")) {
+                    Icon(Icons.Default.Forward30, "+30s", modifier = Modifier.size(36.dp))
+                }
             }
         }
     }
 }
 
 private fun fmt(ms: Long): String {
-    val s = ms / 1000
-    return "%d:%02d".format(s / 60, s % 60)
+    val totalSec = ms / 1000
+    val h = totalSec / 3600
+    val m = (totalSec % 3600) / 60
+    val s = totalSec % 60
+    return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
 }

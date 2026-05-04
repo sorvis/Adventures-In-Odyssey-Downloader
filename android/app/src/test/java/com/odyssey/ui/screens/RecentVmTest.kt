@@ -141,12 +141,12 @@ class RecentVmTest {
         data class StreamCall(val episodeId: Long, val streamUrl: String, val title: String)
         val playStreamCalls = mutableListOf<StreamCall>()
 
-        override suspend fun playLocal(ep: LocalEpisodeEntity) {
+        override suspend fun playLocal(ep: LocalEpisodeEntity, artworkUrl: String?) {
             playLocalCalls += ep
             if (throwOnLocal) error("simulated playLocal failure")
         }
 
-        override suspend fun playStream(episodeId: Long, streamUrl: String, title: String) {
+        override suspend fun playStream(episodeId: Long, streamUrl: String, title: String, artworkUrl: String?) {
             playStreamCalls += StreamCall(episodeId, streamUrl, title)
             if (throwOnStream) error("simulated playStream failure")
         }

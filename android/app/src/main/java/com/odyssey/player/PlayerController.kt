@@ -65,7 +65,7 @@ class PlayerController @Inject constructor(
         }
     }
 
-    override suspend fun playLocal(ep: LocalEpisodeEntity) {
+    override suspend fun playLocal(ep: LocalEpisodeEntity, artworkUrl: String?) {
         DebugLogger.i("PlayerController", "playLocal(${ep.episodeId}) path=${ep.filePath}")
         val c = try {
             connect()
@@ -120,12 +120,17 @@ class PlayerController @Inject constructor(
         }.onFailure {
             DebugLogger.w("PlayerController", "playLocal — could not inspect file at $path", it)
         }
+        val art = artworkUrl ?: ep.imageUrl
         val item = MediaItem.Builder()
             .setMediaId(ep.episodeId.toString())
             .setUri(android.net.Uri.fromFile(java.io.File(path)))
             .setMediaMetadata(
                 MediaMetadata.Builder()
                     .setTitle(ep.title).setArtist("Adventures in Odyssey")
+                    .apply {
+                        art?.takeIf { it.isNotBlank() }
+                            ?.let { setArtworkUri(android.net.Uri.parse(it)) }
+                    }
                     .build()
             )
             .build()
@@ -140,7 +145,12 @@ class PlayerController @Inject constructor(
         }
     }
 
-    override suspend fun playStream(episodeId: Long, streamUrl: String, title: String) {
+    override suspend fun playStream(
+        episodeId: Long,
+        streamUrl: String,
+        title: String,
+        artworkUrl: String?,
+    ) {
         DebugLogger.i("PlayerController", "playStream($episodeId) url=$streamUrl")
         val c = try {
             connect()
@@ -169,7 +179,15 @@ class PlayerController @Inject constructor(
             // CDN-token rotation in the streamUrl (oneplace's mp3 URLs
             // include rotating query params).
             .setCustomCacheKey(episodeId.toString())
-            .setMediaMetadata(MediaMetadata.Builder().setTitle(title).build())
+            .setMediaMetadata(
+                MediaMetadata.Builder()
+                    .setTitle(title)
+                    .apply {
+                        artworkUrl?.takeIf { it.isNotBlank() }
+                            ?.let { setArtworkUri(android.net.Uri.parse(it)) }
+                    }
+                    .build()
+            )
             .build()
         runCatching {
             c.setMediaItem(item)

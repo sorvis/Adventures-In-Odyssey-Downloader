@@ -115,6 +115,7 @@ class RecentVm @Inject constructor(
 
     fun play(ep: LocalEpisodeEntity) {
         val src = playSourceFor(ep.filePath, ep.downloadUrl)
+        val artwork = catalog.match(ep.title)?.thumbnailUrl ?: ep.imageUrl
         DebugLogger.i(
             "RecentVm",
             "play(${ep.episodeId}) — ${if (src is PlaySource.Local) "local" else "stream"}",
@@ -122,8 +123,8 @@ class RecentVm @Inject constructor(
         viewModelScope.launch {
             try {
                 when (src) {
-                    is PlaySource.Local -> player.playLocal(ep)
-                    is PlaySource.Stream -> player.playStream(ep.episodeId, ep.downloadUrl, ep.title)
+                    is PlaySource.Local -> player.playLocal(ep, artwork)
+                    is PlaySource.Stream -> player.playStream(ep.episodeId, ep.downloadUrl, ep.title, artwork)
                 }
             } catch (t: Throwable) {
                 DebugLogger.e("RecentVm", "play(${ep.episodeId}) — dispatch threw", t)

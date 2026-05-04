@@ -16,6 +16,16 @@ import com.odyssey.data.local.LocalEpisodeEntity
  * PlayerController for the Player.Listener nested type.
  */
 interface EpisodePlayer {
-    suspend fun playLocal(ep: LocalEpisodeEntity)
-    suspend fun playStream(episodeId: Long, streamUrl: String, title: String)
+    /**
+     * @param artworkUrl optional override for the artwork on the
+     * MediaItem's metadata (used by lockscreen, MiniPlayer, NowPlaying
+     * screen). When null, falls back to the entity's own imageUrl.
+     */
+    suspend fun playLocal(ep: LocalEpisodeEntity, artworkUrl: String? = null)
+    suspend fun playStream(
+        episodeId: Long,
+        streamUrl: String,
+        title: String,
+        artworkUrl: String? = null,
+    )
 }
