@@ -3,6 +3,7 @@ package com.odyssey.app
 import android.content.Context
 import androidx.room.Room
 import com.odyssey.data.local.MIGRATION_1_2
+import com.odyssey.data.local.MIGRATION_2_3
 import com.odyssey.data.local.OdysseyDb
 import com.odyssey.data.local.EpisodeDao
 import com.odyssey.data.local.PlaybackDao
@@ -22,7 +23,7 @@ object AppModule {
     @Provides @Singleton
     fun provideDb(@ApplicationContext ctx: Context): OdysseyDb =
         Room.databaseBuilder(ctx, OdysseyDb::class.java, "odyssey.db")
-            .addMigrations(MIGRATION_1_2)
+            .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
             .build()
 
     @Provides fun provideEpisodeDao(db: OdysseyDb): EpisodeDao = db.episodes()

@@ -11,6 +11,9 @@ import com.odyssey.app.SettingsRepo
 import com.odyssey.data.local.EpisodeDao
 import com.odyssey.data.local.OdysseyDb
 import com.odyssey.scrape.OneplaceClient
+import com.odyssey.show.AioOneplaceProvider
+import com.odyssey.show.ProviderEpisode
+import com.odyssey.show.ShowProvider
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
@@ -48,10 +51,18 @@ class DailyCheckWorkerTest {
     private lateinit var ctx: Application
     private lateinit var server: MockWebServer
     private lateinit var oneplace: OneplaceClient
+    private lateinit var aioProvider: AioOneplaceProvider
     private lateinit var db: OdysseyDb
     private lateinit var episodes: EpisodeDao
     private lateinit var settings: SettingsRepo
     private lateinit var enqueuer: RecordingEnqueuer
+
+    /**
+     * Providers passed to the worker. Default is just AIO (matches the
+     * production Hilt graph today). Tests that exercise multi-provider
+     * iteration can override before calling buildWorker().
+     */
+    private var providers: Set<ShowProvider> = emptySet()
 
     @Before
     fun setUp() {
@@ -62,6 +73,8 @@ class DailyCheckWorkerTest {
             listenUrl = server.url("/listen").toString()
             apiUrl = server.url("/api").toString()
         }
+        aioProvider = AioOneplaceProvider(oneplace)
+        providers = setOf(aioProvider)
         db = Room.inMemoryDatabaseBuilder(ctx, OdysseyDb::class.java).allowMainThreadQueries().build()
         episodes = db.episodes()
         settings = SettingsRepo(ctx)
@@ -98,6 +111,8 @@ class DailyCheckWorkerTest {
         assertEquals("expected 7 episodes ingested on fresh install", 7, rows.size)
         // All ingested rows should be undownloaded (filePath null).
         assertTrue("rows should not have filePath set yet", rows.all { it.filePath == null })
+        // All rows are tagged with their source provider (H-lite).
+        assertTrue("all rows should have providerId='aio'", rows.all { it.providerId == "aio" })
 
         // One download enqueue per episode.
         assertEquals(7, enqueuer.calls.size)
@@ -161,6 +176,49 @@ class DailyCheckWorkerTest {
     }
 
     @Test
+    fun `multiple providers each contribute episodes tagged with their providerId`() = runBlocking {
+        // AIO still pulls its 7 episodes; a second fake provider returns
+        // 2 of its own. Ingest is the union; rows are tagged correctly.
+        server.enqueue(html(loadFixture("/oneplace/listen.html")))
+        server.enqueue(json(loadFixture("/oneplace/api_page1.json")))
+        server.enqueue(json(loadFixture("/oneplace/api_page2.json")))
+
+        val fake = FakeShowProvider(
+            id = "fake",
+            displayName = "Fake Show",
+            artistName = "Fake Show",
+            episodes = listOf(
+                fakeEpisode(externalId = "9000000001", title = "Fake A"),
+                fakeEpisode(externalId = "9000000002", title = "Fake B"),
+            ),
+        )
+        providers = setOf(aioProvider, fake)
+
+        val worker = buildWorker()
+        val result = worker.doWork()
+        assertEquals(ListenableWorker.Result.success(), result)
+
+        val rows = episodes.observeAll().first()
+        // 7 AIO + 2 fake = 9 total rows.
+        assertEquals(9, rows.size)
+        assertEquals(7, rows.count { it.providerId == "aio" })
+        assertEquals(2, rows.count { it.providerId == "fake" })
+
+        // Both fake rows enqueued for download just like AIO ones.
+        val fakeIds = setOf(9000000001L, 9000000002L)
+        assertTrue(
+            "fake provider episodes should also be enqueued",
+            enqueuer.calls.any { it.episodeId in fakeIds },
+        )
+        assertEquals(9, enqueuer.calls.size)
+
+        // lastSeen is updated to the AIO newest only (fake provider's
+        // state isn't tracked in SettingsRepo in H-lite).
+        val s = settings.flow.first()
+        assertEquals(1278383L, s.lastSeenEpisodeId)
+    }
+
+    @Test
     fun `upstream error returns retry not failure`() = runBlocking {
         // Server replies with 500 — the listen-page request should fail,
         // newSince() catches and returns empty list. But we want the
@@ -196,7 +254,7 @@ class DailyCheckWorkerTest {
             return DailyCheckWorker(
                 ctx = appContext,
                 params = workerParameters,
-                oneplace = oneplace,
+                providers = providers,
                 episodes = episodes,
                 settings = settings,
                 scheduler = enqueuer,
@@ -224,4 +282,27 @@ class DailyCheckWorkerTest {
             calls += Call(episodeId, allowMetered)
         }
     }
+
+    /** In-memory ShowProvider that returns a canned episode list — exercises the
+     *  worker's multi-provider iteration without needing a second MockWebServer. */
+    private class FakeShowProvider(
+        override val id: String,
+        override val displayName: String,
+        override val artistName: String,
+        private val episodes: List<ProviderEpisode>,
+    ) : ShowProvider {
+        override suspend fun newSince(lastSeenExternalId: String?, maxFetch: Int): List<ProviderEpisode> =
+            episodes.take(maxFetch)
+    }
+
+    private fun fakeEpisode(externalId: String, title: String) = ProviderEpisode(
+        externalId = externalId,
+        title = title,
+        airDate = "May 1, 2026",
+        description = null,
+        downloadUrl = "https://fake.example/$externalId.mp3",
+        sourceUrl = "https://fake.example/$externalId",
+        durationSeconds = 1500L,
+        imageUrl = null,
+    )
 }

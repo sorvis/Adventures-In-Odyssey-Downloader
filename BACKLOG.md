@@ -6,18 +6,20 @@ not yet scheduled. Add new entries at the top; remove (or move to
 
 ---
 
-## Multi-show plugin abstraction (AIO + Your Story Hour + RSS)
+## Multi-show plugin abstraction — full path beyond H-lite
 
-The whole app is hardcoded for Adventures in Odyssey: the
-`OneplaceClient`, the literal `"Adventures in Odyssey"` artist on
-every `MediaMetadata`, the single AIO catalog asset, the daily
-worker that only queries oneplace.com. We want at least three
-providers eventually: AIO, **Your Story Hour**, and a generic
-**RSS** provider that lets the user paste any podcast feed URL.
+**H-lite landed** (commit TBD): `ShowProvider` interface, AIO wrapped
+as `AioOneplaceProvider`, Hilt multibinding, `LocalEpisodeEntity`
+gained `providerId` column with v2→v3 migration. `DailyCheckWorker`
+iterates a `Set<ShowProvider>` (one entry today). PK stays
+`episodeId: Long`; only AIO has `lastSeen` state; `MediaMetadata`
+artist is still the hardcoded AIO string.
 
-Three providers is enough to force the right shape of the
-abstraction (one would let us cheat with hardcoded paths; two might
-look like AIO + "everything else").
+The product niche is **daily-aired Christian/educational radio
+shows** (AIO + eventually Your Story Hour). Generic RSS is opportunistic
+— support it later only if it falls out of the abstraction trivially.
+
+What's still owed for full multi-show:
 
 ### Common surface — what every provider has to expose
 
@@ -123,29 +125,16 @@ fun decodeMediaId(mediaId: String): Pair<String, String>? = ...
 - Settings page gets a "Manage shows" section: list registered
   shows, add an RSS feed by URL, remove.
 
-### What we extract first
+### Build order from here
 
-Don't refactor everything before the second provider exists. The
-**incremental path**:
-
-1. Extract `DownloadEnqueuer` interface from `WorkScheduler` —
-   already happening as part of B1 (DailyCheckWorker test). Keeps
-   the worker test-friendly without committing to the full
-   abstraction.
-2. Extract `ShowProvider` interface, but only `AioOneplaceProvider`
-   exists initially. Verify the existing AIO flow still works through it.
-3. Add `RssProvider` next (NOT YSH first) — it forces the
-   "configurable per-instance" generality immediately, so YSH ends
-   up being a simple specialization.
-4. YSH last, once it's clear how/whether RSS covers it.
-
-### Why RSS as the 3rd not 2nd
-
-YSH might just BE an RSS feed, in which case the whole "Y" provider
-is `RssProvider("https://yourstoryhour.org/feed.xml", "Your Story Hour")`
-and we don't need YshProvider at all. Build the generic RSS
-provider first; YSH falls out for free if it's RSS, and only needs
-its own provider if the data shape is weird.
+1. ✅ DownloadEnqueuer extracted (commit `408ed00`).
+2. ✅ ShowProvider interface + AIO impl (H-lite, commit TBD).
+3. **YSH next** — investigate yourstoryhour.org. If it's just an RSS
+   feed, build a small `RssProvider(feedUrl, displayName, artistName)`
+   first and YSH falls out for free as a config. If the data shape is
+   weird, write a custom `YshProvider` directly. Decision waits on the
+   actual scrape probe.
+4. RSS as a generic provider only if YSH didn't already require it.
 
 ---
 
@@ -283,51 +272,3 @@ oneplace.com's API:
   below the fold and clipped, so the Save button wasn't reachable.
   Re-test on v0.1.16+ before reopening if it still misbehaves.
 
----
-
-## Multi-show plugin abstraction (AIO + Your Story Hour + …)
-
-The whole app is hardcoded for Adventures in Odyssey today: the
-oneplace.com scraper, the `Adventures in Odyssey` strings in
-`MediaMetadata`, the single-show retention model. We'll want to add
-**Your Story Hour** next, and possibly more shows after that, so a
-plugin-style abstraction makes sense before the second integration.
-
-**Sketch:**
-
-1. Define a `ShowProvider` interface with the surface of `OneplaceClient`
-   plus a few static fields:
-   ```kotlin
-   interface ShowProvider {
-       val showId: String          // "aio", "ysh"
-       val displayName: String     // "Adventures in Odyssey"
-       val artistName: String      // for MediaMetadata
-       suspend fun latestEpisodeId(): Long?
-       suspend fun newSince(lastSeen: Long, maxFetch: Int): List<ProviderEpisode>
-       fun parseAirDate(raw: String?): Long  // each show may format differently
-   }
-   ```
-2. `LocalEpisodeEntity` gains a `showId: String` column (Room migration
-   v2→v3). All queries filter by active showId or show all when "All"
-   is selected.
-3. Each provider lives in its own package (`com.odyssey.show.aio`,
-   `com.odyssey.show.ysh`) with its own scrape model, fixture tests,
-   and any show-specific quirks.
-4. Hilt provides a `Map<String, ShowProvider>` (multibinding). Workers
-   iterate providers; UI shows a show-picker.
-5. Settings: per-show NAS path, per-show retention, per-show
-   allow-metered-downloads. Or a "global" toggle that applies to all.
-
-**Where Your Story Hour data lives:** TBD — first step is to scrape /
-inspect the YSH site/app and find a stable JSON or HTML endpoint, same
-exercise as we did for oneplace.com.
-
-**Why "plugin" but not actual runtime-loaded plugins:** for a personal
-app with two shows, a sealed interface + per-package implementation is
-plenty. Real OSGi-style plugins are overkill and bring classpath
-isolation problems we don't need.
-
-**Naming:** if we go this route, the project name "Adventures in
-Odyssey Downloader" becomes a misnomer. Worth renaming the repo or at
-least the app/applicationId. Lower priority than the abstraction
-itself; we can ship multi-show under the current name first.

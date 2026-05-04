@@ -19,6 +19,14 @@ data class LocalEpisodeEntity(
     val downloadedAt: Long?,      // epoch ms
     val archivedAt: Long?,        // epoch ms; null while not pushed to NAS
     val imageUrl: String? = null, // remote artwork URL; loaded by Coil in the row
+    /**
+     * Which ShowProvider this episode came from — "aio" today, "ysh"
+     * eventually. Defaulted so old rows backfill cleanly during the
+     * v2→v3 migration. The PK stays `episodeId`; we'll move to a
+     * composite (providerId, externalId) PK once a second provider
+     * actually lands.
+     */
+    val providerId: String = "aio",
 )
 
 @Entity(tableName = "playback_positions")
@@ -92,7 +100,7 @@ interface PlaybackDao {
 
 @Database(
     entities = [LocalEpisodeEntity::class, PlaybackPositionEntity::class],
-    version = 2,
+    version = 3,
     exportSchema = false,
 )
 abstract class OdysseyDb : RoomDatabase() {
@@ -107,5 +115,17 @@ abstract class OdysseyDb : RoomDatabase() {
 val MIGRATION_1_2: Migration = object : Migration(1, 2) {
     override fun migrate(db: SupportSQLiteDatabase) {
         db.execSQL("ALTER TABLE local_episodes ADD COLUMN imageUrl TEXT")
+    }
+}
+
+/**
+ * v2 → v3: add LocalEpisodeEntity.providerId for the multi-show plugin
+ * abstraction (H-lite). Existing rows are AIO by definition, so the
+ * column lands NOT NULL with DEFAULT 'aio' and SQLite backfills every
+ * row during the ALTER. PK is unchanged.
+ */
+val MIGRATION_2_3: Migration = object : Migration(2, 3) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE local_episodes ADD COLUMN providerId TEXT NOT NULL DEFAULT 'aio'")
     }
 }
