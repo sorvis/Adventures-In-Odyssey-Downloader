@@ -3,7 +3,9 @@ package com.odyssey.ui.screens
 import android.net.Uri
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -175,6 +177,7 @@ fun NowPlayingScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 24.dp)
                 .semantics { testTagsAsResourceId = true }
                 .testTag("now-playing"),
@@ -270,6 +273,7 @@ fun NowPlayingScreen(
                     Icon(Icons.Default.Forward30, "+30s", modifier = Modifier.size(36.dp))
                 }
             }
+            Spacer(Modifier.height(24.dp))
         }
     }
 }

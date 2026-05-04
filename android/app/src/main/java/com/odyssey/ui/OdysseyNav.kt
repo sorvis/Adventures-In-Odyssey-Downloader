@@ -49,19 +49,20 @@ fun OdysseyNav() {
     val tabRoute = tabs.firstOrNull { currentRoute.startsWith(it.route) }?.route ?: currentRoute
 
     // The full Now-Playing screen IS the player surface — when the user
-    // is already there, hiding the mini-bar prevents a redundant strip.
-    val showMiniPlayer = currentRoute != ROUTE_NOW_PLAYING
+    // is already there, hiding the mini-bar AND the bottom tabs gives
+    // the player the full screen for transport controls. The down-arrow
+    // in its TopAppBar is the way back.
+    val isPlayerRoute = currentRoute == ROUTE_NOW_PLAYING
 
     Scaffold(
         bottomBar = {
+            if (isPlayerRoute) return@Scaffold
             Column {
-                if (showMiniPlayer) {
-                    MiniPlayerBar(onExpand = {
-                        nav.navigate(ROUTE_NOW_PLAYING) {
-                            launchSingleTop = true
-                        }
-                    })
-                }
+                MiniPlayerBar(onExpand = {
+                    nav.navigate(ROUTE_NOW_PLAYING) {
+                        launchSingleTop = true
+                    }
+                })
                 NavigationBar {
                     tabs.forEach { tab ->
                         NavigationBarItem(

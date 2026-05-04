@@ -26,6 +26,7 @@ import com.odyssey.catalog.AioCatalogRepo
 import com.odyssey.catalog.AlbumWithOwnership
 import com.odyssey.catalog.LocalEpisodeKey
 import com.odyssey.catalog.joinAlbumOwnership
+import com.odyssey.catalog.ownershipSummary
 import com.odyssey.data.local.EpisodeDao
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
@@ -132,13 +133,3 @@ private fun AlbumListRow(row: AlbumWithOwnership, onClick: () -> Unit) {
     }
 }
 
-/** Pure-string summary so renders don't recompute formatting per frame. */
-internal fun ownershipSummary(row: AlbumWithOwnership): String {
-    val total = row.totalCount
-    val downloaded = row.downloadedCount
-    val streamable = row.streamableCount
-    val parts = mutableListOf("$total episodes")
-    if (downloaded > 0) parts += "$downloaded downloaded"
-    if (streamable > 0) parts += "$streamable streamable"
-    return parts.joinToString(" • ")
-}

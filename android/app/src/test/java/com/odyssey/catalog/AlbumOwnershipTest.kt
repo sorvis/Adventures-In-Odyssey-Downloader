@@ -94,4 +94,36 @@ class AlbumOwnershipTest {
         val empty = AioCatalog(0, 0, emptyList())
         assertEquals(0, joinAlbumOwnership(empty, listOf(LocalEpisodeKey("X", true))).size)
     }
+
+    // ---- ownershipSummary ----
+
+    @Test
+    fun `ownershipSummary always shows downloaded count even at zero`() {
+        // Album with 3 catalog eps, none owned locally.
+        val joined = joinAlbumOwnership(sampleCatalog, emptyList())
+        val a51 = joined.first { it.album.albumNumber == "51" }
+        assertEquals("0 of 3 downloaded", ownershipSummary(a51))
+    }
+
+    @Test
+    fun `ownershipSummary appends streamable suffix only when non-zero`() {
+        val locals = listOf(
+            LocalEpisodeKey("Clutter", hasFile = true),
+            LocalEpisodeKey("War of the Words", hasFile = false),
+        )
+        val a51 = joinAlbumOwnership(sampleCatalog, locals).first { it.album.albumNumber == "51" }
+        // 1 of 3 downloaded, 1 streamable.
+        assertEquals("1 of 3 downloaded • 1 streamable", ownershipSummary(a51))
+    }
+
+    @Test
+    fun `ownershipSummary omits streamable when fully downloaded`() {
+        val locals = listOf(
+            LocalEpisodeKey("Clutter", hasFile = true),
+            LocalEpisodeKey("War of the Words", hasFile = true),
+            LocalEpisodeKey("Naturally, I Assumed", hasFile = true),
+        )
+        val a51 = joinAlbumOwnership(sampleCatalog, locals).first { it.album.albumNumber == "51" }
+        assertEquals("3 of 3 downloaded", ownershipSummary(a51))
+    }
 }

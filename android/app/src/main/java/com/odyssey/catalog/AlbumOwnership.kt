@@ -37,6 +37,17 @@ data class AlbumWithOwnership(
 }
 
 /**
+ * One-line summary for the album list/detail headers. Downloaded count
+ * is always shown ("5 of 31 downloaded") so even an album with zero
+ * downloads tells the user how big it is and that nothing's local yet.
+ * Streamable suffix only appears when > 0 to avoid clutter.
+ */
+fun ownershipSummary(row: AlbumWithOwnership): String = buildString {
+    append("${row.downloadedCount} of ${row.totalCount} downloaded")
+    if (row.streamableCount > 0) append(" • ${row.streamableCount} streamable")
+}
+
+/**
  * A minimal view of a local episode that the joiner needs. Keeps the
  * pure helper free of Room dependencies — callers map their
  * LocalEpisodeEntity to this shape.
