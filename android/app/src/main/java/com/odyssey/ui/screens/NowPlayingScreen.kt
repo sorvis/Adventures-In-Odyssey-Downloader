@@ -17,6 +17,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.media3.session.MediaController
 import com.odyssey.player.PlayerController
+import com.odyssey.player.seekTargetMs
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -47,11 +48,32 @@ class NowPlayingVm @Inject constructor(private val player: PlayerController) : V
     fun togglePlay() { controller?.let { if (it.isPlaying) it.pause() else it.play() } }
     fun back30()     { controller?.let { it.seekTo((it.currentPosition - 30_000).coerceAtLeast(0)) } }
     fun fwd30()      { controller?.let { it.seekTo((it.currentPosition + 30_000).coerceAtMost(it.duration)) } }
+    fun seekTo(ms: Long) {
+        controller?.let { c ->
+            val dur = c.duration.coerceAtLeast(0)
+            c.seekTo(ms.coerceIn(0, dur))
+        }
+    }
 }
 
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun NowPlayingScreen(vm: NowPlayingVm = hiltViewModel()) {
+    // While the user is dragging the seek bar, the position observer
+    // shouldn't fight the gesture — show the dragged value instead.
+    var dragging by remember { mutableStateOf(false) }
+    var dragFrac by remember { mutableStateOf(0f) }
+
+    val durationMs = vm.durationMs
+    val knownDuration = durationMs > 0
+    val livePos = vm.positionMs
+    val displayPos = if (dragging) (dragFrac * durationMs).toLong() else livePos
+    val sliderValue = if (dragging) {
+        dragFrac
+    } else if (knownDuration) {
+        (livePos.toFloat() / durationMs).coerceIn(0f, 1f)
+    } else 0f
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -67,13 +89,30 @@ fun NowPlayingScreen(vm: NowPlayingVm = hiltViewModel()) {
             modifier = Modifier.testTag("now-playing-title"),
         )
         Spacer(Modifier.height(24.dp))
-        if (vm.durationMs > 0) {
-            LinearProgressIndicator(
-                progress = { (vm.positionMs.toFloat() / vm.durationMs).coerceIn(0f, 1f) },
-                modifier = Modifier.fillMaxWidth().testTag("progress"),
+        if (knownDuration) {
+            // Draggable seek bar — Material3 Slider is the standard
+            // Compose-native answer; releasing the thumb commits the
+            // seek via vm.seekTo. While dragging we show the drag
+            // value so the time label tracks the user's finger.
+            Slider(
+                value = sliderValue,
+                onValueChange = { v ->
+                    dragging = true
+                    dragFrac = v
+                },
+                onValueChangeFinished = {
+                    vm.seekTo(seekTargetMs(dragFrac, durationMs))
+                    dragging = false
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("seek-bar"),
             )
             Spacer(Modifier.height(8.dp))
-            Text("${fmt(vm.positionMs)} / ${fmt(vm.durationMs)}", modifier = Modifier.testTag("position"))
+            Text(
+                text = "${fmt(displayPos)} / ${fmt(durationMs)}",
+                modifier = Modifier.testTag("position"),
+            )
         }
         Spacer(Modifier.height(24.dp))
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
