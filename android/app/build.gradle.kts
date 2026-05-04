@@ -124,6 +124,9 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
+    // WorkManager test harness — TestListenableWorkerBuilder lets us
+    // construct a CoroutineWorker with a custom WorkerFactory.
+    testImplementation("androidx.work:work-testing:2.10.0")
 
     // Robolectric — runs Android-aware unit tests on the JVM (no emulator).
     // Used for Compose UI / ViewModel tests where we want the real runtime

@@ -1,0 +1,227 @@
+package com.odyssey.work
+
+import android.app.Application
+import androidx.room.Room
+import androidx.test.core.app.ApplicationProvider
+import androidx.work.ListenableWorker
+import androidx.work.WorkerFactory
+import androidx.work.WorkerParameters
+import androidx.work.testing.TestListenableWorkerBuilder
+import com.odyssey.app.SettingsRepo
+import com.odyssey.data.local.EpisodeDao
+import com.odyssey.data.local.OdysseyDb
+import com.odyssey.scrape.OneplaceClient
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
+import okhttp3.OkHttpClient
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+
+/**
+ * Highest-leverage uncovered test from the real-use plan (B1).
+ *
+ * Background: v0.1.1 shipped with a "Check now does nothing" bug
+ * that lived in DailyCheckWorker. Up to now the worker had ZERO
+ * test coverage — the v0.1.1 regression class could re-ship at any
+ * time. This test simulates a full daily-check pass against a live
+ * MockWebServer and asserts every observable side-effect:
+ *
+ *   1. Newly-seen episodes get inserted into the local DB
+ *   2. A download is enqueued for each new episode
+ *   3. settings.lastSeenEpisodeId is updated to the newest episode
+ *   4. settings.lastRunAt is updated
+ *   5. Already-known episodes (existing DB rows) are NOT re-enqueued
+ *   6. Empty result still updates lastRunAt + returns success
+ */
+@RunWith(RobolectricTestRunner::class)
+@Config(application = Application::class, sdk = [33])
+class DailyCheckWorkerTest {
+
+    private lateinit var ctx: Application
+    private lateinit var server: MockWebServer
+    private lateinit var oneplace: OneplaceClient
+    private lateinit var db: OdysseyDb
+    private lateinit var episodes: EpisodeDao
+    private lateinit var settings: SettingsRepo
+    private lateinit var enqueuer: RecordingEnqueuer
+
+    @Before
+    fun setUp() {
+        ctx = ApplicationProvider.getApplicationContext()
+        server = MockWebServer().apply { start() }
+        oneplace = OneplaceClient(OkHttpClient()).apply {
+            // Redirect at the MockWebServer for both endpoints.
+            listenUrl = server.url("/listen").toString()
+            apiUrl = server.url("/api").toString()
+        }
+        db = Room.inMemoryDatabaseBuilder(ctx, OdysseyDb::class.java).allowMainThreadQueries().build()
+        episodes = db.episodes()
+        settings = SettingsRepo(ctx)
+        // Robolectric reuses the Application across tests, so DataStore
+        // file persists. Without this reset, a prior test that set
+        // lastSeenEpisodeId would leak into the next test's worker run
+        // and short-circuit newSince().
+        runBlocking {
+            settings.setLastSeen(0L)
+            settings.setLastRun(0L)
+        }
+        enqueuer = RecordingEnqueuer()
+    }
+
+    @After
+    fun tearDown() {
+        server.shutdown()
+        db.close()
+    }
+
+    @Test
+    fun `fresh install ingests new episodes and enqueues downloads`() = runBlocking {
+        // Mirror the OneplaceClient sequence: listen page → api page1 → api page2.
+        server.enqueue(html(loadFixture("/oneplace/listen.html")))
+        server.enqueue(json(loadFixture("/oneplace/api_page1.json")))
+        server.enqueue(json(loadFixture("/oneplace/api_page2.json")))
+
+        val worker = buildWorker()
+        val result = worker.doWork()
+        assertEquals(ListenableWorker.Result.success(), result)
+
+        // The worker scrapes up to 7 on a fresh install (lastSeen == 0).
+        val rows = episodes.observeAll().first()
+        assertEquals("expected 7 episodes ingested on fresh install", 7, rows.size)
+        // All ingested rows should be undownloaded (filePath null).
+        assertTrue("rows should not have filePath set yet", rows.all { it.filePath == null })
+
+        // One download enqueue per episode.
+        assertEquals(7, enqueuer.calls.size)
+        assertEquals(rows.map { it.episodeId }.toSet(), enqueuer.calls.map { it.episodeId }.toSet())
+
+        // Settings updated. lastSeen should be the NEWEST episode (largest id from page1).
+        val s = settings.flow.first()
+        assertEquals(1278383L, s.lastSeenEpisodeId)
+        assertTrue("lastRunAt should have advanced past 0", s.lastRunAtMs > 0L)
+    }
+
+    @Test
+    fun `subsequent run with no new episodes still updates lastRunAt`() = runBlocking {
+        server.enqueue(html("<html>no bootstrap here</html>"))   // → newSince returns []
+
+        // Pre-set lastRunAt to a past value to verify it gets bumped.
+        settings.setLastRun(1L)
+
+        val worker = buildWorker()
+        val result = worker.doWork()
+        assertEquals(ListenableWorker.Result.success(), result)
+
+        assertEquals("no new episodes should be ingested", 0, episodes.observeAll().first().size)
+        assertEquals("no enqueues for empty result", 0, enqueuer.calls.size)
+        // lastRunAt MUST advance even on no-op so the user can tell
+        // "Check now" actually ran.
+        val s = settings.flow.first()
+        assertTrue("lastRunAt should have advanced past the seed value", s.lastRunAtMs > 1L)
+    }
+
+    @Test
+    fun `already-seen episodes are not re-enqueued`() = runBlocking {
+        // Pre-populate one of the IDs that page1 will return.
+        episodes.upsert(
+            com.odyssey.data.local.LocalEpisodeEntity(
+                episodeId = 1278383L,                                // first row in page1
+                title = "War of the Words",
+                airDate = "May 8, 2026",
+                description = null,
+                sourceUrl = "x",
+                downloadUrl = "x",
+                filePath = "/already/downloaded.mp3",                // already on disk
+                fileSize = 18000000L,
+                durationMs = 25 * 60 * 1000L,
+                downloadedAt = 1L,
+                archivedAt = null,
+            ),
+        )
+        server.enqueue(html(loadFixture("/oneplace/listen.html")))
+        server.enqueue(json(loadFixture("/oneplace/api_page1.json")))
+        server.enqueue(json(loadFixture("/oneplace/api_page2.json")))
+
+        val worker = buildWorker()
+        worker.doWork()
+
+        // 7 in api results, but the pre-existing one shouldn't re-enqueue.
+        // existingIds() matches on episodeId, so only 6 new downloads expected.
+        val ids = enqueuer.calls.map { it.episodeId }
+        assertTrue("should NOT re-enqueue download for existing 1278383", 1278383L !in ids)
+        assertEquals(6, ids.size)
+    }
+
+    @Test
+    fun `upstream error returns retry not failure`() = runBlocking {
+        // Server replies with 500 — the listen-page request should fail,
+        // newSince() catches and returns empty list. But we want the
+        // worker to not poison itself; current behavior treats it as
+        // "no new episodes" → success. Lock the contract.
+        server.enqueue(MockResponse().setResponseCode(500))
+
+        val worker = buildWorker()
+        val result = worker.doWork()
+        // Either Success (newSince returned empty) or Retry — both are
+        // acceptable; what we DON'T want is a propagated exception that
+        // crashes the worker.
+        assertTrue(
+            "expected Result.success or Result.retry, got $result",
+            result == ListenableWorker.Result.success() || result == ListenableWorker.Result.retry(),
+        )
+    }
+
+    // ---- helpers ---------------------------------------------------------
+
+    private fun buildWorker(): DailyCheckWorker =
+        TestListenableWorkerBuilder.from(ctx, DailyCheckWorker::class.java)
+            .setWorkerFactory(testWorkerFactory())
+            .build() as DailyCheckWorker
+
+    private fun testWorkerFactory(): WorkerFactory = object : WorkerFactory() {
+        override fun createWorker(
+            appContext: android.content.Context,
+            workerClassName: String,
+            workerParameters: WorkerParameters,
+        ): ListenableWorker? {
+            if (workerClassName != DailyCheckWorker::class.java.name) return null
+            return DailyCheckWorker(
+                ctx = appContext,
+                params = workerParameters,
+                oneplace = oneplace,
+                episodes = episodes,
+                settings = settings,
+                scheduler = enqueuer,
+            )
+        }
+    }
+
+    private fun loadFixture(path: String): String =
+        javaClass.getResourceAsStream(path)?.bufferedReader()?.readText()
+            ?: error("fixture not found: $path")
+
+    private fun html(body: String) = MockResponse()
+        .setHeader("Content-Type", "text/html; charset=utf-8")
+        .setBody(body)
+
+    private fun json(body: String) = MockResponse()
+        .setHeader("Content-Type", "application/json; charset=utf-8")
+        .setBody(body)
+
+    /** Records every enqueueDownload call so the test can assert what got scheduled. */
+    private class RecordingEnqueuer : DownloadEnqueuer {
+        data class Call(val episodeId: Long, val allowMetered: Boolean)
+        val calls = mutableListOf<Call>()
+        override fun enqueueDownload(episodeId: Long, allowMetered: Boolean) {
+            calls += Call(episodeId, allowMetered)
+        }
+    }
+}

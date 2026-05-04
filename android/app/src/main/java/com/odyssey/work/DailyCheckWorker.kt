@@ -26,7 +26,7 @@ class DailyCheckWorker @AssistedInject constructor(
     private val oneplace: OneplaceClient,
     private val episodes: EpisodeDao,
     private val settings: SettingsRepo,
-    private val scheduler: WorkScheduler,
+    private val scheduler: DownloadEnqueuer,
 ) : CoroutineWorker(ctx, params) {
 
     override suspend fun doWork(): Result = runCatching {

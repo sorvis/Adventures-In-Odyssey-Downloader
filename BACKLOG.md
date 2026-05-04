@@ -6,6 +6,149 @@ not yet scheduled. Add new entries at the top; remove (or move to
 
 ---
 
+## Multi-show plugin abstraction (AIO + Your Story Hour + RSS)
+
+The whole app is hardcoded for Adventures in Odyssey: the
+`OneplaceClient`, the literal `"Adventures in Odyssey"` artist on
+every `MediaMetadata`, the single AIO catalog asset, the daily
+worker that only queries oneplace.com. We want at least three
+providers eventually: AIO, **Your Story Hour**, and a generic
+**RSS** provider that lets the user paste any podcast feed URL.
+
+Three providers is enough to force the right shape of the
+abstraction (one would let us cheat with hardcoded paths; two might
+look like AIO + "everything else").
+
+### Common surface — what every provider has to expose
+
+```kotlin
+interface ShowProvider {
+    /** Stable, unique among providers — "aio", "ysh", "rss-<feedHash>". */
+    val id: String
+    /** "Adventures in Odyssey", "Your Story Hour", "Hardcore History". */
+    val displayName: String
+    /** Goes into MediaMetadata.artist for lockscreen display. */
+    val artistName: String
+    /** Optional album-art URL — shown in show selector + as fallback row art. */
+    val showImageUrl: String?
+
+    /** Pull episodes newer than `lastSeenExternalId`. Newest-first. */
+    suspend fun newSince(lastSeenExternalId: String?, maxFetch: Int): List<ProviderEpisode>
+
+    /** Optional per-episode enrichment hook (canonical # / better thumb). */
+    fun enrich(externalId: String, title: String): EnrichedEpisode? = null
+}
+
+data class ProviderEpisode(
+    /** Unique within this provider — CMS id, GUID, etc. */
+    val externalId: String,
+    val title: String,
+    val airDate: String?,
+    val description: String?,
+    val downloadUrl: String,
+    val sourceUrl: String?,
+    val durationSeconds: Long,
+    val imageUrl: String?,
+)
+
+data class EnrichedEpisode(
+    val displayName: String? = null,    // canonical "#657: Clutter"
+    val thumbnailUrl: String? = null,
+    val albumName: String? = null,
+)
+```
+
+### Concrete providers
+
+- **AioOneplaceProvider** — wraps the existing `OneplaceClient`.
+  `enrich()` consults `AioCatalogRepo`. `id = "aio"`.
+- **YshProvider** — TODO: probe yourstoryhour.org; the public feed
+  is likely a podcast RSS or a Wix/Squarespace catalog. Once the
+  shape is known, this likely just delegates to a per-show RSS
+  parser with custom artwork URLs hard-coded.
+- **RssProvider(feedUrl, nickname)** — generic. User adds feeds in
+  Settings ("New show" → URL → nickname). One instance per added
+  feed; each gets `id = "rss-${sha256(feedUrl).take(8)}"`. No
+  enrichment.
+
+### Schema migration
+
+`LocalEpisodeEntity` becomes provider-aware:
+
+```kotlin
+@Entity(
+    tableName = "local_episodes",
+    primaryKeys = ["providerId", "externalId"],
+)
+data class LocalEpisodeEntity(
+    val providerId: String,
+    val externalId: String,
+    val title: String,
+    val airDate: String?,
+    // … remaining fields unchanged …
+)
+```
+
+DB version v2 → v3:
+- Add `providerId TEXT NOT NULL DEFAULT 'aio'` and `externalId TEXT NOT NULL` columns.
+- Backfill `externalId = CAST(episodeId AS TEXT)` for existing rows.
+- Drop the old `episodeId` PK; create composite `(providerId, externalId)`.
+- Re-create indexes accordingly.
+
+`PlaybackPositionEntity` likewise — its `episodeId` becomes `(providerId, externalId)`.
+
+For Media3's `MediaItem.mediaId`, encode as `"${providerId}:${externalId}"`.
+`PlayerController` parses on the way back. Pure helper:
+
+```kotlin
+fun encodeMediaId(providerId: String, externalId: String) = "$providerId:$externalId"
+fun decodeMediaId(mediaId: String): Pair<String, String>? = ...
+```
+
+### Workers
+
+- `DailyCheckWorker` becomes provider-aware: iterates the registered
+  `ShowProvider`s, calls `newSince()` on each, persists rows tagged
+  with `providerId`.
+- `DownloadEpisodeWorker` keys its work by `(providerId, externalId)`.
+- `RetentionWorker` runs per-provider so the user can keep different
+  numbers of episodes per show.
+
+### UI implications
+
+- A **show selector** at the top of Recent / Library — defaults to
+  "All". When set to a single show, list filters by `providerId`.
+- Albums tab is AIO-only by definition (the catalog is AIO-specific);
+  hide it for other shows.
+- Settings page gets a "Manage shows" section: list registered
+  shows, add an RSS feed by URL, remove.
+
+### What we extract first
+
+Don't refactor everything before the second provider exists. The
+**incremental path**:
+
+1. Extract `DownloadEnqueuer` interface from `WorkScheduler` —
+   already happening as part of B1 (DailyCheckWorker test). Keeps
+   the worker test-friendly without committing to the full
+   abstraction.
+2. Extract `ShowProvider` interface, but only `AioOneplaceProvider`
+   exists initially. Verify the existing AIO flow still works through it.
+3. Add `RssProvider` next (NOT YSH first) — it forces the
+   "configurable per-instance" generality immediately, so YSH ends
+   up being a simple specialization.
+4. YSH last, once it's clear how/whether RSS covers it.
+
+### Why RSS as the 3rd not 2nd
+
+YSH might just BE an RSS feed, in which case the whole "Y" provider
+is `RssProvider("https://yourstoryhour.org/feed.xml", "Your Story Hour")`
+and we don't need YshProvider at all. Build the generic RSS
+provider first; YSH falls out for free if it's RSS, and only needs
+its own provider if the data shape is weird.
+
+---
+
 ## Open architecture question — finding old downloaded episodes when offline
 
 The **Recent** tab is what its name says: a window onto the most-recent

@@ -8,7 +8,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
-class WorkScheduler @Inject constructor(@ApplicationContext private val ctx: Context) {
+class WorkScheduler @Inject constructor(@ApplicationContext private val ctx: Context) : DownloadEnqueuer {
 
     private val wm get() = WorkManager.getInstance(ctx)
 
@@ -39,7 +39,7 @@ class WorkScheduler @Inject constructor(@ApplicationContext private val ctx: Con
         wm.enqueueUniqueWork("odyssey-check-now", ExistingWorkPolicy.REPLACE, req)
     }
 
-    fun enqueueDownload(episodeId: Long, allowMetered: Boolean) {
+    override fun enqueueDownload(episodeId: Long, allowMetered: Boolean) {
         val req = OneTimeWorkRequestBuilder<DownloadEpisodeWorker>()
             .setInputData(workDataOf(DownloadEpisodeWorker.KEY_EPISODE_ID to episodeId))
             .setConstraints(
