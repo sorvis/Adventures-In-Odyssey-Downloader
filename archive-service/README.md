@@ -30,6 +30,19 @@ All require `Authorization: Bearer <token>` except `/healthz`.
       ...
 ```
 
+## Quick start (any host with Docker)
+
+```bash
+./archive-service/scripts/up.sh
+```
+
+That's it. The script generates a token if `.env` doesn't exist,
+creates `./_data` if it doesn't exist, runs `docker compose up -d --build`,
+waits for `/healthz`, and prints the URL + token to paste into the
+Android app's Settings → Backup.
+
+Stop with `docker compose down`.
+
 ## Deploy on Proxmox LXC + Synology NAS
 
 1. **Mount the Synology share on the Proxmox host** (NFS preferred for LXC bind-mounts):
@@ -52,23 +65,47 @@ All require `Authorization: Bearer <token>` except `/healthz`.
    pct start 121
    ```
 
-4. **Inside the LXC**: install docker + compose, clone this repo, then:
+4. **Inside the LXC**: install Docker + compose plugin, clone this repo, then:
    ```bash
-   cd archive-service
-   cp .env.example .env
-   # generate a token:
-   openssl rand -hex 32 | sed -i "s/replace-me.*/$(cat)/" .env   # or paste manually
-   docker compose up -d --build
-   curl http://127.0.0.1:8088/healthz
+   ODYSSEY_DATA_HOST_DIR=/data ./archive-service/scripts/up.sh
    ```
 
-5. **Save the token** — paste it into the Android app's Settings → NAS URL/token.
+   The env var swaps the volume mount from the dev default (`./_data`)
+   to the NAS bind-mount path (`/data`). Everything else is the same as
+   the local-dev flow.
+
+5. **Save the token** — `up.sh` prints it on success. Paste into the Android
+   app's Settings → Backup URL/token.
+
+## Importing an existing pile of MP3s
+
+```bash
+archive-service/scripts/import-audio-dir.py \
+  --dir /path/to/old/episodes \
+  --base-url http://odyssey-archive:8088 \
+  --token "$(grep ODYSSEY_AUTH_TOKEN archive-service/.env | cut -d= -f2-)"
+```
+
+Walks the directory recursively, parses titles + dates from filenames
+(handles the original C# tool's `1234-Title.mp3` format and a few others)
+and ID3 tags if `mutagen` is installed (`pip install --user mutagen`).
+Idempotent — re-runs are safe.
 
 ## Development (locally, no Docker)
 
 ```bash
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-export ODYSSEY_AUTH_TOKEN=devtoken ODYSSEY_DATA_DIR=$PWD/_data
-uvicorn app.main:app --reload --port 8088
+python3 -m venv --copies .venv
+.venv/bin/pip install -r requirements.txt
+ODYSSEY_AUTH_TOKEN=devtoken ODYSSEY_DATA_DIR=$PWD/_data \
+  .venv/bin/uvicorn app.main:app --reload --port 8088
 ```
+
+## Tests
+
+```bash
+.venv/bin/pip install -r requirements.txt    # includes pytest
+.venv/bin/python -m pytest tests/ -q
+```
+
+Tests run in-process (no Docker). They cover healthz, the auth gate,
+upload/list/get/audio/range, idempotency, and the album endpoints.

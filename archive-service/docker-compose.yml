@@ -4,9 +4,22 @@ services:
     container_name: odyssey-archive
     restart: unless-stopped
     environment:
-      ODYSSEY_AUTH_TOKEN: ${ODYSSEY_AUTH_TOKEN:?set ODYSSEY_AUTH_TOKEN in .env}
+      ODYSSEY_AUTH_TOKEN: ${ODYSSEY_AUTH_TOKEN:?set ODYSSEY_AUTH_TOKEN in .env or run scripts/up.sh}
       ODYSSEY_DATA_DIR: /data
     volumes:
-      - /data:/data
+      # Defaults to a sibling ./_data dir for local dev. Override on
+      # Proxmox/LXC by exporting ODYSSEY_DATA_HOST_DIR=/data (the NFS
+      # bind-mount path). Compose creates the dir on first `up`.
+      - ${ODYSSEY_DATA_HOST_DIR:-./_data}:/data
     ports:
-      - "${BIND_IP:-0.0.0.0}:8088:8088"
+      - "${BIND_IP:-0.0.0.0}:${ODYSSEY_PORT:-8088}:8088"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8088/healthz').read()"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s

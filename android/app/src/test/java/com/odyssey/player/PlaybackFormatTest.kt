@@ -78,6 +78,47 @@ class PlaybackFormatTest {
         assertFalse(shouldMarkComplete(positionMs = 100_000, durationMs = -1))
     }
 
+    // ---- formatRemaining ("52 min left" / "1hr 12min left") ----
+
+    @Test
+    fun `formatRemaining null when not started`() {
+        assertEquals(null, formatRemaining(0L, 60_000L))
+        assertEquals(null, formatRemaining(500L, 60_000L))
+    }
+
+    @Test
+    fun `formatRemaining null when duration is unknown`() {
+        assertEquals(null, formatRemaining(30_000L, 0L))
+        assertEquals(null, formatRemaining(30_000L, -1L))
+    }
+
+    @Test
+    fun `formatRemaining null when episode is essentially done`() {
+        // Past 95% threshold → treated as completed → no chip.
+        assertEquals(null, formatRemaining(95_000L, 100_000L))
+        assertEquals(null, formatRemaining(99_999L, 100_000L))
+    }
+
+    @Test
+    fun `formatRemaining null when under one minute remains`() {
+        // 30s remaining is too granular for a row chip — caller falls
+        // back to the default trailing label.
+        assertEquals(null, formatRemaining(60_000L * 25 - 30_000L, 60_000L * 25))
+    }
+
+    @Test
+    fun `formatRemaining shows minutes only for sub-hour episodes`() {
+        // 25-min episode, 8 min in → ~17 min left.
+        assertEquals("17 min left", formatRemaining(8L * 60_000L, 25L * 60_000L))
+    }
+
+    @Test
+    fun `formatRemaining splits hours and minutes for long content`() {
+        // 90-min audiobook chapter, 17 min in → 1hr 12min left (90 - 17 = 73 = 1*60 + 13... oh).
+        // 90 - 17 = 73 = 1 hour 13 minutes (NOT 12). Adjusting test expectation.
+        assertEquals("1hr 13min left", formatRemaining(17L * 60_000L, 90L * 60_000L))
+    }
+
     @Test
     fun `shouldMarkComplete honors a custom threshold`() {
         // 50%-mark threshold for a hypothetical "halfway done" use case.

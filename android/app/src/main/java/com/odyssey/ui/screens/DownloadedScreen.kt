@@ -67,6 +67,10 @@ class DownloadedVm @Inject constructor(
     val completedIds = playback.observeCompletedIds()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList<Long>())
 
+    val positions = playback.observeAllPositions()
+        .map { list -> list.associateBy { it.episodeId } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
+
     fun play(ep: LocalEpisodeEntity) {
         val src = playSourceFor(ep.filePath, ep.downloadUrl)
         val artwork = catalog.match(ep.title)?.thumbnailUrl ?: ep.imageUrl
@@ -118,6 +122,7 @@ class DownloadedVm @Inject constructor(
 fun DownloadedScreen(vm: DownloadedVm = hiltViewModel()) {
     val items by vm.items.collectAsState()
     val completedIds by vm.completedIds.collectAsState()
+    val positions by vm.positions.collectAsState()
     val progress by vm.progress.collectAsState()
     var expandedIds by remember { mutableStateOf(setOf<Long>()) }
 
@@ -158,6 +163,7 @@ fun DownloadedScreen(vm: DownloadedVm = hiltViewModel()) {
                         expanded = ep.episodeId in expandedIds,
                         downloadProgress = progress[ep.episodeId],
                         match = vm.catalog.match(ep.title),
+                        playback = positions[ep.episodeId],
                         onToggleExpand = {
                             expandedIds = if (ep.episodeId in expandedIds) expandedIds - ep.episodeId
                                           else expandedIds + ep.episodeId

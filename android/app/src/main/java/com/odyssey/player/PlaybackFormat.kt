@@ -38,3 +38,28 @@ fun shouldMarkComplete(
     durationMs: Long,
     threshold: Double = 0.95,
 ): Boolean = durationMs > 0 && positionMs >= durationMs * threshold
+
+/**
+ * Format the remaining time on a partially-played episode for display
+ * in the row trailing slot — BeyondPod-style ("52 min left", "1 hr 12 min left").
+ *
+ * Returns null when:
+ *   - position is at or near zero (haven't started)
+ *   - duration is unknown (Media3 hasn't computed it yet)
+ *   - we're past the 95% completion threshold (treated as finished)
+ *   - remaining is under one minute (not worth showing)
+ *
+ * The UI uses null to mean "show nothing extra" — fall back to the
+ * default trailing chip (▶ stream / ✓ played / etc.).
+ */
+fun formatRemaining(positionMs: Long, durationMs: Long): String? {
+    if (durationMs <= 0L) return null
+    if (positionMs < 1_000L) return null                                    // haven't started
+    if (shouldMarkComplete(positionMs, durationMs)) return null              // basically done
+    val remainingMs = (durationMs - positionMs).coerceAtLeast(0L)
+    val totalMin = remainingMs / 60_000L
+    if (totalMin < 1L) return null                                          // <1 min — too granular
+    val hours = totalMin / 60L
+    val mins = totalMin % 60L
+    return if (hours > 0) "${hours}hr ${mins}min left" else "${mins} min left"
+}

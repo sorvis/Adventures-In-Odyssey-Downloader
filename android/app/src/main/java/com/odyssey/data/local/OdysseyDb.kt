@@ -81,6 +81,11 @@ interface PlaybackDao {
     @Query("SELECT episodeId FROM playback_positions WHERE completedAt IS NOT NULL")
     fun observeCompletedIds(): Flow<List<Long>>
 
+    /** Used by the row UI to show "X min left" on episodes the user
+     *  has started but not finished. */
+    @Query("SELECT * FROM playback_positions")
+    fun observeAllPositions(): Flow<List<PlaybackPositionEntity>>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(p: PlaybackPositionEntity)
 }

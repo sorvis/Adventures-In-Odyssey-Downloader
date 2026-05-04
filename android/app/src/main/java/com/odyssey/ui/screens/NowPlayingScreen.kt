@@ -38,6 +38,7 @@ class NowPlayingVm @Inject constructor(private val player: PlayerController) : V
     var durationMs by mutableStateOf(0L); private set
     var playing by mutableStateOf(false); private set
     var title by mutableStateOf(""); private set
+    var description by mutableStateOf(""); private set
     var artworkUri by mutableStateOf<Uri?>(null); private set
 
     /** Has anything ever been loaded? Drives MiniPlayer visibility. */
@@ -53,6 +54,7 @@ class NowPlayingVm @Inject constructor(private val player: PlayerController) : V
                 playing = c.isPlaying
                 val item = c.currentMediaItem
                 title = item?.mediaMetadata?.title?.toString().orEmpty()
+                description = item?.mediaMetadata?.description?.toString().orEmpty()
                 artworkUri = item?.mediaMetadata?.artworkUri
                 delay(500)
             }
@@ -201,6 +203,20 @@ fun NowPlayingScreen(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.testTag("now-playing-title"),
             )
+
+            // Description (oneplace blurb / catalog full description) —
+            // rendered when present, capped to 4 lines so it doesn't push
+            // the seek bar off-screen on small devices.
+            if (vm.description.isNotBlank()) {
+                Text(
+                    text = vm.description,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 4,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.testTag("now-playing-description"),
+                )
+            }
 
             // Seek bar + position/remaining row.
             if (knownDuration) {

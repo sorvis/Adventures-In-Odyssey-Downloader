@@ -34,11 +34,13 @@ import com.odyssey.catalog.AioMatch
 import com.odyssey.data.local.EpisodeDao
 import com.odyssey.data.local.LocalEpisodeEntity
 import com.odyssey.data.local.PlaybackDao
+import com.odyssey.data.local.PlaybackPositionEntity
 import com.odyssey.debug.DebugLogger
 import com.odyssey.download.DownloadProgressEntry
 import com.odyssey.download.DownloadProgressTracker
 import com.odyssey.player.EpisodePlayer
 import com.odyssey.player.PlaySource
+import com.odyssey.player.formatRemaining
 import com.odyssey.player.formatResumeSubtitle
 import com.odyssey.player.playSourceFor
 import com.odyssey.work.WorkScheduler
@@ -85,6 +87,11 @@ class RecentVm @Inject constructor(
     val completedIds =
         playback.observeCompletedIds()
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList<Long>())
+
+    /** episodeId → saved playback position. Drives the "X min left" chip. */
+    val positions = playback.observeAllPositions()
+        .map { list -> list.associateBy { it.episodeId } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
     // Pair the most-recent playback position with its episode entity so
     // "Continue listening" can show the real title and dispatch to play().
@@ -172,6 +179,7 @@ fun RecentScreen(
     val resume by vm.resume.collectAsState()
     val resumeEp by vm.resumeEpisode.collectAsState()
     val completedIds by vm.completedIds.collectAsState()
+    val positions by vm.positions.collectAsState()
     val showWarning by vm.showMeteredWarning.collectAsState()
     val progress by vm.progress.collectAsState()
     var expandedIds by remember { mutableStateOf(setOf<Long>()) }
@@ -261,6 +269,7 @@ fun RecentScreen(
                         expanded = ep.episodeId in expandedIds,
                         downloadProgress = progress[ep.episodeId],
                         match = vm.catalog.match(ep.title),
+                        playback = positions[ep.episodeId],
                         onToggleExpand = {
                             expandedIds = if (ep.episodeId in expandedIds) expandedIds - ep.episodeId
                                           else expandedIds + ep.episodeId
@@ -286,6 +295,7 @@ internal fun EpisodeRow(
     onDownload: (() -> Unit)? = null,
     downloadProgress: DownloadProgressEntry? = null,
     match: AioMatch? = null,
+    playback: PlaybackPositionEntity? = null,
 ) {
     // Catalog enrichment overrides oneplace's data when we have a match:
     //   - Title becomes the canonical "#NNN: Title" (e.g. "#657: Clutter")
@@ -338,20 +348,25 @@ internal fun EpisodeRow(
                 }
             },
             trailingContent = {
+                // Priority: in-flight download → "X min left" if started
+                // → archived/played/downloaded/streamable chip.
+                val remaining = playback?.let {
+                    formatRemaining(it.positionMs, it.durationMs)
+                }
                 when {
-                    // In-flight download takes priority — show percent so
-                    // the user can tell the row is making progress.
                     downloadProgress != null -> Text(
                         text = "${downloadProgress.percent}%",
                         style = MaterialTheme.typography.labelSmall,
                         modifier = Modifier.testTag("episode-row-progress-pct"),
                     )
+                    remaining != null -> Text(
+                        text = remaining,
+                        style = MaterialTheme.typography.labelSmall,
+                        modifier = Modifier.testTag("episode-row-remaining"),
+                    )
                     ep.filePath == null -> Text("▶ stream", style = MaterialTheme.typography.labelSmall)
                     ep.archivedAt != null -> Text("✓ archived", style = MaterialTheme.typography.labelSmall)
                     played -> Text("✓ played", style = MaterialTheme.typography.labelSmall)
-                    // Downloaded but not yet listened-through and not yet
-                    // pushed to NAS — mark visibly so the user knows tapping
-                    // play won't re-stream from the network.
                     else -> Text("✓ downloaded", style = MaterialTheme.typography.labelSmall)
                 }
             },

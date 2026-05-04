@@ -52,18 +52,19 @@ class AlbumDetailVm @Inject constructor(
     private val player: EpisodePlayer,
 ) : ViewModel() {
 
-    /** "albumKey" route arg: album_number string ("81", "78.5", "OHC"). */
-    private val albumKey: String = savedState["albumKey"] ?: ""
-
     /**
-     * Reuses the SAME pure join helper as AlbumListScreen, then picks
-     * the one album we want. Cheap because the catalog is in memory.
+     * "albumKey" route arg is the album NAME (URL-encoded). Album names
+     * are unique even when albumNumber isn't (two "#78.5" entries
+     * exist in the catalog), so name is the right join key.
      */
+    private val albumKey: String = savedState.get<String>("albumKey")
+        ?.let { java.net.URLDecoder.decode(it, "UTF-8") } ?: ""
+
     val album = episodes.observeAll()
         .map { eps ->
             val keys = eps.map { LocalEpisodeKey(it.title, it.filePath != null, it) }
             joinAlbumOwnership(catalog.catalog, keys).firstOrNull {
-                it.album.albumNumber == albumKey
+                it.album.name == albumKey
             }
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)

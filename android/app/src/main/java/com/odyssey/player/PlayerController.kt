@@ -128,6 +128,8 @@ class PlayerController @Inject constructor(
                 MediaMetadata.Builder()
                     .setTitle(ep.title).setArtist("Adventures in Odyssey")
                     .apply {
+                        ep.description?.takeIf { it.isNotBlank() }
+                            ?.let { setDescription(it) }
                         art?.takeIf { it.isNotBlank() }
                             ?.let { setArtworkUri(android.net.Uri.parse(it)) }
                     }

@@ -80,10 +80,14 @@ fun AlbumListScreen(
             contentPadding = PaddingValues(8.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            items(albums, key = { it.album.albumNumber ?: it.album.name ?: "" }) { row ->
+            // The catalog has multiple albums sharing an albumNumber
+            // (e.g. two "#78.5" entries: regular and special), so
+            // albumNumber alone is NOT unique → Compose crashes on
+            // duplicate keys. Album NAME is unique; using that.
+            items(albums, key = { it.album.name ?: it.album.albumNumber ?: "" }) { row ->
                 AlbumListRow(row, onClick = {
-                    val key = row.album.albumNumber ?: row.album.name ?: return@AlbumListRow
-                    onOpenAlbum(key)
+                    val key = row.album.name ?: row.album.albumNumber ?: return@AlbumListRow
+                    onOpenAlbum(java.net.URLEncoder.encode(key, "UTF-8"))
                 })
             }
         }
