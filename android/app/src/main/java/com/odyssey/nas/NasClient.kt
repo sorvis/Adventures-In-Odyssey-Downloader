@@ -4,6 +4,7 @@ import com.odyssey.app.SettingsRepo
 import kotlinx.coroutines.flow.first
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import okhttp3.MediaType
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
@@ -11,6 +12,11 @@ import okhttp3.Request
 import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
+import okio.Buffer
+import okio.BufferedSink
+import okio.ForwardingSink
+import okio.Sink
+import okio.buffer
 import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -39,7 +45,19 @@ class NasClient @Inject constructor(
         durationSecs: Long,
         sourceUrl: String,
         audio: File,
+        /**
+         * Called as bytes are streamed to the server. (bytesWritten,
+         * totalBytes). totalBytes is the audio file length — multipart
+         * envelope overhead is tiny by comparison so we just report
+         * audio bytes for the user-facing progress UI.
+         */
+        onProgress: ((Long, Long) -> Unit)? = null,
     ): Result<Unit> = call { base, token ->
+        val audioBody = audio.asRequestBody("audio/mpeg".toMediaType())
+        val countingAudio = if (onProgress != null) {
+            CountingRequestBody(audioBody, audio.length(), onProgress)
+        } else audioBody
+
         val body = MultipartBody.Builder().setType(MultipartBody.FORM)
             .addFormDataPart("episode_id", episodeId.toString())
             .addFormDataPart("title", title)
@@ -49,8 +67,7 @@ class NasClient @Inject constructor(
                 addFormDataPart("duration_secs", durationSecs.toString())
                 addFormDataPart("source_url", sourceUrl)
             }
-            .addFormDataPart("audio", audio.name,
-                audio.asRequestBody("audio/mpeg".toMediaType()))
+            .addFormDataPart("audio", audio.name, countingAudio)
             .build()
 
         val req = Request.Builder()
@@ -109,6 +126,34 @@ class NasClient @Inject constructor(
 }
 
 object NasNotConfiguredException : RuntimeException("NAS not configured")
+
+/**
+ * RequestBody wrapper that ticks a callback as okhttp pulls bytes from
+ * the underlying delegate. Same pattern used by every "upload progress"
+ * recipe — wraps the okio sink in a ForwardingSink and increments a
+ * counter on each write call.
+ */
+private class CountingRequestBody(
+    private val delegate: RequestBody,
+    private val totalBytes: Long,
+    private val onProgress: (Long, Long) -> Unit,
+) : RequestBody() {
+    override fun contentType(): MediaType? = delegate.contentType()
+    override fun contentLength(): Long = totalBytes
+
+    override fun writeTo(sink: BufferedSink) {
+        val countingSink = object : ForwardingSink(sink) {
+            private var bytes = 0L
+            override fun write(source: Buffer, byteCount: Long) {
+                super.write(source, byteCount)
+                bytes += byteCount
+                onProgress(bytes, totalBytes)
+            }
+        }.buffer()
+        delegate.writeTo(countingSink)
+        countingSink.flush()
+    }
+}
 
 @Serializable
 data class NasEpisode(

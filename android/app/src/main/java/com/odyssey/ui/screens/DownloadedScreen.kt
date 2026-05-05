@@ -50,10 +50,12 @@ class DownloadedVm @Inject constructor(
     private val player: EpisodePlayer,
     private val scheduler: WorkScheduler,
     private val downloadProgress: DownloadProgressTracker,
+    private val archiveProgress: com.odyssey.download.ArchiveProgressTracker,
     val catalog: AioCatalogRepo,
 ) : ViewModel() {
 
     val progress = downloadProgress.progress
+    val archive = archiveProgress.progress
 
     val items = episodes.observeDownloaded()
         .map { eps ->
@@ -134,6 +136,7 @@ fun DownloadedScreen(vm: DownloadedVm = hiltViewModel()) {
     val completedIds by vm.completedIds.collectAsState()
     val positions by vm.positions.collectAsState()
     val progress by vm.progress.collectAsState()
+    val archive by vm.archive.collectAsState()
     val playerState by vm.playerState.collectAsState()
     var expandedIds by remember { mutableStateOf(setOf<Long>()) }
 
@@ -173,6 +176,7 @@ fun DownloadedScreen(vm: DownloadedVm = hiltViewModel()) {
                         played = ep.episodeId in completedSet,
                         expanded = ep.episodeId in expandedIds,
                         downloadProgress = progress[ep.episodeId],
+                        archiveProgress = archive[ep.episodeId],
                         match = vm.catalog.match(ep.title),
                         playback = positions[ep.episodeId],
                         isCurrentlyPlaying = playerState.currentEpisodeId == ep.episodeId &&

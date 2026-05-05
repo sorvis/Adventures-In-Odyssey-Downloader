@@ -25,9 +25,11 @@ import com.odyssey.ui.screens.MiniPlayerBar
 import com.odyssey.ui.screens.NowPlayingScreen
 import com.odyssey.ui.screens.RecentScreen
 import com.odyssey.ui.screens.SettingsScreen
+import com.odyssey.ui.screens.TransfersScreen
 
 private const val ROUTE_NOW_PLAYING = "now-playing"
 private const val ROUTE_DEBUG = "debug"
+const val ROUTE_TRANSFERS = "transfers"
 
 private sealed class Tab(val route: String, val label: String, val icon: androidx.compose.ui.graphics.vector.ImageVector) {
     data object Recent     : Tab("recent",     "Recent",   Icons.Default.Home)
@@ -103,7 +105,12 @@ fun OdysseyNav() {
                     AlbumDetailScreen(onBack = { nav.popBackStack() })
                 }
                 composable(Tab.Downloaded.route) { DownloadedScreen() }
-                composable(Tab.Backup.route)     { BrowseNasScreen() }
+                composable(Tab.Backup.route) {
+                    BrowseNasScreen(onOpenTransfers = { nav.navigate(ROUTE_TRANSFERS) })
+                }
+                composable(ROUTE_TRANSFERS) {
+                    TransfersScreen(onBack = { nav.popBackStack() })
+                }
                 composable(Tab.Settings.route) {
                     SettingsScreen(onOpenDebug = { nav.navigate(ROUTE_DEBUG) })
                 }

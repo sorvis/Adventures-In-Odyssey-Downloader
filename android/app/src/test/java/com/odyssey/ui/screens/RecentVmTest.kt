@@ -147,6 +147,7 @@ class RecentVmTest {
         scheduler = WorkScheduler(ApplicationProvider.getApplicationContext()),
         settings = SettingsRepo(ApplicationProvider.getApplicationContext()),
         downloadProgress = DownloadProgressTracker(),
+        archiveProgress = com.odyssey.download.ArchiveProgressTracker(),
         catalog = AioCatalogRepo(ApplicationProvider.getApplicationContext()),
     )
 

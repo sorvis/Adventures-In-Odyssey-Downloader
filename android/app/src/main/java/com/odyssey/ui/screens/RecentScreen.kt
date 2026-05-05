@@ -68,10 +68,12 @@ class RecentVm @Inject constructor(
     private val scheduler: WorkScheduler,
     private val settings: SettingsRepo,
     private val downloadProgress: DownloadProgressTracker,
+    private val archiveProgress: com.odyssey.download.ArchiveProgressTracker,
     val catalog: AioCatalogRepo,
 ) : ViewModel() {
 
     val progress = downloadProgress.progress
+    val archive = archiveProgress.progress
     // Sort by parsed air-date desc, falling back to episodeId desc. The
     // SQL ORDER BY in EpisodeDao.observeAll() sorts the airDate string,
     // which works in-year but breaks across year boundaries — re-sorting
@@ -201,6 +203,7 @@ fun RecentScreen(
     val positions by vm.positions.collectAsState()
     val showWarning by vm.showMeteredWarning.collectAsState()
     val progress by vm.progress.collectAsState()
+    val archive by vm.archive.collectAsState()
     val playerState by vm.playerState.collectAsState()
     var expandedIds by remember { mutableStateOf(setOf<Long>()) }
 
@@ -288,6 +291,7 @@ fun RecentScreen(
                         played = ep.episodeId in completedSet,
                         expanded = ep.episodeId in expandedIds,
                         downloadProgress = progress[ep.episodeId],
+                        archiveProgress = archive[ep.episodeId],
                         match = vm.catalog.match(ep.title),
                         playback = positions[ep.episodeId],
                         isCurrentlyPlaying = playerState.currentEpisodeId == ep.episodeId &&
@@ -316,6 +320,8 @@ internal fun EpisodeRow(
     onDelete: (() -> Unit)? = null,
     onDownload: (() -> Unit)? = null,
     downloadProgress: DownloadProgressEntry? = null,
+    /** Set while ArchiveEpisodeWorker is streaming this row to backup. */
+    archiveProgress: DownloadProgressEntry? = null,
     match: AioMatch? = null,
     playback: PlaybackPositionEntity? = null,
     /**
@@ -377,8 +383,9 @@ internal fun EpisodeRow(
                 }
             },
             trailingContent = {
-                // Priority: in-flight download → "X min left" if started
-                // → archived/played/downloaded/streamable chip.
+                // Priority: in-flight download → in-flight upload → "X
+                // min left" if started → archived/played/downloaded/
+                // streamable chip.
                 val remaining = playback?.let {
                     formatRemaining(it.positionMs, it.durationMs)
                 }
@@ -387,6 +394,11 @@ internal fun EpisodeRow(
                         text = "${downloadProgress.percent}%",
                         style = MaterialTheme.typography.labelSmall,
                         modifier = Modifier.testTag("episode-row-progress-pct"),
+                    )
+                    archiveProgress != null -> Text(
+                        text = "↑${archiveProgress.percent}%",
+                        style = MaterialTheme.typography.labelSmall,
+                        modifier = Modifier.testTag("episode-row-archive-pct"),
                     )
                     remaining != null -> Text(
                         text = remaining,

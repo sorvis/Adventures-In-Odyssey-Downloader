@@ -5,6 +5,7 @@ import androidx.hilt.work.HiltWorker
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.odyssey.data.local.EpisodeDao
+import com.odyssey.download.ArchiveProgressTracker
 import com.odyssey.nas.NasClient
 import com.odyssey.nas.NasNotConfiguredException
 import dagger.assisted.Assisted
@@ -27,6 +28,7 @@ class ArchiveEpisodeWorker @AssistedInject constructor(
     private val episodes: EpisodeDao,
     private val nas: NasClient,
     private val scheduler: WorkScheduler,
+    private val progress: ArchiveProgressTracker,
 ) : CoroutineWorker(ctx, params) {
 
     override suspend fun doWork(): Result {
@@ -52,8 +54,12 @@ class ArchiveEpisodeWorker @AssistedInject constructor(
                 durationSecs = ep.durationMs / 1000,
                 sourceUrl    = ep.sourceUrl,
                 audio        = File(path),
+                onProgress   = { sent, total -> progress.update(ep.episodeId, sent, total) },
             )
         }
+        // Whatever happened, the row should fall off the in-flight list
+        // — success/retry both end the visible upload attempt.
+        progress.clear(ep.episodeId)
         return result.fold(
             onSuccess = {
                 episodes.markArchived(ep.episodeId, System.currentTimeMillis())

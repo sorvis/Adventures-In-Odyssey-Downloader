@@ -125,7 +125,8 @@ kotlinc \
   android/app/src/main/java/com/odyssey/catalog/AlbumOwnership.kt \
   android/app/src/main/java/com/odyssey/ui/screens/RecentListing.kt \
   android/app/src/main/java/com/odyssey/debug/DebugLog.kt \
-  android/app/src/main/java/com/odyssey/download/DownloadProgress.kt
+  android/app/src/main/java/com/odyssey/download/DownloadProgress.kt \
+  android/app/src/main/java/com/odyssey/download/TransferRow.kt
 
 step "Compiling test sources"
 kotlinc \
@@ -144,7 +145,8 @@ kotlinc \
   android/app/src/test/java/com/odyssey/catalog/AlbumOwnershipTest.kt \
   android/app/src/test/java/com/odyssey/ui/screens/RecentListingTest.kt \
   android/app/src/test/java/com/odyssey/debug/DebugLogTest.kt \
-  android/app/src/test/java/com/odyssey/download/DownloadProgressTest.kt
+  android/app/src/test/java/com/odyssey/download/DownloadProgressTest.kt \
+  android/app/src/test/java/com/odyssey/download/TransferRowTest.kt
 
 # Test resources need to live on the runtime classpath for getResource() to find them.
 cp -r android/app/src/test/resources/* "$BUILD/test/" 2>/dev/null || true
@@ -176,7 +178,8 @@ java \
   com.odyssey.catalog.AlbumOwnershipTest \
   com.odyssey.ui.screens.RecentListingTest \
   com.odyssey.debug.DebugLogTest \
-  com.odyssey.download.DownloadProgressTest
+  com.odyssey.download.DownloadProgressTest \
+  com.odyssey.download.TransferRowTest
 
 # ---------- 6. Coverage report ----------
 step "Generating JaCoCo report"

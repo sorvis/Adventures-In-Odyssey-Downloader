@@ -10,6 +10,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -64,10 +65,25 @@ class BrowseVm @Inject constructor(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun BrowseNasScreen(vm: BrowseVm = hiltViewModel()) {
+fun BrowseNasScreen(
+    onOpenTransfers: () -> Unit = {},
+    vm: BrowseVm = hiltViewModel(),
+) {
     val configured by vm.configured.collectAsState()
 
-    Scaffold(topBar = { TopAppBar(title = { Text("NAS Archive") }) }) { padding ->
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("NAS Archive") },
+                actions = {
+                    TextButton(
+                        onClick = onOpenTransfers,
+                        modifier = Modifier.testTag("open-transfers"),
+                    ) { Text("Transfers") }
+                },
+            )
+        },
+    ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
             if (!configured) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
