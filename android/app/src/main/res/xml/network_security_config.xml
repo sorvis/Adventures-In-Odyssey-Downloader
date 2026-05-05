@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  This is a personal-use app pointed at a self-hosted backup server on
+  the user's LAN, so plain HTTP is the common case (the user types
+  http://192.168.x.y:8088 into Settings → Backup, no TLS termination
+  in front of the server). Android 9+ blocks cleartext by default;
+  this config opts back in.
+
+  oneplace.com / app.adventuresinodyssey.com are HTTPS in production
+  so they're unaffected — we're only relaxing for the explicit
+  user-configured backup URL, which the user knows is local.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

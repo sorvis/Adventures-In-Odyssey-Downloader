@@ -12,6 +12,7 @@
         android:name=".app.OdysseyApp"
         android:label="Odyssey"
         android:allowBackup="false"
+        android:networkSecurityConfig="@xml/network_security_config"
         android:supportsRtl="true"
         android:theme="@style/Theme.Odyssey">
 

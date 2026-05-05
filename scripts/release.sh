@@ -31,14 +31,20 @@ ROOT="$PWD"
 # kill it instead of starting a doomed parallel run.
 mkdir -p "$ROOT/.tools"
 LOCK_FILE="$ROOT/.tools/release.lock"
-exec 9>"$LOCK_FILE"
+# Append-mode (>>) avoids truncating the holder's pid out of the file
+# when a rejected caller opens fd 9 — the holder's pid stays readable
+# so the error message can surface it.
+exec 9>>"$LOCK_FILE"
 if ! flock -n 9; then
-  holder="$(cat "$LOCK_FILE" 2>/dev/null || echo unknown)"
+  holder="$(cat "$LOCK_FILE" 2>/dev/null)"
+  holder="${holder:-unknown}"
   printf 'error: another scripts/release.sh is already running (pid %s)\n' "$holder" >&2
   printf '       check progress: tail -f %s\n' "${ODYSSEY_RELEASE_LOG:-/tmp/odyssey-release.log}" >&2
   printf '       cancel it     : kill %s && rm -f %s\n' "$holder" "$LOCK_FILE" >&2
   exit 1
 fi
+# Overwrite (not append) so the file contains only this pid, not a
+# concatenation of historical run pids.
 echo "$$" >"$LOCK_FILE"
 trap 'rm -f "$LOCK_FILE"' EXIT
 
