@@ -21,6 +21,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -48,6 +49,7 @@ import com.odyssey.player.EpisodePlayer
 import com.odyssey.player.PlaySource
 import com.odyssey.player.formatRemaining
 import com.odyssey.player.formatResumeSubtitle
+import com.odyssey.player.formatTotalDuration
 import com.odyssey.player.playSourceFor
 import com.odyssey.work.WorkScheduler
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -360,7 +362,12 @@ internal fun EpisodeRow(
     // Falls back to the unenriched values when no match.
     val displayTitle = match?.displayName ?: ep.title
     val thumbnailUrl = match?.thumbnailUrl ?: ep.imageUrl
-    Column {
+    // "Lighter gray haze" for streamable-only rows so downloaded vs
+    // not-downloaded reads at a glance, the same pattern used on the
+    // Albums tab for empty albums. Click + tap-to-expand still work
+    // through the alpha — only the visual rendering is dimmed.
+    val rowAlpha = if (ep.filePath == null) 0.5f else 1f
+    Column(modifier = Modifier.alpha(rowAlpha)) {
         ListItem(
             modifier = Modifier
                 .clickable(onClick = onToggleExpand)
@@ -404,12 +411,22 @@ internal fun EpisodeRow(
                 }
             },
             trailingContent = {
-                // Priority: in-flight download → in-flight upload → "X
-                // min left" if started → archived/played/downloaded/
-                // streamable chip.
+                // The chip is now ALWAYS a length cue (or in-flight
+                // progress), never a downloaded/stream toggle —
+                // downloaded vs not is communicated by the row's alpha.
+                // Played stays as its own chip because "have I finished
+                // this?" is a separate dimension from "is it on disk?".
+                //
+                // Priority:
+                //   in-flight download → "NN%"
+                //   in-flight upload   → "↑NN%"
+                //   played             → "✓ played"
+                //   partially played   → "X min left"
+                //   not started        → total length ("25 min")
                 val remaining = playback?.let {
                     formatRemaining(it.positionMs, it.durationMs)
                 }
+                val totalLen = formatTotalDuration(ep.durationMs)
                 when {
                     downloadProgress != null -> Text(
                         text = "${downloadProgress.percent}%",
@@ -421,15 +438,21 @@ internal fun EpisodeRow(
                         style = MaterialTheme.typography.labelSmall,
                         modifier = Modifier.testTag("episode-row-archive-pct"),
                     )
+                    played -> Text(
+                        "✓ played",
+                        style = MaterialTheme.typography.labelSmall,
+                        modifier = Modifier.testTag("episode-row-played"),
+                    )
                     remaining != null -> Text(
                         text = remaining,
                         style = MaterialTheme.typography.labelSmall,
                         modifier = Modifier.testTag("episode-row-remaining"),
                     )
-                    ep.filePath == null -> Text("▶ stream", style = MaterialTheme.typography.labelSmall)
-                    ep.archivedAt != null -> Text("✓ archived", style = MaterialTheme.typography.labelSmall)
-                    played -> Text("✓ played", style = MaterialTheme.typography.labelSmall)
-                    else -> Text("✓ downloaded", style = MaterialTheme.typography.labelSmall)
+                    totalLen != null -> Text(
+                        text = totalLen,
+                        style = MaterialTheme.typography.labelSmall,
+                        modifier = Modifier.testTag("episode-row-duration"),
+                    )
                 }
             },
         )

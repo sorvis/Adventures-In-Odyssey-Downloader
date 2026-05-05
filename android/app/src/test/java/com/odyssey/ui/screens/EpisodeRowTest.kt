@@ -484,10 +484,10 @@ class EpisodeRowTest {
     }
 
     @Test
-    fun `progress percent chip overrides the trailing stream chip`() {
+    fun `progress percent chip shows while downloading and overrides the duration chip`() {
         composeRule.setContent {
             EpisodeRow(
-                ep = episode(filePath = null),
+                ep = episode(filePath = null).copy(durationMs = 25 * 60_000L),
                 played = false,
                 expanded = false,
                 onToggleExpand = {},
@@ -496,9 +496,9 @@ class EpisodeRowTest {
             )
         }
         composeRule.onNodeWithText("20%", useUnmergedTree = true).assertExists()
-        // While downloading, "▶ stream" should NOT show — the progress
-        // chip takes priority since the row is actively transitioning.
-        composeRule.onNodeWithText("▶ stream", useUnmergedTree = true).assertDoesNotExist()
+        // The percent chip outranks the duration chip while a download is
+        // in flight; the row's "25 min" length must NOT also show.
+        composeRule.onNodeWithText("25 min", useUnmergedTree = true).assertDoesNotExist()
     }
 
     @Test
@@ -535,67 +535,64 @@ class EpisodeRowTest {
         composeRule.onNodeWithText("0%", useUnmergedTree = true).assertExists()
     }
 
-    // ---- Trailing-chip states (downloaded / streamable / archived / played) ----
+    // ---- Trailing-chip states (duration / played / progress) ----
+    //
+    // Downloaded vs not-downloaded is now communicated by the row's
+    // alpha (lighter gray for streamable, normal for downloaded), not
+    // by a chip. The chip slot is the duration cue (or progress while
+    // a transfer is in flight, or the played mark when finished).
 
     @Test
-    fun `streamable row shows stream chip`() {
+    fun `streamable row shows duration chip with no downloaded or stream label`() {
         composeRule.setContent {
             EpisodeRow(
-                ep = episode(filePath = null),
+                ep = episode(filePath = null).copy(durationMs = 25 * 60_000L),
                 played = false,
                 expanded = false,
                 onToggleExpand = {},
                 onPlay = {},
             )
         }
-        composeRule.onNodeWithText("▶ stream").assertIsDisplayed()
+        // assertExists, not assertIsDisplayed — Robolectric's window
+        // sizing isn't reliable for visibility checks (matches the
+        // pattern used in the rest of this file).
+        composeRule.onNodeWithTag("episode-row-duration", useUnmergedTree = true).assertExists()
+        composeRule.onNodeWithText("25 min", useUnmergedTree = true).assertExists()
+        composeRule.onNodeWithText("▶ stream", useUnmergedTree = true).assertDoesNotExist()
+        composeRule.onNodeWithText("✓ downloaded", useUnmergedTree = true).assertDoesNotExist()
     }
 
     @Test
-    fun `downloaded row shows downloaded chip - visible signal that play wont re-stream`() {
+    fun `downloaded row shows duration chip with no downloaded label`() {
         composeRule.setContent {
             EpisodeRow(
-                ep = episode(filePath = "/data/odyssey/123.mp3"),
+                ep = episode(filePath = "/data/odyssey/123.mp3").copy(durationMs = 25 * 60_000L),
                 played = false,
                 expanded = false,
                 onToggleExpand = {},
                 onPlay = {},
             )
         }
-        composeRule.onNodeWithText("✓ downloaded").assertIsDisplayed()
-        // ...and the streaming chip must NOT be present.
-        composeRule.onNodeWithText("▶ stream").assertDoesNotExist()
+        composeRule.onNodeWithTag("episode-row-duration", useUnmergedTree = true).assertExists()
+        composeRule.onNodeWithText("25 min", useUnmergedTree = true).assertExists()
+        composeRule.onNodeWithText("✓ downloaded", useUnmergedTree = true).assertDoesNotExist()
+        composeRule.onNodeWithText("▶ stream", useUnmergedTree = true).assertDoesNotExist()
     }
 
     @Test
-    fun `played row shows played chip and overrides downloaded chip`() {
+    fun `played row shows played chip and overrides duration chip`() {
         composeRule.setContent {
             EpisodeRow(
-                ep = episode(filePath = "/data/odyssey/123.mp3"),
+                ep = episode(filePath = "/data/odyssey/123.mp3").copy(durationMs = 25 * 60_000L),
                 played = true,
                 expanded = false,
                 onToggleExpand = {},
                 onPlay = {},
             )
         }
-        composeRule.onNodeWithText("✓ played").assertIsDisplayed()
-        composeRule.onNodeWithText("✓ downloaded").assertDoesNotExist()
-    }
-
-    @Test
-    fun `archived row shows archived chip and overrides played and downloaded`() {
-        composeRule.setContent {
-            EpisodeRow(
-                ep = episode(filePath = "/data/odyssey/123.mp3").copy(archivedAt = 1_700_000_000L),
-                played = true,
-                expanded = false,
-                onToggleExpand = {},
-                onPlay = {},
-            )
-        }
-        composeRule.onNodeWithText("✓ archived").assertIsDisplayed()
-        composeRule.onNodeWithText("✓ played").assertDoesNotExist()
-        composeRule.onNodeWithText("✓ downloaded").assertDoesNotExist()
+        composeRule.onNodeWithText("✓ played", useUnmergedTree = true).assertExists()
+        composeRule.onNodeWithText("25 min", useUnmergedTree = true).assertDoesNotExist()
+        composeRule.onNodeWithText("✓ downloaded", useUnmergedTree = true).assertDoesNotExist()
     }
 
     @Test

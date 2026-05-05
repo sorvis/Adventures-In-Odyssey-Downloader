@@ -40,6 +40,22 @@ fun shouldMarkComplete(
 ): Boolean = durationMs > 0 && positionMs >= durationMs * threshold
 
 /**
+ * Total episode length for the row trailing slot when the user
+ * hasn't started playing yet — "25 min", "1hr 12min", or null when
+ * duration isn't known. Pairs with formatRemaining: that one shows
+ * "X min left" once playback has begun, this one shows the original
+ * total before then so the user always sees a length cue.
+ */
+fun formatTotalDuration(durationMs: Long): String? {
+    if (durationMs <= 0L) return null
+    val totalMin = durationMs / 60_000L
+    if (totalMin < 1L) return null
+    val hours = totalMin / 60L
+    val mins = totalMin % 60L
+    return if (hours > 0) "${hours}hr ${mins}min" else "${mins} min"
+}
+
+/**
  * Format the remaining time on a partially-played episode for display
  * in the row trailing slot — BeyondPod-style ("52 min left", "1 hr 12 min left").
  *

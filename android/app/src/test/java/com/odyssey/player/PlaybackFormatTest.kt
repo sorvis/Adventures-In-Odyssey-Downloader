@@ -125,4 +125,27 @@ class PlaybackFormatTest {
         assertFalse(shouldMarkComplete(positionMs = 29_999, durationMs = 60_000, threshold = 0.50))
         assertTrue(shouldMarkComplete(positionMs = 30_000, durationMs = 60_000, threshold = 0.50))
     }
+
+    // ---- formatTotalDuration -----------------------------------------
+
+    @Test
+    fun `formatTotalDuration null when duration unknown or sub-minute`() {
+        assertEquals(null, formatTotalDuration(0L))
+        assertEquals(null, formatTotalDuration(-1L))
+        assertEquals(null, formatTotalDuration(45_000L))   // 45s — under one minute
+    }
+
+    @Test
+    fun `formatTotalDuration formats minute-only durations`() {
+        assertEquals("1 min", formatTotalDuration(60_000L))
+        assertEquals("25 min", formatTotalDuration(25L * 60_000L))
+        assertEquals("59 min", formatTotalDuration(59L * 60_000L))
+    }
+
+    @Test
+    fun `formatTotalDuration switches to hours+minutes past 60`() {
+        assertEquals("1hr 0min", formatTotalDuration(60L * 60_000L))
+        assertEquals("1hr 5min", formatTotalDuration(65L * 60_000L))
+        assertEquals("2hr 30min", formatTotalDuration((2L * 60L + 30L) * 60_000L))
+    }
 }
