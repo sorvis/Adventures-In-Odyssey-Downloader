@@ -21,6 +21,30 @@ SDK_DIR="$TOOLS/android-sdk"
 
 step() { printf '\n\033[1;34m==>\033[0m %s\n' "$*"; }
 
+# Pull the load-bearing lines out of a gradle log so callers don't need
+# to chain `| grep -B2 -A4 FAILED` themselves. Targets:
+#   - kotlin compile errors    (`e: file://...kt:NN:NN  msg`)
+#   - generic compiler errors  (`error: msg`, `Unresolved reference`)
+#   - junit failed test lines  (`MyTest > some name FAILED`)
+#   - assertion failures       (`expected:...but was:...`)
+#   - exception causes         (`Caused by: ...`, `at <stack>` next line)
+#   - gradle task failures     (`Task :foo FAILED`)
+# Falls back to a 40-line tail when none of the above hit.
+summarize_failure() {
+  local log="$1"
+  local extracted
+  extracted=$(grep -nE \
+    '^e: |error: |^Unresolved |Internal compiler error| FAILED$|Caused by:|expected:.*but was:|^Task .* FAILED|cannot find symbol' \
+    "$log" 2>/dev/null | head -40)
+  if [[ -n "$extracted" ]]; then
+    echo "--- failure summary (line nos from $log) ---"
+    echo "$extracted"
+  else
+    echo "--- last 40 lines of $log ---"
+    tail -40 "$log"
+  fi
+}
+
 # ---------- 1. JDK (shared with run-jvm-tests.sh) ----------
 if [[ ! -x "$JDK_DIR/bin/java" ]]; then
   echo "==> JDK missing — running run-jvm-tests.sh first to bootstrap it"
@@ -99,16 +123,14 @@ if [[ -f "$REPORT" ]]; then
   else
     printf '\033[1;31m✘ %s tests, %s failed\033[0m   report: file://%s\n' \
       "$TOTAL" "$FAILED" "$REPORT"
-    echo "--- last 40 lines of $LOG ---"
-    tail -40 "$LOG"
+    summarize_failure "$LOG"
   fi
 else
   if [[ "$STATUS" == "0" ]]; then
     echo "BUILD SUCCESSFUL (no test report — task may have been UP-TO-DATE)   log: $LOG"
   else
     echo "BUILD FAILED   log: $LOG"
-    echo "--- last 40 lines ---"
-    tail -40 "$LOG"
+    summarize_failure "$LOG"
   fi
 fi
 exit "$STATUS"

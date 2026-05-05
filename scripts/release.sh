@@ -24,6 +24,24 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$PWD"
 
+# Singleton lock — concurrent release.sh runs deadlock on the gradle
+# daemon and the shared release log. fd 9 holds an advisory flock for
+# the lifetime of the script; second invocation while one is in flight
+# fails fast with the holder's pid so the caller can decide to wait or
+# kill it instead of starting a doomed parallel run.
+mkdir -p "$ROOT/.tools"
+LOCK_FILE="$ROOT/.tools/release.lock"
+exec 9>"$LOCK_FILE"
+if ! flock -n 9; then
+  holder="$(cat "$LOCK_FILE" 2>/dev/null || echo unknown)"
+  printf 'error: another scripts/release.sh is already running (pid %s)\n' "$holder" >&2
+  printf '       check progress: tail -f %s\n' "${ODYSSEY_RELEASE_LOG:-/tmp/odyssey-release.log}" >&2
+  printf '       cancel it     : kill %s && rm -f %s\n' "$holder" "$LOCK_FILE" >&2
+  exit 1
+fi
+echo "$$" >"$LOCK_FILE"
+trap 'rm -f "$LOCK_FILE"' EXIT
+
 # Mirror all stdout+stderr through tee to a stable log path so callers
 # (and AIs) can run `scripts/release.sh` with the same command shape
 # every time and read the result from a known location. Path is the same
