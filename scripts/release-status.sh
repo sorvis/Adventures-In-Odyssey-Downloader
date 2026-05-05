@@ -72,19 +72,24 @@ if [[ -z "$pid" ]] || ! kill -0 "$pid" 2>/dev/null; then
   exit 0
 fi
 
-# Live: extract the most recent meaningful step from the log. The script
-# uses `==> StepName` headers, so the last one is the current step.
-step="$(grep -E '^\\?\[[0-9;]*m?==>' "$LOG" 2>/dev/null | tail -1 \
-        | sed -E 's/^\\?\[[0-9;]*m?==>\\?\[[0-9;]*m? //' \
-        | head -c 80)"
-step="${step:-?}"
+# Live: extract the most recent meaningful step from the log. The
+# release script writes `==> StepName` headers (sometimes wrapped in
+# ANSI escapes); the last one is the current step. Defensive about
+# every grep failing under `set -e`.
+step="?"
+if [[ -f "$LOG" ]]; then
+  raw="$(grep -F '==>' "$LOG" 2>/dev/null | tail -1 || true)"
+  # Strip ANSI escapes + the `==> ` prefix.
+  step="$(printf '%s' "$raw" | sed -E $'s/\x1b\\[[0-9;]*m//g; s/.*==> //' | head -c 80)"
+  step="${step:-?}"
+fi
 
-# Elapsed: ps's etime is friendlier than parsing log timestamps.
-elapsed="$(ps -p "$pid" -o etime= 2>/dev/null | xargs || echo ?)"
+elapsed="$(ps -p "$pid" -o etime= 2>/dev/null | xargs || true)"
+elapsed="${elapsed:-?}"
 
 printf 'release: in flight\n'
 printf '   pid : %s   elapsed: %s\n' "$pid" "$elapsed"
 printf '   step: %s\n' "$step"
 printf '   log : %s\n' "$LOG"
-printf '   tail: scripts/release-status.sh-cancel to kill\n'
+printf '   cancel: scripts/release-status.sh --cancel\n'
 printf 'last tag: %s\n' "$last_tag"
