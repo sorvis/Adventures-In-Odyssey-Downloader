@@ -5,6 +5,7 @@ import androidx.hilt.work.HiltWorker
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.odyssey.data.local.EpisodeDao
+import com.odyssey.debug.DebugLogger
 import com.odyssey.download.ArchiveProgressTracker
 import com.odyssey.nas.NasClient
 import com.odyssey.nas.NasNotConfiguredException
@@ -33,17 +34,41 @@ class ArchiveEpisodeWorker @AssistedInject constructor(
 
     override suspend fun doWork(): Result {
         val id = inputData.getLong(DownloadEpisodeWorker.KEY_EPISODE_ID, -1L)
-        if (id <= 0) return Result.failure()
+        if (id <= 0) {
+            DebugLogger.w("ArchiveWorker", "doWork — invalid episodeId=$id")
+            return Result.failure()
+        }
 
-        val ep = episodes.byId(id) ?: return Result.failure()
-        val path = ep.filePath ?: return Result.failure()  // download must precede archive
-        if (ep.archivedAt != null) return Result.success()
+        val ep = episodes.byId(id)
+        if (ep == null) {
+            DebugLogger.w("ArchiveWorker", "doWork($id) — no row in DB")
+            return Result.failure()
+        }
+        val path = ep.filePath
+        if (path == null) {
+            DebugLogger.w("ArchiveWorker", "doWork($id) — filePath is null, can't archive")
+            return Result.failure()
+        }
+        if (ep.archivedAt != null) {
+            DebugLogger.d("ArchiveWorker", "doWork($id) — already archived, skipping")
+            return Result.success()
+        }
 
         if (!nas.isConfigured()) {
-            // No NAS — schedule retention sweep and exit clean.
+            DebugLogger.d("ArchiveWorker", "doWork($id) — no NAS configured, skipping")
             scheduler.enqueueRetention()
             return Result.success()
         }
+
+        val file = File(path)
+        if (!file.exists()) {
+            DebugLogger.w("ArchiveWorker", "doWork($id) — file gone from disk: $path")
+            return Result.failure()
+        }
+        DebugLogger.i(
+            "ArchiveWorker",
+            "doWork($id) — starting upload of ${file.length()} bytes (\"${ep.title}\")",
+        )
 
         val result = withContext(Dispatchers.IO) {
             nas.upload(
@@ -53,21 +78,26 @@ class ArchiveEpisodeWorker @AssistedInject constructor(
                 description  = ep.description,
                 durationSecs = ep.durationMs / 1000,
                 sourceUrl    = ep.sourceUrl,
-                audio        = File(path),
+                audio        = file,
                 onProgress   = { sent, total -> progress.update(ep.episodeId, sent, total) },
             )
         }
-        // Whatever happened, the row should fall off the in-flight list
-        // — success/retry both end the visible upload attempt.
         progress.clear(ep.episodeId)
         return result.fold(
             onSuccess = {
+                DebugLogger.i("ArchiveWorker", "doWork($id) — upload OK, marking archived")
                 episodes.markArchived(ep.episodeId, System.currentTimeMillis())
                 scheduler.enqueueRetention()
                 Result.success()
             },
             onFailure = { e ->
-                if (e is NasNotConfiguredException) Result.success() else Result.retry()
+                if (e is NasNotConfiguredException) {
+                    DebugLogger.d("ArchiveWorker", "doWork($id) — NAS unconfigured mid-flight")
+                    Result.success()
+                } else {
+                    DebugLogger.w("ArchiveWorker", "doWork($id) — upload failed, retrying", e)
+                    Result.retry()
+                }
             },
         )
     }

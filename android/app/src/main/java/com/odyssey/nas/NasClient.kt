@@ -1,6 +1,7 @@
 package com.odyssey.nas
 
 import com.odyssey.app.SettingsRepo
+import com.odyssey.debug.DebugLogger
 import kotlinx.coroutines.flow.first
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -70,13 +71,20 @@ class NasClient @Inject constructor(
             .addFormDataPart("audio", audio.name, countingAudio)
             .build()
 
+        val url = "$base/episodes"
         val req = Request.Builder()
-            .url("$base/episodes")
+            .url(url)
             .header("Authorization", "Bearer $token")
             .post(body)
             .build()
+        DebugLogger.i("NasClient", "upload($episodeId) → POST $url (${audio.length()} bytes)")
         http.newCall(req).execute().use { resp ->
-            if (resp.code !in 200..201) error("upload HTTP ${resp.code}")
+            if (resp.code !in 200..201) {
+                val bodyPreview = runCatching { resp.body?.string()?.take(200) }.getOrNull().orEmpty()
+                DebugLogger.w("NasClient", "upload($episodeId) — HTTP ${resp.code}: $bodyPreview")
+                error("upload HTTP ${resp.code}: $bodyPreview")
+            }
+            DebugLogger.d("NasClient", "upload($episodeId) — HTTP ${resp.code} OK")
         }
     }
 
@@ -122,6 +130,7 @@ class NasClient @Inject constructor(
         val s = settings.flow.first()
         if (!s.nasConfigured) return Result.failure(NasNotConfiguredException)
         return runCatching { block(s.nasUrl, s.nasToken) }
+            .onFailure { DebugLogger.w("NasClient", "call → ${it::class.simpleName}: ${it.message}", it) }
     }
 }
 
