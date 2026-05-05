@@ -97,16 +97,22 @@ fi
 VERSION_NAME="${VERSION#v}"   # strip leading v
 
 # Notes resolution:
-#   1. Explicit args: scripts/release.sh "notes string"
-#   2. Stdin pipe:    scripts/release.sh < notes.md
-#   3. Auto-derive:   bullet list of commit subjects since the last tag
-#                     (semantic-release-style, but reading the git log
-#                     directly — no Conventional Commits required).
-#   4. Fallback:      "Release vX.Y.Z" when there's no prior tag and
-#                     no explicit notes.
+#   1. Explicit args:     scripts/release.sh "notes string"
+#   2. Auto-derive:       bullet list of commit subjects since last tag
+#                         (default — semantic-release-style, but reads
+#                         git log directly so no Conventional Commits
+#                         convention required).
+#   3. Stdin pipe:        ODYSSEY_NOTES_FROM_STDIN=1 scripts/release.sh < notes.md
+#                         Opt-in via env var because the previous
+#                         "stdin is not a TTY" auto-detection hung
+#                         release.sh forever when invoked from a
+#                         non-interactive harness with an empty pipe
+#                         on fd 0 (cat blocks waiting for input that
+#                         never arrives).
+#   4. Fallback:          "Release vX.Y.Z" when there's no prior tag.
 if [[ $# -gt 0 ]]; then
   NOTES="$*"
-elif [[ ! -t 0 ]]; then
+elif [[ "${ODYSSEY_NOTES_FROM_STDIN:-0}" == "1" ]]; then
   NOTES="$(cat)"
 elif [[ -n "${LATEST:-}" ]]; then
   DERIVED=$(git log --no-merges --pretty=format:"- %s" "${LATEST}..HEAD" 2>/dev/null || true)
