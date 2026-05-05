@@ -19,17 +19,57 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.odyssey.app.SettingsRepo
+import com.odyssey.data.local.EpisodeDao
+import com.odyssey.debug.DebugLogger
+import com.odyssey.work.ArchiveBackfill
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 @HiltViewModel
-class SettingsVm @Inject constructor(private val settings: SettingsRepo) : ViewModel() {
+class SettingsVm @Inject constructor(
+    private val settings: SettingsRepo,
+    private val episodes: EpisodeDao,
+    private val backfill: ArchiveBackfill,
+) : ViewModel() {
     val state = settings.flow.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
-    fun saveNas(url: String, token: String) = viewModelScope.launch { settings.setNas(url, token) }
+    /**
+     * Live count of "downloaded but not yet pushed to backup". Drives
+     * the "Push N waiting" button + status line on Settings → Backup.
+     */
+    val unarchivedCount = episodes.observeUnarchivedDownloaded()
+        .map { it.size }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
+
+    /**
+     * UI feedback for the most recent backfill run — null = not yet run,
+     * 0 = ran with nothing pending, >0 = enqueued that many uploads.
+     */
+    val lastBackfillEnqueued: MutableStateFlow<Int?> = MutableStateFlow(null)
+
+    fun saveNas(url: String, token: String) = viewModelScope.launch {
+        settings.setNas(url, token)
+        // Auto-trigger the backfill when valid creds are saved — first
+        // connect to a backup server should push everything that's
+        // already on-device. ArchiveBackfill is idempotent, so even if
+        // some rows are mid-archive this is safe to re-run.
+        if (url.isNotBlank() && token.isNotBlank()) {
+            runCatching { lastBackfillEnqueued.value = backfill.run() }
+                .onFailure { DebugLogger.e("SettingsVm", "saveNas backfill failed", it) }
+        }
+    }
+
+    /** User-tapped "Push N waiting" button. Same code path as auto-trigger. */
+    fun pushUnarchivedNow() = viewModelScope.launch {
+        runCatching { lastBackfillEnqueued.value = backfill.run() }
+            .onFailure { DebugLogger.e("SettingsVm", "pushUnarchivedNow failed", it) }
+    }
+
     fun saveRetention(n: Int) = viewModelScope.launch { settings.setRetention(n) }
     fun setAllowMetered(allow: Boolean) = viewModelScope.launch { settings.setAllowMeteredDownloads(allow) }
 }
@@ -42,6 +82,8 @@ fun SettingsScreen(
 ) {
     val s by vm.state.collectAsState()
     val current = s ?: return
+    val unarchivedCount by vm.unarchivedCount.collectAsState()
+    val lastBackfill by vm.lastBackfillEnqueued.collectAsState()
 
     val ctx = LocalContext.current
     val versionLabel = remember {
@@ -82,7 +124,43 @@ fun SettingsScreen(
                 label = { Text("Bearer token") },
                 singleLine = true, modifier = Modifier.fillMaxWidth(),
             )
-            Button(onClick = { vm.saveNas(nasUrl, nasToken) }) { Text("Save NAS settings") }
+            Button(
+                onClick = { vm.saveNas(nasUrl, nasToken) },
+                modifier = Modifier.testTag("save-nas"),
+            ) { Text("Save NAS settings") }
+
+            // Push-to-backup status: shows how many local files haven't
+            // been backed up yet, plus a manual trigger button. Save
+            // already kicks an auto-backfill — this is for re-runs.
+            if (current.nasConfigured) {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = when {
+                        unarchivedCount == 0 -> "All downloaded episodes are backed up."
+                        else -> "$unarchivedCount episode${if (unarchivedCount == 1) "" else "s"} on this phone not yet backed up."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.testTag("backup-pending-count"),
+                )
+                Button(
+                    onClick = vm::pushUnarchivedNow,
+                    enabled = unarchivedCount > 0,
+                    modifier = Modifier.testTag("push-unarchived"),
+                ) {
+                    Text(
+                        if (unarchivedCount > 0) "Push $unarchivedCount to backup"
+                        else "Nothing to push",
+                    )
+                }
+                lastBackfill?.let { count ->
+                    Text(
+                        text = if (count == 0) "Last push: nothing was waiting."
+                               else "Last push: queued $count upload${if (count == 1) "" else "s"} (run in background).",
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.testTag("backup-last-result"),
+                    )
+                }
+            }
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
             Text("Downloads", style = MaterialTheme.typography.titleMedium)

@@ -210,6 +210,8 @@ class RecentVmTest {
         override suspend fun markArchived(id: Long, ts: Long) {}
         override suspend fun delete(id: Long) {}
         override suspend fun downloadedOldestFirst(): List<LocalEpisodeEntity> = emptyList()
+        override fun observeUnarchivedDownloaded(): Flow<List<LocalEpisodeEntity>> = flowOf(emptyList())
+        override suspend fun unarchivedDownloaded(): List<LocalEpisodeEntity> = emptyList()
     }
 
     private class NoopPlaybackDao : PlaybackDao {

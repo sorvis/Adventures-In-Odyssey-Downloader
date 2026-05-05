@@ -18,4 +18,8 @@ abstract class WorkModule {
     @Binds
     @Singleton
     abstract fun bindDownloadEnqueuer(impl: WorkScheduler): DownloadEnqueuer
+
+    @Binds
+    @Singleton
+    abstract fun bindArchiveEnqueuer(impl: WorkScheduler): ArchiveEnqueuer
 }

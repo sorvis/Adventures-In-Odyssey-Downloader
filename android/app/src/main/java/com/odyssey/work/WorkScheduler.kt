@@ -8,7 +8,8 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
-class WorkScheduler @Inject constructor(@ApplicationContext private val ctx: Context) : DownloadEnqueuer {
+class WorkScheduler @Inject constructor(@ApplicationContext private val ctx: Context) :
+    DownloadEnqueuer, ArchiveEnqueuer {
 
     private val wm get() = WorkManager.getInstance(ctx)
 
@@ -53,7 +54,7 @@ class WorkScheduler @Inject constructor(@ApplicationContext private val ctx: Con
         wm.enqueueUniqueWork("download-$episodeId", ExistingWorkPolicy.KEEP, req)
     }
 
-    fun enqueueArchive(episodeId: Long, allowMetered: Boolean) {
+    override fun enqueueArchive(episodeId: Long, allowMetered: Boolean) {
         val req = OneTimeWorkRequestBuilder<ArchiveEpisodeWorker>()
             .setInputData(workDataOf(DownloadEpisodeWorker.KEY_EPISODE_ID to episodeId))
             .setConstraints(

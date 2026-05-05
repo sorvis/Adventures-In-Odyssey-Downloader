@@ -76,6 +76,27 @@ interface EpisodeDao {
               WHERE filePath IS NOT NULL
               ORDER BY airDate ASC, episodeId ASC""")
     suspend fun downloadedOldestFirst(): List<LocalEpisodeEntity>
+
+    /**
+     * Episodes that exist on the phone but haven't been pushed to the
+     * backup service yet (filePath set, archivedAt null). Drives the
+     * Settings → Backup auto-backfill: when the user saves valid
+     * credentials we enumerate this list and enqueue an archive job
+     * per row.
+     *
+     * Observable so the Settings screen can show a live "X waiting"
+     * count without polling.
+     */
+    @Query("""SELECT * FROM local_episodes
+              WHERE filePath IS NOT NULL
+                AND archivedAt IS NULL
+              ORDER BY airDate ASC, episodeId ASC""")
+    fun observeUnarchivedDownloaded(): Flow<List<LocalEpisodeEntity>>
+
+    @Query("""SELECT * FROM local_episodes
+              WHERE filePath IS NOT NULL
+                AND archivedAt IS NULL""")
+    suspend fun unarchivedDownloaded(): List<LocalEpisodeEntity>
 }
 
 @Dao

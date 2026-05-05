@@ -11,3 +11,12 @@ package com.odyssey.work
 interface DownloadEnqueuer {
     fun enqueueDownload(episodeId: Long, allowMetered: Boolean)
 }
+
+/**
+ * Same testability seam for archive uploads. ArchiveBackfill uses this
+ * (without taking a hard dep on WorkManager-bound WorkScheduler) so the
+ * "scan for unarchived files and push" loop is JVM-testable.
+ */
+interface ArchiveEnqueuer {
+    fun enqueueArchive(episodeId: Long, allowMetered: Boolean)
+}
