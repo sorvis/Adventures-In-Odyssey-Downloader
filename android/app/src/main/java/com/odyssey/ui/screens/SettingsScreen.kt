@@ -21,6 +21,7 @@ import androidx.lifecycle.viewModelScope
 import com.odyssey.app.SettingsRepo
 import com.odyssey.data.local.EpisodeDao
 import com.odyssey.debug.DebugLogger
+import com.odyssey.download.ArchiveProgressTracker
 import com.odyssey.work.ArchiveBackfill
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -35,6 +36,7 @@ class SettingsVm @Inject constructor(
     private val settings: SettingsRepo,
     private val episodes: EpisodeDao,
     private val backfill: ArchiveBackfill,
+    archiveProgress: ArchiveProgressTracker,
 ) : ViewModel() {
     val state = settings.flow.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
@@ -43,6 +45,16 @@ class SettingsVm @Inject constructor(
      * the "Push N waiting" button + status line on Settings → Backup.
      */
     val unarchivedCount = episodes.observeUnarchivedDownloaded()
+        .map { it.size }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
+
+    /**
+     * How many archive jobs are streaming bytes RIGHT NOW. Lets the
+     * Settings screen show a live "(N uploading)" pulse so the user
+     * sees progress between taps even before the unarchived count
+     * decrements (which only happens on completion).
+     */
+    val uploadingCount = archiveProgress.progress
         .map { it.size }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
 
@@ -83,7 +95,22 @@ fun SettingsScreen(
     val s by vm.state.collectAsState()
     val current = s ?: return
     val unarchivedCount by vm.unarchivedCount.collectAsState()
+    val uploadingCount by vm.uploadingCount.collectAsState()
     val lastBackfill by vm.lastBackfillEnqueued.collectAsState()
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    // Surface the backfill result as a Snackbar so the user gets a
+    // visible "yes, I heard you" pulse the moment Push fires —
+    // previous quiet text label below the button was easy to miss.
+    LaunchedEffect(lastBackfill) {
+        val n = lastBackfill ?: return@LaunchedEffect
+        val msg = when {
+            n == 0 -> "Nothing waiting — all episodes are already backed up."
+            n == 1 -> "Queued 1 upload. Watch progress on the Backup tab."
+            else -> "Queued $n uploads. Watch progress on the Backup tab."
+        }
+        snackbarHostState.showSnackbar(msg)
+    }
 
     val ctx = LocalContext.current
     val versionLabel = remember {
@@ -100,7 +127,10 @@ fun SettingsScreen(
     var nasToken by remember(current.nasToken) { mutableStateOf(current.nasToken) }
     var retention by remember(current.retentionCount) { mutableStateOf(current.retentionCount.toString()) }
 
-    Scaffold(topBar = { TopAppBar(title = { Text("Settings") }) }) { padding ->
+    Scaffold(
+        topBar = { TopAppBar(title = { Text("Settings") }) },
+        snackbarHost = { SnackbarHost(snackbarHostState) },
+    ) { padding ->
         Column(
             Modifier
                 .padding(padding)
@@ -135,9 +165,19 @@ fun SettingsScreen(
             if (current.nasConfigured) {
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    text = when {
-                        unarchivedCount == 0 -> "All downloaded episodes are backed up."
-                        else -> "$unarchivedCount episode${if (unarchivedCount == 1) "" else "s"} on this phone not yet backed up."
+                    text = buildString {
+                        append(
+                            when {
+                                unarchivedCount == 0 -> "All downloaded episodes are backed up."
+                                else -> "$unarchivedCount episode${if (unarchivedCount == 1) "" else "s"} on this phone not yet backed up."
+                            },
+                        )
+                        // Live pulse: how many archive jobs are streaming
+                        // bytes RIGHT NOW. Updates every few hundred ms via
+                        // ArchiveProgressTracker, so the user sees the
+                        // upload is alive even while the unarchived count
+                        // is still ticking down to zero.
+                        if (uploadingCount > 0) append(" ($uploadingCount uploading now.)")
                     },
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.testTag("backup-pending-count"),
