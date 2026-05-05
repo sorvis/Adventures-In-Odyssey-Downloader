@@ -2,7 +2,9 @@ package com.odyssey.nas
 
 import com.odyssey.app.SettingsRepo
 import com.odyssey.debug.DebugLogger
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType
@@ -129,8 +131,17 @@ class NasClient @Inject constructor(
     private suspend inline fun <T> call(crossinline block: (String, String) -> T): Result<T> {
         val s = settings.flow.first()
         if (!s.nasConfigured) return Result.failure(NasNotConfiguredException)
-        return runCatching { block(s.nasUrl, s.nasToken) }
-            .onFailure { DebugLogger.w("NasClient", "call → ${it::class.simpleName}: ${it.message}", it) }
+        // Force every NasClient call onto IO. OkHttp's execute() is
+        // blocking; without this, listAlbums/search/upload-from-Main
+        // threw NetworkOnMainThreadException on-device. Each individual
+        // caller wrapping in withContext(Dispatchers.IO) was easy to
+        // forget — centralizing here makes the API safe by default,
+        // and a no-op when callers ALSO wrap (nested same-dispatcher
+        // withContext is free).
+        return withContext(Dispatchers.IO) {
+            runCatching { block(s.nasUrl, s.nasToken) }
+                .onFailure { DebugLogger.w("NasClient", "call → ${it::class.simpleName}: ${it.message}", it) }
+        }
     }
 }
 
