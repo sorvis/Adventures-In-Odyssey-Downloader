@@ -3,6 +3,8 @@ package com.odyssey.work
 import android.content.Context
 import androidx.work.*
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -37,7 +39,26 @@ class WorkScheduler @Inject constructor(@ApplicationContext private val ctx: Con
                     .build()
             )
             .build()
-        wm.enqueueUniqueWork("odyssey-check-now", ExistingWorkPolicy.REPLACE, req)
+        wm.enqueueUniqueWork(CHECK_NOW_WORK, ExistingWorkPolicy.REPLACE, req)
+    }
+
+    /**
+     * `true` while a Check-now (or daily) check is enqueued or actively
+     * running, `false` once it terminates. Drives the pull-to-refresh
+     * spinner on the Recent screen so the user can SEE the worker is
+     * active without watching adb.
+     *
+     * Lazy so that constructing WorkScheduler in unit tests doesn't
+     * trip WorkManager's "not initialized" check — tests that don't
+     * touch this property never hit WorkManager.getInstance().
+     */
+    val dailyCheckActive: Flow<Boolean> by lazy {
+        wm.getWorkInfosForUniqueWorkFlow(CHECK_NOW_WORK)
+            .map { infos -> infos.any { !it.state.isFinished } }
+    }
+
+    private companion object {
+        const val CHECK_NOW_WORK = "odyssey-check-now"
     }
 
     override fun enqueueDownload(episodeId: Long, allowMetered: Boolean) {

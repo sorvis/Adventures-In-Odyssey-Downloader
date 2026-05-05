@@ -12,7 +12,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.ui.Alignment
 import androidx.compose.runtime.*
 import androidx.compose.runtime.collectAsState
@@ -132,6 +134,13 @@ class RecentVm @Inject constructor(
      */
     val playerState = player.state
 
+    /**
+     * `true` while DailyCheckWorker is enqueued or running. Drives the
+     * pull-to-refresh spinner on the Recent screen.
+     */
+    val isRefreshing = scheduler.dailyCheckActive
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
     fun play(ep: LocalEpisodeEntity) {
         // Tap on the row's button while THIS episode is already playing
         // → pause instead of re-issuing playLocal/playStream. Otherwise
@@ -205,6 +214,7 @@ fun RecentScreen(
     val progress by vm.progress.collectAsState()
     val archive by vm.archive.collectAsState()
     val playerState by vm.playerState.collectAsState()
+    val isRefreshing by vm.isRefreshing.collectAsState()
     var expandedIds by remember { mutableStateOf(setOf<Long>()) }
 
     if (showWarning) {
@@ -237,17 +247,27 @@ fun RecentScreen(
             TopAppBar(
                 title = { Text("Recent") },
                 actions = {
-                    TextButton(onClick = vm::checkNow, modifier = Modifier.testTag("check-now")) {
-                        Text("Check now")
+                    // Pull-to-refresh is the primary trigger; this icon
+                    // is the discoverability fallback for users who
+                    // don't think to swipe. Both call vm.checkNow().
+                    IconButton(onClick = vm::checkNow, modifier = Modifier.testTag("check-now")) {
+                        Icon(Icons.Default.Refresh, contentDescription = "Check for new episodes")
                     }
                 },
             )
         },
     ) { padding ->
-        LazyColumn(
+        PullToRefreshBox(
+            isRefreshing = isRefreshing,
+            onRefresh = vm::checkNow,
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
+                .testTag("recent-pull-to-refresh"),
+        ) {
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
                 .semantics { testTagsAsResourceId = true }
                 .testTag("episode-list"),
         ) {
@@ -306,6 +326,7 @@ fun RecentScreen(
                     )
                 }
             }
+        }
         }
     }
 }

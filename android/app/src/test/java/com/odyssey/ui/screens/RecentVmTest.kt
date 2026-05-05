@@ -11,6 +11,8 @@ import com.odyssey.data.local.PlaybackPositionEntity
 import com.odyssey.download.DownloadProgressTracker
 import com.odyssey.player.EpisodePlayer
 import com.odyssey.work.WorkScheduler
+import androidx.work.Configuration
+import androidx.work.testing.WorkManagerTestInitHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -52,6 +54,13 @@ class RecentVmTest {
         // viewModelScope launches on Main; UnconfinedTestDispatcher runs
         // continuations inline so we can assert immediately after play().
         Dispatchers.setMain(UnconfinedTestDispatcher())
+        // RecentVm now collects scheduler.dailyCheckActive which touches
+        // WorkManager.getInstance(ctx). Init the test WorkManager so that
+        // doesn't throw during VM construction.
+        WorkManagerTestInitHelper.initializeTestWorkManager(
+            ApplicationProvider.getApplicationContext(),
+            Configuration.Builder().setMinimumLoggingLevel(android.util.Log.INFO).build(),
+        )
     }
 
     @After

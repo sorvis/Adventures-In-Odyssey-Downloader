@@ -39,7 +39,18 @@ import org.robolectric.annotation.Config
 @Config(application = Application::class, sdk = [33])
 class DownloadedVmTest {
 
-    @Before fun setUp() = Dispatchers.setMain(UnconfinedTestDispatcher())
+    @Before
+    fun setUp() {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        // DownloadedVm constructs WorkScheduler which requires a live
+        // WorkManager once any property touches getWorkInfosForUniqueWorkFlow.
+        // RecentVmTest pulled in the same dependency; mirror it here so
+        // both VM tests stay independent.
+        androidx.work.testing.WorkManagerTestInitHelper.initializeTestWorkManager(
+            ApplicationProvider.getApplicationContext(),
+            androidx.work.Configuration.Builder().setMinimumLoggingLevel(android.util.Log.INFO).build(),
+        )
+    }
     @After fun tearDown() = Dispatchers.resetMain()
 
     @Test
