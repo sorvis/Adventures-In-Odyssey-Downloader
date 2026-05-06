@@ -63,7 +63,14 @@ class AlbumDetailVm @Inject constructor(
 
     val album = episodes.observeAll()
         .map { eps ->
-            val keys = eps.map { LocalEpisodeKey(it.title, it.filePath != null, it) }
+            val keys = eps.map {
+                LocalEpisodeKey(
+                    title = it.title,
+                    hasFile = it.filePath != null,
+                    backedUp = it.archivedAt != null,
+                    raw = it,
+                )
+            }
             joinAlbumOwnership(catalog.catalog, keys).firstOrNull {
                 it.album.name == albumKey
             }
@@ -144,7 +151,9 @@ fun AlbumDetailScreen(
                 }
             }
             val visible = if (downloadedOnly) {
-                a.episodes.filter { it.ownership != EpisodeOwnership.UNAVAILABLE }
+                // "What I have" = on phone OR on backup (a row that's
+                // only on the server still counts as "I have it").
+                a.episodes.filter { it.ownership != EpisodeOwnership.UNAVAILABLE || it.backedUp }
             } else a.episodes
             items(visible, key = { it.catalogEp.shortName.ifBlank { it.catalogEp.name } }) { row ->
                 AlbumEpisodeRow(row, onPlay = { vm.play(row) })
@@ -219,14 +228,34 @@ private fun AlbumEpisodeRow(row: CatalogEpisodeWithOwnership, onPlay: () -> Unit
             },
             headlineContent = { Text(displayName, maxLines = 2, overflow = TextOverflow.Ellipsis) },
             trailingContent = {
-                Text(
-                    text = when (row.ownership) {
-                        EpisodeOwnership.DOWNLOADED -> "✓ on phone"
-                        EpisodeOwnership.STREAMABLE -> "▶ stream"
-                        EpisodeOwnership.UNAVAILABLE -> "—"
-                    },
-                    style = MaterialTheme.typography.labelSmall,
-                )
+                // Two independent dimensions: on-phone (local file) and
+                // on-backup (archivedAt set). A row can be both, either,
+                // or — for catalog episodes the user has never touched —
+                // neither (UNAVAILABLE). Stack the badges so each fits
+                // a small label without truncating.
+                Column(horizontalAlignment = Alignment.End) {
+                    when (row.ownership) {
+                        EpisodeOwnership.DOWNLOADED -> Text(
+                            "✓ on phone",
+                            style = MaterialTheme.typography.labelSmall,
+                            modifier = Modifier.testTag("album-ep-on-phone"),
+                        )
+                        EpisodeOwnership.STREAMABLE -> Text(
+                            "▶ stream",
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                        EpisodeOwnership.UNAVAILABLE -> if (!row.backedUp) {
+                            Text("—", style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                    if (row.backedUp) {
+                        Text(
+                            "☁ on backup",
+                            style = MaterialTheme.typography.labelSmall,
+                            modifier = Modifier.testTag("album-ep-on-backup"),
+                        )
+                    }
+                }
             },
         )
     }

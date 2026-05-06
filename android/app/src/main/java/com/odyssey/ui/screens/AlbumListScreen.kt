@@ -57,7 +57,14 @@ class AlbumListVm @Inject constructor(
      */
     val albums = episodes.observeAll()
         .map { eps ->
-            val keys = eps.map { LocalEpisodeKey(title = it.title, hasFile = it.filePath != null, raw = it) }
+            val keys = eps.map {
+                LocalEpisodeKey(
+                    title = it.title,
+                    hasFile = it.filePath != null,
+                    backedUp = it.archivedAt != null,
+                    raw = it,
+                )
+            }
             joinAlbumOwnership(catalog.catalog, keys)
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())

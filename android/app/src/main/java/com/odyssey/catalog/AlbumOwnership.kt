@@ -19,6 +19,14 @@ data class CatalogEpisodeWithOwnership(
     val catalogEp: AioCatalogEpisode,
     val ownership: EpisodeOwnership,
     /**
+     * True when LocalEpisodeEntity.archivedAt is non-null — the file
+     * has been pushed to the backup service. Independent of `ownership`
+     * because deleting the local file leaves archivedAt intact, so a
+     * row can be STREAMABLE-and-backedUp (was downloaded → uploaded →
+     * deleted from phone → still on server).
+     */
+    val backedUp: Boolean = false,
+    /**
      * The matching LocalEpisodeEntity *as a small projection*.
      * Stored as `Any?` here so this file can stay JVM-pure (no Room
      * deps for tests). Callers cast to LocalEpisodeEntity.
@@ -97,6 +105,12 @@ private val chronologicalOrder: Comparator<AlbumWithOwnership> = Comparator { a,
 data class LocalEpisodeKey(
     val title: String,
     val hasFile: Boolean,
+    /**
+     * True when the local row's archivedAt is non-null — it's been
+     * pushed to the backup service. Drives the "☁ on backup" badge
+     * on the album-detail rows.
+     */
+    val backedUp: Boolean = false,
     val raw: Any? = null,
 )
 
@@ -126,7 +140,12 @@ fun joinAlbumOwnership(
                 local.hasFile -> EpisodeOwnership.DOWNLOADED
                 else -> EpisodeOwnership.STREAMABLE
             }
-            CatalogEpisodeWithOwnership(catEp, state, local?.raw)
+            CatalogEpisodeWithOwnership(
+                catalogEp = catEp,
+                ownership = state,
+                backedUp = local?.backedUp == true,
+                localEpisode = local?.raw,
+            )
         }
         AlbumWithOwnership(album, episodes)
     }

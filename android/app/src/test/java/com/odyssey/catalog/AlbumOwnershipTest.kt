@@ -172,4 +172,43 @@ class AlbumOwnershipTest {
         val byPct = sortAlbums(joined, AlbumSort.MostDownloaded)
         assertEquals(listOf("81", "51", "OHC"), byPct.map { it.album.albumNumber })
     }
+
+    // ---- backedUp flag ----------------------------------------------
+
+    @Test
+    fun `backedUp surfaces from local key into the joined episode`() {
+        // Two locals: Clutter is downloaded AND backed up; War of the
+        // Words is on phone but not backed up.
+        val locals = listOf(
+            LocalEpisodeKey("Clutter", hasFile = true, backedUp = true),
+            LocalEpisodeKey("War of the Words", hasFile = true, backedUp = false),
+        )
+        val a51 = joinAlbumOwnership(sampleCatalog, locals).first { it.album.albumNumber == "51" }
+        val byTitle = a51.episodes.associateBy { it.catalogEp.name }
+
+        assertEquals(true, byTitle["Clutter"]?.backedUp)
+        assertEquals(EpisodeOwnership.DOWNLOADED, byTitle["Clutter"]?.ownership)
+
+        assertEquals(false, byTitle["War of the Words"]?.backedUp)
+        assertEquals(EpisodeOwnership.DOWNLOADED, byTitle["War of the Words"]?.ownership)
+    }
+
+    @Test
+    fun `backedUp survives when local file is deleted (STREAMABLE plus backed up)`() {
+        // Realistic scenario: user downloads, app uploads, user deletes
+        // local file. archivedAt stays set on the row → backedUp=true,
+        // hasFile=false → STREAMABLE-and-backedUp combo.
+        val locals = listOf(LocalEpisodeKey("Clutter", hasFile = false, backedUp = true))
+        val a51 = joinAlbumOwnership(sampleCatalog, locals).first { it.album.albumNumber == "51" }
+        val clutter = a51.episodes.first { it.catalogEp.name == "Clutter" }
+        assertEquals(EpisodeOwnership.STREAMABLE, clutter.ownership)
+        assertEquals(true, clutter.backedUp)
+    }
+
+    @Test
+    fun `default backedUp is false`() {
+        val locals = listOf(LocalEpisodeKey("Clutter", hasFile = true))
+        val a51 = joinAlbumOwnership(sampleCatalog, locals).first { it.album.albumNumber == "51" }
+        assertEquals(false, a51.episodes.first { it.catalogEp.name == "Clutter" }.backedUp)
+    }
 }
