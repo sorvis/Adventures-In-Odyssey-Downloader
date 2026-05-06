@@ -79,6 +79,48 @@ Stop with `docker compose down`.
 
 ## Importing an existing pile of MP3s
 
+### Drop folder (server-side, recommended)
+
+For files already in messy filenames sitting on the same machine as
+the service (e.g., the old C# downloader's output, an external
+drive plugged into the LXC):
+
+```bash
+# 1. Drop arbitrary mp3s into /data/import/ on the LXC.
+#    SCP, NFS, USB rsync — whatever. Filenames can be any shape.
+scp ~/old-aio/*.mp3 root@odyssey-archive:/data/import/
+
+# 2. Trigger the importer.
+ssh root@odyssey-archive 'cd /opt/archive-service && scripts/run-import.sh'
+```
+
+What it does:
+
+1. Walks `/data/import/` for `*.mp3` and `*.m4a`.
+2. Derives a title for each file: ID3 v2 `TIT2` first, filename
+   heuristics second (`<id>-Title.mp3`, `Title (1234).mp3`, bare
+   `Title.mp3`).
+3. Looks the title up in the AIO catalog baked into the image.
+   Match → moves the file to
+   `/data/audio/<album-slug>/<id>-<title-slug>.mp3` and inserts an
+   `episodes` row with the canonical album + title + broadcast
+   number. Episode IDs come from the catalog's `#NNN` (e.g. 657 for
+   "Clutter"); titles without a number get a hash-based synthetic id.
+4. No match → moves the file to `/data/import/_unmatched/` for you
+   to rename and re-drop.
+
+Idempotent: re-running is safe (files already in `_unmatched/` are
+skipped; matched re-drops `INSERT OR REPLACE` the row).
+
+The catalog is shipped in the Docker image (`/srv/aio_catalog.json`)
+sourced from `android/app/src/main/assets/aio_catalog.json`. Refresh
+both copies when re-running `scripts/aio-scrape-catalog.py`.
+
+### Pushing from a different host (HTTP)
+
+If the MP3s live on a machine that isn't the LXC, use the client-
+side script that POSTs over HTTP:
+
 ```bash
 archive-service/scripts/import-audio-dir.py \
   --dir /path/to/old/episodes \
@@ -86,10 +128,11 @@ archive-service/scripts/import-audio-dir.py \
   --token "$(grep ODYSSEY_AUTH_TOKEN archive-service/.env | cut -d= -f2-)"
 ```
 
-Walks the directory recursively, parses titles + dates from filenames
-(handles the original C# tool's `1234-Title.mp3` format and a few others)
-and ID3 tags if `mutagen` is installed (`pip install --user mutagen`).
-Idempotent — re-runs are safe.
+Walks recursively, same filename + ID3 parsing as the drop folder.
+Idempotent — re-runs are safe. Doesn't run the catalog matcher
+(album resolution happens server-side from form fields the script
+sends), so files end up in `unsorted/` unless you pass `--album` per
+batch.
 
 ## Development (locally, no Docker)
 

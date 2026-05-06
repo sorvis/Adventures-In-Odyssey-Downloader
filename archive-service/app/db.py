@@ -1,6 +1,6 @@
 import sqlite3
 from contextlib import contextmanager
-from .config import DB_PATH, AUDIO_DIR
+from .config import DB_PATH, AUDIO_DIR, IMPORT_DIR, IMPORT_UNMATCHED_DIR
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS episodes (
@@ -31,6 +31,8 @@ CREATE TABLE IF NOT EXISTS album_cache (
 
 def init() -> None:
     AUDIO_DIR.mkdir(parents=True, exist_ok=True)
+    IMPORT_DIR.mkdir(parents=True, exist_ok=True)
+    IMPORT_UNMATCHED_DIR.mkdir(parents=True, exist_ok=True)
     with connect() as c:
         c.executescript(SCHEMA)
 
