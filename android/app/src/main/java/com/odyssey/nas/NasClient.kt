@@ -49,6 +49,16 @@ class NasClient @Inject constructor(
         sourceUrl: String,
         audio: File,
         /**
+         * Album name resolved phone-side via AioCatalogRepo. When present
+         * the server uses it directly; when null the server falls back to
+         * its own (fragile) scrape against adventuresinodyssey.com. The
+         * phone is the better authority because it ships a fresh
+         * catalog asset and uses the same matcher that powers the
+         * Albums tab — keeps the server free of provider-specific
+         * scraping logic.
+         */
+        album: String? = null,
+        /**
          * Called as bytes are streamed to the server. (bytesWritten,
          * totalBytes). totalBytes is the audio file length — multipart
          * envelope overhead is tiny by comparison so we just report
@@ -67,6 +77,8 @@ class NasClient @Inject constructor(
             .apply {
                 airDate?.let     { addFormDataPart("air_date", it) }
                 description?.let { addFormDataPart("description", it) }
+                album?.takeIf { it.isNotBlank() }
+                    ?.let { addFormDataPart("album", it) }
                 addFormDataPart("duration_secs", durationSecs.toString())
                 addFormDataPart("source_url", sourceUrl)
             }

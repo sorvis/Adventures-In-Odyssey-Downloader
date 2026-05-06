@@ -69,6 +69,17 @@ interface EpisodeDao {
     @Query("UPDATE local_episodes SET archivedAt = :ts WHERE episodeId = :id")
     suspend fun markArchived(id: Long, ts: Long)
 
+    /**
+     * Null out archivedAt on every row that has a local file. Used by
+     * "Re-archive everything" — after an enrichment fix on the server
+     * side that affects how uploads are filed, you want every row to
+     * become a candidate for the backfill again so the new metadata
+     * gets sent. Does NOT touch rows without a local file (no point —
+     * archive worker bails on null filePath anyway).
+     */
+    @Query("UPDATE local_episodes SET archivedAt = NULL WHERE filePath IS NOT NULL")
+    suspend fun clearAllArchived(): Int
+
     @Query("DELETE FROM local_episodes WHERE episodeId = :id")
     suspend fun delete(id: Long)
 

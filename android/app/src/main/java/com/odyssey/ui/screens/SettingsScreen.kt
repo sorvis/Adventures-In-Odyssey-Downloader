@@ -82,6 +82,22 @@ class SettingsVm @Inject constructor(
             .onFailure { DebugLogger.e("SettingsVm", "pushUnarchivedNow failed", it) }
     }
 
+    /**
+     * Null out archivedAt on every downloaded row, then re-run the
+     * backfill so the server gets all uploads again with current
+     * metadata (album, etc.). Used after a server-side or phone-side
+     * fix that changes how uploads get filed — e.g. phone now sends
+     * the album name from its catalog, but already-archived rows
+     * never get re-pushed without this nudge.
+     */
+    fun reArchiveAll() = viewModelScope.launch {
+        runCatching {
+            val cleared = episodes.clearAllArchived()
+            DebugLogger.i("SettingsVm", "reArchiveAll cleared $cleared rows; firing backfill")
+            lastBackfillEnqueued.value = backfill.run()
+        }.onFailure { DebugLogger.e("SettingsVm", "reArchiveAll failed", it) }
+    }
+
     fun saveRetention(n: Int) = viewModelScope.launch { settings.setRetention(n) }
     fun setAllowMetered(allow: Boolean) = viewModelScope.launch { settings.setAllowMeteredDownloads(allow) }
 }
@@ -200,6 +216,24 @@ fun SettingsScreen(
                         modifier = Modifier.testTag("backup-last-result"),
                     )
                 }
+
+                // "Re-archive everything" — for after a fix that
+                // changes how uploads land on the server (e.g. album
+                // resolution moved phone-side). Clears archivedAt on
+                // every downloaded row so the next backfill re-pushes
+                // them with current metadata. Server upload is
+                // idempotent on episode_id so re-running is safe.
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = vm::reArchiveAll,
+                    modifier = Modifier.testTag("re-archive-all"),
+                ) { Text("Re-archive everything (rare)") }
+                Text(
+                    "Resends every downloaded episode to the backup. " +
+                            "Use after a server change that affects how " +
+                            "files are filed.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
             }
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))

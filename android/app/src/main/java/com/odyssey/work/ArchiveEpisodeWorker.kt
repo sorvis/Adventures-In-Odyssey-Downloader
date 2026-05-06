@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.hilt.work.HiltWorker
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
+import com.odyssey.catalog.AioCatalogRepo
 import com.odyssey.data.local.EpisodeDao
 import com.odyssey.debug.DebugLogger
 import com.odyssey.download.ArchiveProgressTracker
@@ -30,6 +31,7 @@ class ArchiveEpisodeWorker @AssistedInject constructor(
     private val nas: NasClient,
     private val scheduler: WorkScheduler,
     private val progress: ArchiveProgressTracker,
+    private val catalog: AioCatalogRepo,
 ) : CoroutineWorker(ctx, params) {
 
     override suspend fun doWork(): Result {
@@ -65,9 +67,14 @@ class ArchiveEpisodeWorker @AssistedInject constructor(
             DebugLogger.w("ArchiveWorker", "doWork($id) — file gone from disk: $path")
             return Result.failure()
         }
+        // Resolve the album phone-side from the bundled AIO catalog so
+        // the server doesn't have to scrape adventuresinodyssey.com.
+        // Null when no match — server falls back to "unsorted/".
+        val album = catalog.match(ep.title)?.album?.name
         DebugLogger.i(
             "ArchiveWorker",
-            "doWork($id) — starting upload of ${file.length()} bytes (\"${ep.title}\")",
+            "doWork($id) — starting upload of ${file.length()} bytes " +
+                "(\"${ep.title}\") album=${album ?: "<unmatched>"}",
         )
 
         val result = withContext(Dispatchers.IO) {
@@ -79,6 +86,7 @@ class ArchiveEpisodeWorker @AssistedInject constructor(
                 durationSecs = ep.durationMs / 1000,
                 sourceUrl    = ep.sourceUrl,
                 audio        = file,
+                album        = album,
                 onProgress   = { sent, total -> progress.update(ep.episodeId, sent, total) },
             )
         }
