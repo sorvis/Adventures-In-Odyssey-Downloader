@@ -42,6 +42,18 @@ def configured_env(tmp_path: Path, monkeypatch):
                 ],
             },
             {
+                "albumNumber": "04",
+                "name": "Camp What-A-Nut",
+                "imageUrl": None,
+                "episodes": [
+                    # Multi-part — matches the trickier title-variants logic.
+                    {"name": "Camp What-a-Nut, Part 1 of 2", "shortName": "#037: Camp What-a-Nut, Part 1 of 2"},
+                    {"name": "Camp What-a-Nut, Part 2 of 2", "shortName": "#038: Camp What-a-Nut, Part 2 of 2"},
+                    # & vs 'and' across the catalog/filename boundary.
+                    {"name": "Bernard and Esther, Part 1 of 2", "shortName": "#165: Bernard and Esther, Part 1 of 2"},
+                ],
+            },
+            {
                 "albumNumber": "FP",
                 "name": "Family Portraits",
                 "imageUrl": None,
@@ -91,6 +103,48 @@ def test_normalize_title_empty_input():
     from app.import_dropbox import normalize_title
     assert normalize_title("") == ""
     assert normalize_title("   ") == ""
+
+
+def test_normalize_title_drops_punctuation_and_maps_ampersand_to_and():
+    from app.import_dropbox import normalize_title
+    # Real-world examples from the C# back-catalog the user dumped:
+    assert normalize_title("Bernard & Esther 1") == "bernard and esther 1"
+    assert normalize_title("Forever…Amen") == "forever amen"
+    assert normalize_title("Forever. . .Amen") == "forever amen"
+    assert normalize_title("Truth, Trivia & 'Trina") == "truth trivia and trina"
+    assert normalize_title("Camp What-A-Nut") == "camp what a nut"
+    # Curly quotes + parens.
+    assert normalize_title("“Quotes (yes)”") == "quotes yes"
+
+
+def test_title_variants_expands_part_suffix():
+    from app.import_dropbox import _title_variants
+    # Catalog form — ", Part N of M" → also indexes bare "<stem> N"
+    # and "<stem> part N" so user filenames can match.
+    variants = _title_variants("Camp What-a-Nut, Part 1 of 2")
+    assert "camp what a nut part 1 of 2" in variants
+    assert "camp what a nut 1" in variants
+    assert "camp what a nut part 1" in variants
+
+
+def test_title_variants_passes_through_when_no_part_suffix():
+    from app.import_dropbox import _title_variants
+    variants = _title_variants("Clutter")
+    assert variants == ["clutter"]
+
+
+def test_title_variants_handles_paren_form_and_extra_spaces():
+    from app.import_dropbox import _title_variants
+    variants = _title_variants("Face the Future (Part 1 of 3)")
+    assert "face the future 1" in variants
+
+
+def test_filename_pattern_accepts_8_digit_ids():
+    from app.import_dropbox import _title_from_filename
+    from pathlib import Path
+    f = Path("/tmp/20120201#-The_Devil_Made_Me_Do_It.mp3")
+    f.touch()
+    assert _title_from_filename(f) == "The Devil Made Me Do It"
 
 
 def test_build_title_index_matches_both_name_and_short_name(configured_env):
@@ -359,6 +413,100 @@ def test_id3_title_is_preferred_over_filename(configured_env):
     assert summary.imported == 1
     # ID3 title beat the filename; row landed in the right album.
     assert (config.AUDIO_DIR / "20-a-journey-of-choices" / "261-afraid-not.mp3").exists()
+
+
+def test_run_import_matches_part_suffix_filename_against_catalog_part_of_M(configured_env):
+    """The big real-world category: C# files are 'Camp_What-A-Nut_1.mp3'
+    while the catalog title is 'Camp What-a-Nut, Part 1 of 2'. The
+    title-variants expansion should bridge the gap."""
+    from app.import_dropbox import run_import
+    from app import config, db
+
+    db.init()
+    drop = config.IMPORT_DIR
+    src = drop / "037#-Camp_What-A-Nut_1.mp3"
+    _tiny_mp3(src)
+
+    summary = run_import(drop)
+    assert summary.imported == 1, summary.samples
+    # Episode_id should be the canonical broadcast number 37 from the
+    # catalog's shortName, NOT the filename's prefix (also 37 here,
+    # but the principle is "catalog wins").
+    assert (config.AUDIO_DIR / "camp-what-a-nut" / "37-camp-what-a-nut-part-1-of-2.mp3").exists()
+
+
+def test_run_import_maps_ampersand_to_and(configured_env):
+    """User filename 'Bernard_&_Esther_1.mp3' should match the
+    catalog's 'Bernard and Esther, Part 1 of 2'."""
+    from app.import_dropbox import run_import
+    from app import config, db
+
+    db.init()
+    drop = config.IMPORT_DIR
+    src = drop / "165#-Bernard_&_Esther_1.mp3"
+    _tiny_mp3(src)
+
+    summary = run_import(drop)
+    assert summary.imported == 1, summary.samples
+
+
+def test_run_import_falls_back_to_filename_id_when_title_is_typoed(configured_env):
+    """Real-world rescue: '263#-When_Bad_Isnt_So_Good.mp3' has a
+    typo'd title (missing apostrophe) but the filename's id IS in
+    the catalog as #263. The broadcast-number fallback should match."""
+    from app.import_dropbox import run_import
+    from app import config, db
+
+    db.init()
+    drop = config.IMPORT_DIR
+    # Title would normalize to 'when bad isnt so good' which doesn't
+    # match catalog's "When Bad Isn't So Good" (apostrophe gets
+    # dropped on both sides — actually this WOULD match. Pick a
+    # pathological case: a deliberate misspelling.
+    src = drop / "263#-When_Bad_isnt_So_Goood.mp3"  # extra 'o'
+    _tiny_mp3(src)
+
+    summary = run_import(drop)
+    assert summary.imported == 1, summary.samples
+    # The file should have landed under album 20 — the catalog's
+    # canonical title (not the typoed filename) wins.
+    assert (config.AUDIO_DIR / "20-a-journey-of-choices" / "263-when-bad-isn-t-so-good.mp3").exists()
+
+
+def test_run_import_filename_id_fallback_uses_canonical_catalog_title(configured_env):
+    """Broadcast-number rescue must use the catalog's canonical
+    title, NOT the typoed filename — otherwise the on-disk file
+    name would carry the typo forward forever."""
+    from app.import_dropbox import run_import
+    from app import config, db
+
+    db.init()
+    drop = config.IMPORT_DIR
+    src = drop / "264#-Makin_the_Grad.mp3"  # both words abbreviated
+    _tiny_mp3(src)
+
+    summary = run_import(drop)
+    assert summary.imported == 1
+    assert (config.AUDIO_DIR / "20-a-journey-of-choices" / "264-making-the-grade.mp3").exists()
+
+
+def test_run_import_skips_pure_date_filenames_as_unmatched(configured_env):
+    """C# files with no real title beyond the broadcast date can't
+    possibly match the catalog. Ensure they land in _unmatched/
+    cleanly without errors."""
+    from app.import_dropbox import run_import
+    from app import config, db
+
+    db.init()
+    drop = config.IMPORT_DIR
+    src = drop / "00 Adventures in Odyssey 02_17_20.mp3"
+    _tiny_mp3(src)
+
+    summary = run_import(drop)
+    assert summary.scanned == 1
+    assert summary.imported == 0
+    assert summary.unmatched == 1
+    assert (config.IMPORT_UNMATCHED_DIR / src.name).exists()
 
 
 def test_run_import_synthetic_id_for_episode_without_broadcast_number(configured_env):

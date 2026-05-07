@@ -49,18 +49,33 @@ _FILENAME_PATTERNS = [
     # "1234#-Episode_Title.mp3" — what the actual C# tool writes
     # (id, then literal '#-', then underscored title). Has to come
     # BEFORE the plain "<id>-Title" pattern because the latter would
-    # capture the '#' as part of the title.
-    re.compile(r"^(?P<id>\d{2,7})\s*#\s*[-_]\s*(?P<title>.+?)\.(?:mp3|m4a)$", re.IGNORECASE),
+    # capture the '#' as part of the title. Allows up to 8 digits
+    # so YYYYMMDD-prefixed filenames also parse.
+    re.compile(r"^(?P<id>\d{2,8})\s*#\s*[-_]\s*(?P<title>.+?)\.(?:mp3|m4a)$", re.IGNORECASE),
     # "1234-Episode Title.mp3"
-    re.compile(r"^(?P<id>\d{2,7})\s*[-_]\s*(?P<title>.+?)\.(?:mp3|m4a)$", re.IGNORECASE),
+    re.compile(r"^(?P<id>\d{2,8})\s*[-_]\s*(?P<title>.+?)\.(?:mp3|m4a)$", re.IGNORECASE),
     # "Episode Title (1234).mp3"
-    re.compile(r"^(?P<title>.+?)\s*\((?P<id>\d{2,7})\)\.(?:mp3|m4a)$", re.IGNORECASE),
+    re.compile(r"^(?P<title>.+?)\s*\((?P<id>\d{2,8})\)\.(?:mp3|m4a)$", re.IGNORECASE),
     # bare "Episode Title.mp3"
     re.compile(r"^(?P<title>.+?)\.(?:mp3|m4a)$", re.IGNORECASE),
 ]
 
 _NUMBER_PREFIX = re.compile(r"^\s*#\s*(\d+)(?:[\.½⅓⅔]\d*)?\s*:?\s*", re.UNICODE)
 _BROADCAST_NUMBER = re.compile(r"#\s*(\d+)")
+# Catalog uses ", Part 1 of 2" (or "(Part 1 of 3)"); user filenames use
+# bare "_1" / "_2". Detect on either side so the index can map both
+# shapes to the same row.
+_PART_SUFFIX = re.compile(
+    r"[,\s]*\(?\s*part\s+(\d+)(?:\s+of\s+\d+)?\s*\)?\s*$",
+    re.IGNORECASE,
+)
+# C# files dumped by the user where the filename was just "Adventures
+# in Odyssey 02_17_20.mp3" (no real title, just a broadcast date).
+# Skip these — we have nothing to match against.
+_PURE_DATE_TITLE = re.compile(
+    r"^\s*adventures\s+in\s+odyssey\s+\d{1,4}[_/-]\d{1,2}[_/-]\d{1,4}\s*$",
+    re.IGNORECASE,
+)
 
 
 # ----- catalog matching --------------------------------------------------
@@ -73,17 +88,73 @@ class CatalogMatch:
 
 
 def normalize_title(raw: str) -> str:
-    """Lowercase, strip curly + straight quotes, strip leading "#NNN: ",
-    collapse whitespace. Mirrors AioCatalogMatch.kt:normalizeTitle."""
+    """Aggressive normalization for catalog matching.
+
+    Real-world filenames coming out of the C# downloader use a wide
+    set of separators ('_', '-', '#-', '&'), curly punctuation
+    ('…', '“'), and conventions ('1' for what the catalog writes as
+    'Part 1 of 2'). This normalizer reduces all of those to a flat
+    lowercase whitespace-collapsed form so matching survives the
+    differences.
+
+    Steps:
+      1. Strip leading "#NNN: " prefix from titles like "#657: Clutter".
+      2. Lowercase.
+      3. Map "&" → "and" — catalog uses "and", filenames use "&".
+      4. Replace any non-alphanumeric character with a space —
+         underscores, hyphens, colons, quotes, ellipsis, all collapse.
+      5. Collapse runs of whitespace.
+    """
     if not raw or not raw.strip():
         return ""
-    s = raw.replace("“", '"').replace("”", '"')
-    s = s.replace("‘", "'").replace("’", "'")
-    s = s.strip(" \t\"'")
-    s = _NUMBER_PREFIX.sub("", s)
+    s = _NUMBER_PREFIX.sub("", raw)
     s = s.lower()
-    s = re.sub(r"\s+", " ", s).strip()
-    return s
+    s = s.replace("&", " and ")
+    # Anything that isn't a letter/digit/space becomes a space. This
+    # catches '_', '-', ',', '.', '!', '?', curly quotes, '…', etc.
+    out = []
+    for ch in s:
+        if ch.isalnum() or ch == " ":
+            out.append(ch)
+        else:
+            out.append(" ")
+    return re.sub(r"\s+", " ", "".join(out)).strip()
+
+
+def _title_variants(raw: str) -> list[str]:
+    """All forms a title could appear in for catalog matching.
+
+    Catalog writes multi-part episodes as 'Title, Part 1 of 2'; users
+    name files 'Title_1' or 'Title 1'. Index BOTH the canonical form
+    and a stem-with-bare-number form so either side resolves.
+
+    Examples:
+      "Camp What-a-Nut, Part 1 of 2"  → [
+          "camp what a nut part 1 of 2",  # full normalized
+          "camp what a nut 1",            # stem + bare number
+          "camp what a nut part 1",       # stem + 'part N'
+      ]
+      "The Star, 2"                   → ["the star 2"]   (no Part suffix)
+      "Camp What-a-Nut 1"             → [
+          "camp what a nut 1",
+          "camp what a nut part 1",
+      ]
+    """
+    base = normalize_title(raw)
+    variants = [base] if base else []
+    m = _PART_SUFFIX.search(raw)
+    if m:
+        n = m.group(1)
+        stem = raw[:m.start()].rstrip(" ,.;()")
+        stem_norm = normalize_title(stem)
+        if stem_norm:
+            bare = f"{stem_norm} {n}"
+            partly = f"{stem_norm} part {n}"
+            if bare not in variants:
+                variants.append(bare)
+            if partly not in variants:
+                variants.append(partly)
+    return variants
 
 
 def _strip_number_prefix(s: str) -> str:
@@ -101,11 +172,54 @@ def load_catalog(catalog_path: Path = CATALOG_PATH) -> dict:
         return json.load(f)
 
 
+def build_broadcast_index(catalog: dict) -> dict[int, CatalogMatch]:
+    """Index every catalog episode by its broadcast number (parsed
+    from `shortName` "#NNN: Title"). Lets the importer match files
+    whose title is a typo of the catalog's title — the filename
+    nearly always carries a parseable id (`657#-` or `265-`), and
+    when it does we'd rather trust that than reject the file.
+    Drops entries whose shortName has no number.
+    """
+    index: dict[int, CatalogMatch] = {}
+    for album in catalog.get("albums", []):
+        album_name = album.get("name") or ""
+        if not album_name:
+            continue
+        for ep in album.get("episodes", []):
+            short = (ep.get("shortName") or "").strip()
+            broadcast = _broadcast_number(short)
+            if broadcast is None:
+                continue
+            name = (ep.get("name") or "").strip()
+            canonical = name or _strip_number_prefix(short)
+            index.setdefault(broadcast, CatalogMatch(
+                album=album_name, canonical_title=canonical,
+                broadcast_number=broadcast,
+            ))
+    return index
+
+
+def _filename_id(path: Path) -> int | None:
+    """Pull the leading id off a filename if any pattern matches.
+    Returns None for bare-title files."""
+    name = path.name
+    for pat in _FILENAME_PATTERNS:
+        m = pat.match(name)
+        if m and "id" in m.groupdict():
+            try:
+                return int(m.group("id"))
+            except (ValueError, IndexError, AttributeError):
+                continue
+    return None
+
+
 def build_title_index(catalog: dict) -> dict[str, CatalogMatch]:
-    """Pre-bucket every catalog episode by normalized title for O(1)
-    lookup. Both the long `name` and the prefix-stripped `shortName`
-    are indexed so different title shapes from old MP3 filenames still
-    resolve."""
+    """Pre-bucket every catalog episode by every title variant we
+    accept for matching. Both the long `name` and the prefix-stripped
+    `shortName` are run through `_title_variants` so multi-part
+    episodes resolve on either the catalog form ("Camp What-a-Nut,
+    Part 1 of 2") or the user's filename form ("Camp What-A-Nut_1").
+    """
     index: dict[str, CatalogMatch] = {}
     for album in catalog.get("albums", []):
         album_name = album.get("name") or ""
@@ -119,10 +233,20 @@ def build_title_index(catalog: dict) -> dict[str, CatalogMatch]:
             match = CatalogMatch(album=album_name, canonical_title=canonical,
                                  broadcast_number=broadcast)
             for raw in (name, _strip_number_prefix(short)):
-                key = normalize_title(raw)
-                if key:
-                    index.setdefault(key, match)
+                if not raw:
+                    continue
+                for variant in _title_variants(raw):
+                    if variant:
+                        index.setdefault(variant, match)
     return index
+
+
+def _candidate_match_keys(title: str) -> list[str]:
+    """Title variants to try against the catalog index. Same shape
+    as the catalog side so a user filename "Camp What-A-Nut_1" will
+    look up under "camp what a nut 1" AND match an entry indexed
+    from "Camp What-a-Nut, Part 1 of 2"."""
+    return _title_variants(title)
 
 
 # ----- file metadata -----------------------------------------------------
@@ -240,18 +364,39 @@ def _candidate_files(import_root: Path) -> list[Path]:
     return out
 
 
-def _import_one(parsed: ParsedFile, index: dict[str, CatalogMatch]) -> tuple[bool, str]:
+def _import_one(
+    parsed: ParsedFile,
+    index: dict[str, CatalogMatch],
+    by_broadcast: dict[int, CatalogMatch],
+) -> tuple[bool, str]:
     """Try to import a single file. Returns (matched, summary_line).
-    Walks every candidate title (filename + ID3) against the catalog —
-    first match wins, so a file with a junky ID3 tag still imports if
-    its filename resolves."""
+    Walks every candidate title (filename + ID3), expanded into all
+    `_title_variants`, against the catalog — first match wins, so a
+    file with a junky ID3 tag still imports if its filename resolves.
+    Falls back to the filename's leading id against the catalog's
+    broadcast-number index when title matching fails (rescues the
+    'War_of_Words' / 'Burried_Sin' / 'The_Amazing_Looser' typo class
+    where the file's number is correct but the title isn't)."""
     candidates = _candidate_titles(parsed.path)
+    # Filter out obvious "no real title" inputs before bothering with
+    # the catalog lookup — these came from the C# tool when it
+    # couldn't extract a title and just wrote the broadcast date.
+    real_candidates = [t for t in candidates if not _PURE_DATE_TITLE.match(t)]
     match: Optional[CatalogMatch] = None
-    for title in candidates:
-        key = normalize_title(title)
-        if key and key in index:
-            match = index[key]
+    for title in real_candidates:
+        for key in _candidate_match_keys(title):
+            if key and key in index:
+                match = index[key]
+                break
+        if match is not None:
             break
+    # Title fallback failed — try the filename's id as a broadcast
+    # number. Real-world: '693#-The_Amazing_Looser.mp3' has a typo'd
+    # title but '#693' IS in the catalog as 'The Amazing Loser'.
+    if match is None:
+        fid = _filename_id(parsed.path)
+        if fid is not None:
+            match = by_broadcast.get(fid)
     if not match:
         # Move to _unmatched/ with original filename — preserve so the
         # user can rename + re-drop later.
@@ -309,12 +454,13 @@ def run_import(import_root: Path = IMPORT_DIR) -> ImportSummary:
         return summary
     catalog = load_catalog()
     index = build_title_index(catalog)
+    by_broadcast = build_broadcast_index(catalog)
     files = _candidate_files(import_root)
     summary.scanned = len(files)
     for f in files:
         try:
             parsed = parse_file(f)
-            matched, line = _import_one(parsed, index)
+            matched, line = _import_one(parsed, index, by_broadcast)
             assert summary.samples is not None
             summary.samples.append(line)
             if matched:
