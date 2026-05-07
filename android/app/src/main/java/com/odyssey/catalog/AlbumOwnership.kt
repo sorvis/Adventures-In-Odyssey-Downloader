@@ -42,16 +42,19 @@ data class AlbumWithOwnership(
     val totalCount: Int get() = album.episodes.size
     val downloadedCount: Int get() = episodes.count { it.ownership == EpisodeOwnership.DOWNLOADED }
     val streamableCount: Int get() = episodes.count { it.ownership == EpisodeOwnership.STREAMABLE }
+    /** Episodes whose archivedAt is set on the local DB row. */
+    val backedUpCount: Int get() = episodes.count { it.backedUp }
 }
 
 /**
  * One-line summary for the album list/detail headers. Downloaded count
  * is always shown ("5 of 31 downloaded") so even an album with zero
  * downloads tells the user how big it is and that nothing's local yet.
- * Streamable suffix only appears when > 0 to avoid clutter.
+ * Streamable + on-backup suffixes only appear when > 0 to avoid clutter.
  */
 fun ownershipSummary(row: AlbumWithOwnership): String = buildString {
     append("${row.downloadedCount} of ${row.totalCount} downloaded")
+    if (row.backedUpCount > 0) append(" • ${row.backedUpCount} on backup")
     if (row.streamableCount > 0) append(" • ${row.streamableCount} streamable")
 }
 
@@ -67,6 +70,23 @@ fun ownershipSummary(row: AlbumWithOwnership): String = buildString {
  *                   the albums you're actively collecting float to the top.
  */
 enum class AlbumSort { Default, Chronological, MostDownloaded }
+
+/**
+ * Album-list filter — orthogonal to AlbumSort. "All" is the default;
+ * the others narrow to albums that have at least one episode of the
+ * given kind so the list shrinks to "things I'm actively collecting"
+ * vs the full catalog.
+ */
+enum class AlbumFilter { All, HasOnPhone, HasOnBackup }
+
+fun filterAlbums(
+    albums: List<AlbumWithOwnership>,
+    filter: AlbumFilter,
+): List<AlbumWithOwnership> = when (filter) {
+    AlbumFilter.All -> albums
+    AlbumFilter.HasOnPhone -> albums.filter { it.downloadedCount > 0 }
+    AlbumFilter.HasOnBackup -> albums.filter { it.backedUpCount > 0 }
+}
 
 /**
  * Pure sort helper. Stable secondary key on [albumOrder] so ties (e.g.

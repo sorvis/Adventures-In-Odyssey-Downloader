@@ -7,6 +7,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Sort
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -31,9 +32,11 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import coil.compose.AsyncImage
 import com.odyssey.catalog.AioCatalogRepo
+import com.odyssey.catalog.AlbumFilter
 import com.odyssey.catalog.AlbumSort
 import com.odyssey.catalog.AlbumWithOwnership
 import com.odyssey.catalog.LocalEpisodeKey
+import com.odyssey.catalog.filterAlbums
 import com.odyssey.catalog.joinAlbumOwnership
 import com.odyssey.catalog.ownershipSummary
 import com.odyssey.catalog.sortAlbums
@@ -81,13 +84,43 @@ fun AlbumListScreen(
     // the screen, not persisted across launches.
     var sortMode by rememberSaveable { mutableStateOf(AlbumSort.Default) }
     var sortMenuOpen by remember { mutableStateOf(false) }
-    val sorted = remember(albums, sortMode) { sortAlbums(albums, sortMode) }
+    var filterMode by rememberSaveable { mutableStateOf(AlbumFilter.All) }
+    var filterMenuOpen by remember { mutableStateOf(false) }
+    val sorted = remember(albums, sortMode, filterMode) {
+        sortAlbums(filterAlbums(albums, filterMode), sortMode)
+    }
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("Albums") },
                 actions = {
+                    Box {
+                        IconButton(
+                            onClick = { filterMenuOpen = true },
+                            modifier = Modifier.testTag("album-filter-menu"),
+                        ) {
+                            Icon(Icons.Default.FilterList, contentDescription = "Filter albums")
+                        }
+                        DropdownMenu(
+                            expanded = filterMenuOpen,
+                            onDismissRequest = { filterMenuOpen = false },
+                        ) {
+                            for (f in AlbumFilter.values()) {
+                                DropdownMenuItem(
+                                    text = { Text(f.label()) },
+                                    trailingIcon = if (f == filterMode) {
+                                        { Icon(Icons.Default.Check, contentDescription = null) }
+                                    } else null,
+                                    onClick = {
+                                        filterMode = f
+                                        filterMenuOpen = false
+                                    },
+                                    modifier = Modifier.testTag("album-filter-${f.name}"),
+                                )
+                            }
+                        }
+                    }
                     Box {
                         IconButton(
                             onClick = { sortMenuOpen = true },
@@ -123,7 +156,18 @@ fun AlbumListScreen(
                 modifier = Modifier.fillMaxSize().padding(padding),
                 contentAlignment = Alignment.Center,
             ) {
-                Text("Loading catalog…", modifier = Modifier.padding(32.dp))
+                // Distinguish "catalog still loading" from "your filter
+                // excluded everything" — same screen, very different
+                // user fix.
+                val msg = when {
+                    albums.isEmpty() -> "Loading catalog…"
+                    filterMode == AlbumFilter.HasOnPhone ->
+                        "No albums with episodes on phone yet."
+                    filterMode == AlbumFilter.HasOnBackup ->
+                        "No albums with episodes on backup yet."
+                    else -> "Nothing to show."
+                }
+                Text(msg, modifier = Modifier.padding(32.dp))
             }
             return@Scaffold
         }
@@ -157,14 +201,20 @@ private fun AlbumSort.label() = when (this) {
     AlbumSort.MostDownloaded -> "Most downloaded"
 }
 
+private fun AlbumFilter.label() = when (this) {
+    AlbumFilter.All -> "All albums"
+    AlbumFilter.HasOnPhone -> "On phone"
+    AlbumFilter.HasOnBackup -> "On backup"
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AlbumListRow(row: AlbumWithOwnership, onClick: () -> Unit) {
-    // "Gray haze" for albums with nothing on disk yet. Card is still
-    // tappable — alpha just dims content so the empty ones recede
-    // visually while collected ones pop. testTag includes the haze
-    // state so UI tests can assert it.
-    val empty = row.downloadedCount == 0
+    // "Gray haze" for albums where the user has nothing — neither on
+    // phone nor on backup. Card is still tappable — alpha just dims
+    // content so the empty ones recede visually while collected ones
+    // pop. testTag includes the haze state so UI tests can assert it.
+    val empty = row.downloadedCount == 0 && row.backedUpCount == 0
     ElevatedCard(
         onClick = onClick,
         modifier = Modifier

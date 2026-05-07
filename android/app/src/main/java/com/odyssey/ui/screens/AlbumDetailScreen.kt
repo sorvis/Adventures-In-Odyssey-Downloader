@@ -34,6 +34,7 @@ import com.odyssey.catalog.joinAlbumOwnership
 import com.odyssey.catalog.ownershipSummary
 import com.odyssey.data.local.EpisodeDao
 import com.odyssey.data.local.LocalEpisodeEntity
+import com.odyssey.data.local.PlaybackDao
 import com.odyssey.debug.DebugLogger
 import com.odyssey.player.EpisodePlayer
 import com.odyssey.player.PlaySource
@@ -49,6 +50,7 @@ import javax.inject.Inject
 class AlbumDetailVm @Inject constructor(
     savedState: SavedStateHandle,
     private val episodes: EpisodeDao,
+    private val playback: PlaybackDao,
     private val catalog: AioCatalogRepo,
     private val player: EpisodePlayer,
 ) : ViewModel() {
@@ -76,6 +78,16 @@ class AlbumDetailVm @Inject constructor(
             }
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    /**
+     * Episode IDs the user has finished (≥95% played per
+     * OdysseyPlaybackService). Drives the "Hide listened" toggle on
+     * the album detail rows so a user mid-binge can quickly see
+     * what's left.
+     */
+    val completedIds = playback.observeCompletedIds()
+        .map { it.toSet() }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptySet())
 
     fun play(row: CatalogEpisodeWithOwnership) {
         val local = row.localEpisode as? LocalEpisodeEntity ?: run {
@@ -107,7 +119,9 @@ fun AlbumDetailScreen(
     vm: AlbumDetailVm = hiltViewModel(),
 ) {
     val album by vm.album.collectAsState()
+    val completedIds by vm.completedIds.collectAsState()
     var downloadedOnly by remember { mutableStateOf(false) }
+    var hideListened by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -150,11 +164,32 @@ fun AlbumDetailScreen(
                     )
                 }
             }
-            val visible = if (downloadedOnly) {
+            item {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Hide listened", modifier = Modifier.weight(1f))
+                    Switch(
+                        checked = hideListened,
+                        onCheckedChange = { hideListened = it },
+                        modifier = Modifier.testTag("album-hide-listened-toggle"),
+                    )
+                }
+            }
+            var visible = a.episodes
+            if (downloadedOnly) {
                 // "What I have" = on phone OR on backup (a row that's
                 // only on the server still counts as "I have it").
-                a.episodes.filter { it.ownership != EpisodeOwnership.UNAVAILABLE || it.backedUp }
-            } else a.episodes
+                visible = visible.filter { it.ownership != EpisodeOwnership.UNAVAILABLE || it.backedUp }
+            }
+            if (hideListened) {
+                // Filter rows where the matched local episode is in
+                // the completedIds set. UNAVAILABLE rows have no local
+                // episodeId at all and stay visible (can't be "listened
+                // to" without a local row).
+                visible = visible.filter { row ->
+                    val ep = row.localEpisode as? LocalEpisodeEntity
+                    ep == null || ep.episodeId !in completedIds
+                }
+            }
             items(visible, key = { it.catalogEp.shortName.ifBlank { it.catalogEp.name } }) { row ->
                 AlbumEpisodeRow(row, onPlay = { vm.play(row) })
             }

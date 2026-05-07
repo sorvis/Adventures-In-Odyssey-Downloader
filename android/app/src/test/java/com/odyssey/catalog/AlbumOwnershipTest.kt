@@ -211,4 +211,67 @@ class AlbumOwnershipTest {
         val a51 = joinAlbumOwnership(sampleCatalog, locals).first { it.album.albumNumber == "51" }
         assertEquals(false, a51.episodes.first { it.catalogEp.name == "Clutter" }.backedUp)
     }
+
+    // ---- backedUpCount + ownershipSummary backup line ---------------
+
+    @Test
+    fun `backedUpCount counts only episodes with backedUp true`() {
+        val locals = listOf(
+            LocalEpisodeKey("Clutter", hasFile = true, backedUp = true),
+            LocalEpisodeKey("War of the Words", hasFile = true, backedUp = false),
+            LocalEpisodeKey("Naturally, I Assumed", hasFile = false, backedUp = true),
+        )
+        val a51 = joinAlbumOwnership(sampleCatalog, locals).first { it.album.albumNumber == "51" }
+        assertEquals(2, a51.backedUpCount)
+    }
+
+    @Test
+    fun `ownershipSummary shows backup count between downloaded and streamable`() {
+        // Scenario: user has 2 episodes downloaded (1 also on backup),
+        // 1 streamable-only on the server. Summary line should read
+        // "2 of 3 downloaded • 1 on backup • 1 streamable".
+        val locals = listOf(
+            LocalEpisodeKey("Clutter", hasFile = true, backedUp = true),
+            LocalEpisodeKey("War of the Words", hasFile = true, backedUp = false),
+            LocalEpisodeKey("Naturally, I Assumed", hasFile = false, backedUp = false),
+        )
+        val a51 = joinAlbumOwnership(sampleCatalog, locals).first { it.album.albumNumber == "51" }
+        assertEquals("2 of 3 downloaded • 1 on backup • 1 streamable", ownershipSummary(a51))
+    }
+
+    @Test
+    fun `ownershipSummary omits backup line when none are backed up`() {
+        val locals = listOf(LocalEpisodeKey("Clutter", hasFile = true))
+        val a51 = joinAlbumOwnership(sampleCatalog, locals).first { it.album.albumNumber == "51" }
+        assertEquals("1 of 3 downloaded", ownershipSummary(a51))
+    }
+
+    // ---- filterAlbums -----------------------------------------------
+
+    @Test
+    fun `filterAlbums All is identity`() {
+        val joined = joinAlbumOwnership(sampleCatalog, emptyList())
+        assertEquals(joined, filterAlbums(joined, AlbumFilter.All))
+    }
+
+    @Test
+    fun `filterAlbums HasOnPhone keeps only albums with downloadedCount over zero`() {
+        // Only Clutter is on phone; album 81 + OHC have nothing local.
+        val locals = listOf(LocalEpisodeKey("Clutter", hasFile = true))
+        val joined = joinAlbumOwnership(sampleCatalog, locals)
+        val out = filterAlbums(joined, AlbumFilter.HasOnPhone)
+        assertEquals(listOf("51"), out.map { it.album.albumNumber })
+    }
+
+    @Test
+    fun `filterAlbums HasOnBackup keeps only albums with at least one backedUp episode`() {
+        // "Never a Dull Moment" backed up but not on phone — should
+        // still surface album 81 under the HasOnBackup filter.
+        val locals = listOf(
+            LocalEpisodeKey("Never a Dull Moment", hasFile = false, backedUp = true),
+        )
+        val joined = joinAlbumOwnership(sampleCatalog, locals)
+        val out = filterAlbums(joined, AlbumFilter.HasOnBackup)
+        assertEquals(listOf("81"), out.map { it.album.albumNumber })
+    }
 }
