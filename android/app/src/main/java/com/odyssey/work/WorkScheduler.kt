@@ -92,4 +92,40 @@ class WorkScheduler @Inject constructor(@ApplicationContext private val ctx: Con
         val req = OneTimeWorkRequestBuilder<RetentionWorker>().build()
         wm.enqueueUniqueWork("retention", ExistingWorkPolicy.REPLACE, req)
     }
+
+    /**
+     * Pin a server-side episode onto the phone for offline play. Same
+     * unique-work key shape as enqueueDownload (`restore-<id>`) so a
+     * second pin tap while one is pending is a no-op.
+     */
+    fun enqueueRestore(
+        episodeId: Long,
+        title: String,
+        airDate: String?,
+        album: String?,
+        description: String?,
+        durationSecs: Long,
+        allowMetered: Boolean,
+    ) {
+        val req = OneTimeWorkRequestBuilder<RestoreEpisodeWorker>()
+            .setInputData(
+                workDataOf(
+                    RestoreEpisodeWorker.KEY_EPISODE_ID to episodeId,
+                    RestoreEpisodeWorker.KEY_TITLE to title,
+                    RestoreEpisodeWorker.KEY_AIR_DATE to airDate,
+                    RestoreEpisodeWorker.KEY_ALBUM to album,
+                    RestoreEpisodeWorker.KEY_DESCRIPTION to description,
+                    RestoreEpisodeWorker.KEY_DURATION_SECS to durationSecs,
+                ),
+            )
+            .setConstraints(
+                Constraints.Builder()
+                    .setRequiredNetworkType(if (allowMetered) NetworkType.CONNECTED else NetworkType.UNMETERED)
+                    .setRequiresStorageNotLow(true)
+                    .build(),
+            )
+            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 5, TimeUnit.MINUTES)
+            .build()
+        wm.enqueueUniqueWork("restore-$episodeId", ExistingWorkPolicy.KEEP, req)
+    }
 }

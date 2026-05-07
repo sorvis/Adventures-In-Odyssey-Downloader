@@ -107,4 +107,34 @@ class TransferRowTest {
         )
         assertEquals(listOf(TransferState.ACTIVE, TransferState.QUEUED), out.map { it.state })
     }
+
+    @Test
+    fun `restores show as TransferKind RESTORE rows with byte progress`() {
+        val out = mergeTransfers(
+            downloads = emptyMap(),
+            uploads = emptyMap(),
+            titlesById = mapOf(657L to "Clutter"),
+            restores = mapOf(657L to DownloadProgressEntry(15L, 100L)),
+        )
+        assertEquals(1, out.size)
+        val r = out.single()
+        assertEquals(TransferKind.RESTORE, r.kind)
+        assertEquals(TransferState.ACTIVE, r.state)
+        assertEquals(15, r.percent)
+        assertEquals("Clutter", r.title)
+    }
+
+    @Test
+    fun `kinds sort downloads then uploads then restores within active state`() {
+        val out = mergeTransfers(
+            downloads = mapOf(100L to DownloadProgressEntry(0L, 0L)),
+            uploads = mapOf(200L to DownloadProgressEntry(0L, 0L)),
+            titlesById = emptyMap(),
+            restores = mapOf(300L to DownloadProgressEntry(0L, 0L)),
+        )
+        assertEquals(
+            listOf(TransferKind.DOWNLOAD, TransferKind.UPLOAD, TransferKind.RESTORE),
+            out.map { it.kind },
+        )
+    }
 }

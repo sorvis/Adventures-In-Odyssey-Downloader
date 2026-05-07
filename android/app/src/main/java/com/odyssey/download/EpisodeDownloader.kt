@@ -44,12 +44,22 @@ class EpisodeDownloader @Inject constructor(
     fun download(
         url: String,
         out: File,
+        /**
+         * Optional auth header for sources that require it (e.g. the
+         * self-hosted backup service which checks a bearer token on
+         * /episodes/N/audio). Public oneplace.com URLs don't need it
+         * and pass null; restore-from-backup passes "Bearer <token>".
+         */
+        authHeader: String? = null,
         onProgress: (bytesRead: Long, totalBytes: Long) -> Unit = { _, _ -> },
     ): Long {
         val partial = out.length()
         val req = Request.Builder()
             .url(url)
-            .apply { if (partial > 0) header("Range", "bytes=$partial-") }
+            .apply {
+                if (partial > 0) header("Range", "bytes=$partial-")
+                authHeader?.let { header("Authorization", it) }
+            }
             .build()
         http.newCall(req).execute().use { resp ->
             if (resp.code != 200 && resp.code != 206) {

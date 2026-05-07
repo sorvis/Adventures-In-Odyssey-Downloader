@@ -24,7 +24,7 @@ data class TransferRow(
                 else ((bytesTransferred * 100L) / totalBytes).toInt().coerceIn(0, 100)
 }
 
-enum class TransferKind { DOWNLOAD, UPLOAD }
+enum class TransferKind { DOWNLOAD, UPLOAD, RESTORE }
 enum class TransferState { ACTIVE, QUEUED }
 
 /**
@@ -41,6 +41,7 @@ fun mergeTransfers(
     uploads: Map<Long, DownloadProgressEntry>,
     titlesById: Map<Long, String>,
     queuedUploadIds: Set<Long> = emptySet(),
+    restores: Map<Long, DownloadProgressEntry> = emptyMap(),
 ): List<TransferRow> {
     val rows = mutableListOf<TransferRow>()
     for ((id, p) in downloads) {
@@ -58,6 +59,16 @@ fun mergeTransfers(
             episodeId = id,
             title = titlesById[id] ?: "Episode $id",
             kind = TransferKind.UPLOAD,
+            bytesTransferred = p.bytesRead,
+            totalBytes = p.totalBytes,
+            state = TransferState.ACTIVE,
+        )
+    }
+    for ((id, p) in restores) {
+        rows += TransferRow(
+            episodeId = id,
+            title = titlesById[id] ?: "Episode $id",
+            kind = TransferKind.RESTORE,
             bytesTransferred = p.bytesRead,
             totalBytes = p.totalBytes,
             state = TransferState.ACTIVE,

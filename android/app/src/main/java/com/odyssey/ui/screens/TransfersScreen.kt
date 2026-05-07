@@ -20,6 +20,7 @@ import androidx.lifecycle.viewModelScope
 import com.odyssey.data.local.EpisodeDao
 import com.odyssey.download.ArchiveProgressTracker
 import com.odyssey.download.DownloadProgressTracker
+import com.odyssey.download.RestoreProgressTracker
 import com.odyssey.download.TransferKind
 import com.odyssey.download.TransferRow
 import com.odyssey.download.TransferState
@@ -45,27 +46,30 @@ class TransfersVm @Inject constructor(
     episodes: EpisodeDao,
     downloads: DownloadProgressTracker,
     uploads: ArchiveProgressTracker,
+    restores: RestoreProgressTracker,
 ) : ViewModel() {
     /**
-     * Combine 4 streams: active downloads, active uploads, all
-     * episodes (for titles), unarchived-downloaded rows (for QUEUED
-     * uploads). Settings → Backup uses the unarchived-downloaded list
-     * to compute "N waiting", so wiring the same list into the
-     * Transfers screen keeps the two views consistent — N waiting
-     * always equals N rows visible.
+     * Combine 5 streams: active downloads, active uploads, active
+     * restores, all episodes (for titles), unarchived-downloaded
+     * rows (QUEUED uploads). Settings → Backup uses the unarchived-
+     * downloaded list to compute "N waiting", so wiring the same
+     * list keeps the two views consistent — N waiting always equals
+     * N rows visible.
      */
     val rows = combine(
         downloads.progress,
         uploads.progress,
+        restores.progress,
         episodes.observeAll(),
         episodes.observeUnarchivedDownloaded(),
-    ) { dl, up, eps, unarchived ->
+    ) { dl, up, rs, eps, unarchived ->
         val titles = eps.associate { it.episodeId to it.title }
         mergeTransfers(
             downloads = dl,
             uploads = up,
             titlesById = titles,
             queuedUploadIds = unarchived.map { it.episodeId }.toSet(),
+            restores = rs,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 }
@@ -126,7 +130,13 @@ fun TransfersScreen(
 private fun TransferRowCard(row: TransferRow) {
     val tag = buildString {
         append("transfer-row-")
-        append(if (row.kind == TransferKind.DOWNLOAD) "download" else "upload")
+        append(
+            when (row.kind) {
+                TransferKind.DOWNLOAD -> "download"
+                TransferKind.UPLOAD -> "upload"
+                TransferKind.RESTORE -> "restore"
+            },
+        )
         if (row.state == TransferState.QUEUED) append("-queued")
         append('-')
         append(row.episodeId)
@@ -140,6 +150,7 @@ private fun TransferRowCard(row: TransferRow) {
                     text = when (row.kind) {
                         TransferKind.DOWNLOAD -> "↓ Download"
                         TransferKind.UPLOAD -> "↑ Upload to backup"
+                        TransferKind.RESTORE -> "↓ Pull from backup"
                     },
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.SemiBold,

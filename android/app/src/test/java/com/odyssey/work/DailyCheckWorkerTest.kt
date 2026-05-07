@@ -73,7 +73,7 @@ class DailyCheckWorkerTest {
             listenUrl = server.url("/listen").toString()
             apiUrl = server.url("/api").toString()
         }
-        aioProvider = AioOneplaceProvider(oneplace)
+        aioProvider = AioOneplaceProvider(oneplace, com.odyssey.catalog.AioCatalogRepo(ctx))
         providers = setOf(aioProvider)
         db = Room.inMemoryDatabaseBuilder(ctx, OdysseyDb::class.java).allowMainThreadQueries().build()
         episodes = db.episodes()
@@ -118,9 +118,13 @@ class DailyCheckWorkerTest {
         assertEquals(7, enqueuer.calls.size)
         assertEquals(rows.map { it.episodeId }.toSet(), enqueuer.calls.map { it.episodeId }.toSet())
 
-        // Settings updated. lastSeen should be the NEWEST episode (largest id from page1).
+        // Settings updated. lastSeenEpisodeId is the broadcast number
+        // for the newest matched episode — "War of the Words" → 265,
+        // because AioOneplaceProvider now resolves CMS ids → broadcast
+        // numbers via the catalog. (The test catalog asset has the
+        // mapping shipped with the app.)
         val s = settings.flow.first()
-        assertEquals(1278383L, s.lastSeenEpisodeId)
+        assertEquals(265L, s.lastSeenEpisodeId)
         assertTrue("lastRunAt should have advanced past 0", s.lastRunAtMs > 0L)
     }
 
@@ -145,16 +149,19 @@ class DailyCheckWorkerTest {
 
     @Test
     fun `already-seen episodes are not re-enqueued`() = runBlocking {
-        // Pre-populate one of the IDs that page1 will return.
+        // Pre-populate "War of the Words" using the broadcast number
+        // (265) — the same id AioOneplaceProvider would resolve via
+        // the catalog. existingIds matches on episodeId so the
+        // dedupe still works.
         episodes.upsert(
             com.odyssey.data.local.LocalEpisodeEntity(
-                episodeId = 1278383L,                                // first row in page1
+                episodeId = 265L,
                 title = "War of the Words",
                 airDate = "May 8, 2026",
                 description = null,
                 sourceUrl = "x",
                 downloadUrl = "x",
-                filePath = "/already/downloaded.mp3",                // already on disk
+                filePath = "/already/downloaded.mp3",
                 fileSize = 18000000L,
                 durationMs = 25 * 60 * 1000L,
                 downloadedAt = 1L,
@@ -168,10 +175,9 @@ class DailyCheckWorkerTest {
         val worker = buildWorker()
         worker.doWork()
 
-        // 7 in api results, but the pre-existing one shouldn't re-enqueue.
-        // existingIds() matches on episodeId, so only 6 new downloads expected.
+        // 7 in api results, but the pre-existing 265 shouldn't re-enqueue.
         val ids = enqueuer.calls.map { it.episodeId }
-        assertTrue("should NOT re-enqueue download for existing 1278383", 1278383L !in ids)
+        assertTrue("should NOT re-enqueue download for existing 265", 265L !in ids)
         assertEquals(6, ids.size)
     }
 
@@ -213,9 +219,11 @@ class DailyCheckWorkerTest {
         assertEquals(9, enqueuer.calls.size)
 
         // lastSeen is updated to the AIO newest only (fake provider's
-        // state isn't tracked in SettingsRepo in H-lite).
+        // state isn't tracked in SettingsRepo in H-lite). Value is
+        // the broadcast number 265 — see the fresh-install test for
+        // why CMS ids stopped flowing through.
         val s = settings.flow.first()
-        assertEquals(1278383L, s.lastSeenEpisodeId)
+        assertEquals(265L, s.lastSeenEpisodeId)
     }
 
     @Test

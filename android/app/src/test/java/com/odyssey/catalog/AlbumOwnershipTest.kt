@@ -274,4 +274,42 @@ class AlbumOwnershipTest {
         val out = filterAlbums(joined, AlbumFilter.HasOnBackup)
         assertEquals(listOf("81"), out.map { it.album.albumNumber })
     }
+
+    // ---- duplicate-by-title row merge -------------------------------
+
+    @Test
+    fun `joinAlbumOwnership ORs ownership flags when two rows share a title`() {
+        // Realistic scenario: phone has Clutter from oneplace
+        // (filePath set, archivedAt null) AND a server-mirror row
+        // upserted by BrowseVm (filePath null, archivedAt set). The
+        // catalog match must show BOTH "on phone" AND "on backup"
+        // for that single catalog episode — not whichever happened
+        // to bucket first.
+        val locals = listOf(
+            LocalEpisodeKey("Clutter", hasFile = true, backedUp = false),
+            LocalEpisodeKey("Clutter", hasFile = false, backedUp = true),
+        )
+        val a51 = joinAlbumOwnership(sampleCatalog, locals).first { it.album.albumNumber == "51" }
+        val clutter = a51.episodes.first { it.catalogEp.name == "Clutter" }
+        assertEquals(EpisodeOwnership.DOWNLOADED, clutter.ownership)
+        assertEquals(true, clutter.backedUp)
+    }
+
+    @Test
+    fun `duplicate-row merge prefers the row with a file for the localEpisode raw payload`() {
+        // The play action reads the localEpisode raw — must point at
+        // the row that actually has a file, not the title-only mirror.
+        val withFile = LocalEpisodeKey("Clutter", hasFile = true, backedUp = false, raw = "FILE")
+        val mirror = LocalEpisodeKey("Clutter", hasFile = false, backedUp = true, raw = "MIRROR")
+
+        // file-first
+        val out1 = joinAlbumOwnership(sampleCatalog, listOf(withFile, mirror))
+            .first { it.album.albumNumber == "51" }.episodes.first { it.catalogEp.name == "Clutter" }
+        assertEquals("FILE", out1.localEpisode)
+
+        // mirror-first (test the merge prefers the file row regardless of order)
+        val out2 = joinAlbumOwnership(sampleCatalog, listOf(mirror, withFile))
+            .first { it.album.albumNumber == "51" }.episodes.first { it.catalogEp.name == "Clutter" }
+        assertEquals("FILE", out2.localEpisode)
+    }
 }

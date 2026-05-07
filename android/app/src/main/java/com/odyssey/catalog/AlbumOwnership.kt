@@ -142,11 +142,26 @@ fun joinAlbumOwnership(
     catalog: AioCatalog,
     localEpisodes: List<LocalEpisodeKey>,
 ): List<AlbumWithOwnership> {
-    // Pre-bucket locals by normalized title for O(1) lookup per catalog episode.
+    // Pre-bucket locals by normalized title for O(1) lookup per catalog
+    // episode. When two rows share a title (e.g. an oneplace download
+    // with episode_id=1278294 AND a server-mirror row with id=657),
+    // OR their ownership flags so the album view reflects the UNION:
+    // "on phone" if any matching row has a file, "on backup" if any
+    // has archivedAt set.
     val localByTitle: Map<String, LocalEpisodeKey> = buildMap {
         for (le in localEpisodes) {
             val key = normalizeTitle(le.title)
-            if (key.isNotEmpty()) putIfAbsent(key, le)
+            if (key.isEmpty()) continue
+            val existing = this[key]
+            this[key] = if (existing == null) le
+                        else existing.copy(
+                            hasFile = existing.hasFile || le.hasFile,
+                            backedUp = existing.backedUp || le.backedUp,
+                            // Prefer the row that has an actual file, so
+                            // tap-to-play picks up the playable copy.
+                            raw = if (le.hasFile && !existing.hasFile) le.raw
+                                  else existing.raw ?: le.raw,
+                        )
         }
     }
 
