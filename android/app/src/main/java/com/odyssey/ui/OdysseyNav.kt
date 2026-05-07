@@ -112,7 +112,10 @@ fun OdysseyNav() {
                     TransfersScreen(onBack = { nav.popBackStack() })
                 }
                 composable(Tab.Settings.route) {
-                    SettingsScreen(onOpenDebug = { nav.navigate(ROUTE_DEBUG) })
+                    SettingsScreen(
+                        onOpenDebug = { nav.navigate(ROUTE_DEBUG) },
+                        onOpenTransfers = { nav.navigate(ROUTE_TRANSFERS) },
+                    )
                 }
                 composable(ROUTE_NOW_PLAYING) {
                     NowPlayingScreen(onBack = { nav.popBackStack() })

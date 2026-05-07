@@ -126,6 +126,47 @@ def test_title_from_filename_bare_title(configured_env, tmp_path: Path):
     assert _title_from_filename(f) == "Some Episode Title"
 
 
+def test_title_from_filename_hash_dash_separator(configured_env, tmp_path: Path):
+    """The actual C# tool format the user dumped: 'NNN#-Title_With_Underscores.mp3'."""
+    from app.import_dropbox import _title_from_filename
+    f = tmp_path / "671#-Fast_as_I_Can.mp3"
+    f.write_bytes(b"")
+    assert _title_from_filename(f) == "Fast as I Can"
+
+    f2 = tmp_path / "727339#-Between_the_Lines,_Part_1.mp3"
+    f2.write_bytes(b"")
+    assert _title_from_filename(f2) == "Between the Lines, Part 1"
+
+
+def test_filename_title_beats_useless_id3(configured_env):
+    """Real-world: C# files have filename='671#-Fast_as_I_Can.mp3' but
+    ID3 TIT2='Adventures in Odyssey 08/27/2011'. Filename must win so
+    the catalog match works."""
+    pytest.importorskip("mutagen")
+    from mutagen.id3 import ID3, ID3NoHeaderError, TIT2
+
+    from app import config, db
+    from app.import_dropbox import run_import
+
+    db.init()
+    drop = config.IMPORT_DIR
+    # Pick a title we know is in our test catalog.
+    src = drop / "261#-Afraid,_Not!.mp3"
+    _tiny_mp3(src)
+    try:
+        tags = ID3(src)
+    except ID3NoHeaderError:
+        tags = ID3()
+    tags["TIT2"] = TIT2(encoding=3, text="Adventures in Odyssey 08/27/2011")
+    tags.save(src)
+
+    summary = run_import(drop)
+    assert summary.imported == 1, summary.samples
+    # The catalog matched on the filename's "Afraid, Not!", not the
+    # date string from ID3.
+    assert (config.AUDIO_DIR / "20-a-journey-of-choices" / "261-afraid-not.mp3").exists()
+
+
 # ----- end-to-end -----------------------------------------------------
 
 def test_run_import_matched_file_lands_in_album_folder(configured_env):

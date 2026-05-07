@@ -22,6 +22,7 @@ import com.odyssey.download.ArchiveProgressTracker
 import com.odyssey.download.DownloadProgressTracker
 import com.odyssey.download.TransferKind
 import com.odyssey.download.TransferRow
+import com.odyssey.download.TransferState
 import com.odyssey.download.mergeTransfers
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
@@ -45,13 +46,27 @@ class TransfersVm @Inject constructor(
     downloads: DownloadProgressTracker,
     uploads: ArchiveProgressTracker,
 ) : ViewModel() {
+    /**
+     * Combine 4 streams: active downloads, active uploads, all
+     * episodes (for titles), unarchived-downloaded rows (for QUEUED
+     * uploads). Settings → Backup uses the unarchived-downloaded list
+     * to compute "N waiting", so wiring the same list into the
+     * Transfers screen keeps the two views consistent — N waiting
+     * always equals N rows visible.
+     */
     val rows = combine(
         downloads.progress,
         uploads.progress,
         episodes.observeAll(),
-    ) { dl, up, eps ->
+        episodes.observeUnarchivedDownloaded(),
+    ) { dl, up, eps, unarchived ->
         val titles = eps.associate { it.episodeId to it.title }
-        mergeTransfers(dl, up, titles)
+        mergeTransfers(
+            downloads = dl,
+            uploads = up,
+            titlesById = titles,
+            queuedUploadIds = unarchived.map { it.episodeId }.toSet(),
+        )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 }
 
@@ -109,15 +124,15 @@ fun TransfersScreen(
 
 @Composable
 private fun TransferRowCard(row: TransferRow) {
+    val tag = buildString {
+        append("transfer-row-")
+        append(if (row.kind == TransferKind.DOWNLOAD) "download" else "upload")
+        if (row.state == TransferState.QUEUED) append("-queued")
+        append('-')
+        append(row.episodeId)
+    }
     ElevatedCard(
-        modifier = Modifier
-            .fillMaxWidth()
-            .testTag(
-                when (row.kind) {
-                    TransferKind.DOWNLOAD -> "transfer-row-download-${row.episodeId}"
-                    TransferKind.UPLOAD -> "transfer-row-upload-${row.episodeId}"
-                },
-            ),
+        modifier = Modifier.fillMaxWidth().testTag(tag),
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -131,7 +146,10 @@ private fun TransferRowCard(row: TransferRow) {
                     modifier = Modifier.weight(1f),
                 )
                 Text(
-                    text = "${row.percent}%",
+                    text = when (row.state) {
+                        TransferState.ACTIVE -> "${row.percent}%"
+                        TransferState.QUEUED -> "queued"
+                    },
                     style = MaterialTheme.typography.labelMedium,
                     modifier = Modifier.testTag("transfer-row-pct"),
                 )
@@ -144,13 +162,19 @@ private fun TransferRowCard(row: TransferRow) {
                 overflow = TextOverflow.Ellipsis,
             )
             Spacer(Modifier.height(6.dp))
-            if (row.totalBytes > 0L) {
-                LinearProgressIndicator(
-                    progress = { row.percent / 100f },
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            } else {
-                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            // ACTIVE rows show a real progress bar (or indeterminate
+            // when total bytes unknown). QUEUED rows show no bar —
+            // nothing's flowing yet, so a moving indicator would
+            // misrepresent state.
+            if (row.state == TransferState.ACTIVE) {
+                if (row.totalBytes > 0L) {
+                    LinearProgressIndicator(
+                        progress = { row.percent / 100f },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                } else {
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                }
             }
         }
     }

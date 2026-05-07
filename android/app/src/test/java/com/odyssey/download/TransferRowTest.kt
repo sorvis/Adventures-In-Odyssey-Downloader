@@ -65,4 +65,46 @@ class TransferRowTest {
     fun `empty input yields empty output`() {
         assertTrue(mergeTransfers(emptyMap(), emptyMap(), emptyMap()).isEmpty())
     }
+
+    @Test
+    fun `queued upload ids surface as QUEUED rows`() {
+        val out = mergeTransfers(
+            downloads = emptyMap(),
+            uploads = emptyMap(),
+            titlesById = mapOf(101L to "A", 102L to "B"),
+            queuedUploadIds = setOf(101L, 102L),
+        )
+        assertEquals(2, out.size)
+        assertTrue(out.all { it.state == TransferState.QUEUED })
+        assertTrue(out.all { it.kind == TransferKind.UPLOAD })
+        assertEquals(listOf(101L, 102L), out.map { it.episodeId })
+    }
+
+    @Test
+    fun `active upload suppresses the queued row for the same episode`() {
+        val out = mergeTransfers(
+            downloads = emptyMap(),
+            uploads = mapOf(101L to DownloadProgressEntry(50L, 100L)),
+            titlesById = mapOf(101L to "A", 102L to "B"),
+            queuedUploadIds = setOf(101L, 102L),
+        )
+        // Two rows: 101 ACTIVE (50% bytes), 102 QUEUED.
+        assertEquals(2, out.size)
+        val by101 = out.first { it.episodeId == 101L }
+        assertEquals(TransferState.ACTIVE, by101.state)
+        assertEquals(50, by101.percent)
+        val by102 = out.first { it.episodeId == 102L }
+        assertEquals(TransferState.QUEUED, by102.state)
+    }
+
+    @Test
+    fun `active rows sort before queued rows`() {
+        val out = mergeTransfers(
+            downloads = emptyMap(),
+            uploads = mapOf(200L to DownloadProgressEntry(10L, 100L)),
+            titlesById = mapOf(100L to "queued-A", 200L to "active-A"),
+            queuedUploadIds = setOf(100L),
+        )
+        assertEquals(listOf(TransferState.ACTIVE, TransferState.QUEUED), out.map { it.state })
+    }
 }

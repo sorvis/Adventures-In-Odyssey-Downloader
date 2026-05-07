@@ -46,7 +46,12 @@ log = logging.getLogger(__name__)
 # heuristics as the client-side scripts/import-audio-dir.py so a file
 # that flowed through that path also flows through this one.
 _FILENAME_PATTERNS = [
-    # "1234-Episode Title.mp3" — original C# downloader format
+    # "1234#-Episode_Title.mp3" — what the actual C# tool writes
+    # (id, then literal '#-', then underscored title). Has to come
+    # BEFORE the plain "<id>-Title" pattern because the latter would
+    # capture the '#' as part of the title.
+    re.compile(r"^(?P<id>\d{2,7})\s*#\s*[-_]\s*(?P<title>.+?)\.(?:mp3|m4a)$", re.IGNORECASE),
+    # "1234-Episode Title.mp3"
     re.compile(r"^(?P<id>\d{2,7})\s*[-_]\s*(?P<title>.+?)\.(?:mp3|m4a)$", re.IGNORECASE),
     # "Episode Title (1234).mp3"
     re.compile(r"^(?P<title>.+?)\s*\((?P<id>\d{2,7})\)\.(?:mp3|m4a)$", re.IGNORECASE),
@@ -175,9 +180,30 @@ def _title_from_filename(path: Path) -> str:
 
 
 def parse_file(path: Path) -> ParsedFile:
+    """Best-effort parse — picks the filename-derived title first when
+    available, ID3 second. Real-world counter-example that motivated
+    this order: the original C# downloader wrote `Adventures in Odyssey
+    <date>` as the TIT2 tag for every file, which never matches the
+    catalog. Filename has the actual title.
+    """
     id3_title, air_date, dur_ms = _read_id3(path)
-    title = id3_title or _title_from_filename(path)
+    fn_title = _title_from_filename(path)
+    title = fn_title or id3_title or path.stem
     return ParsedFile(path=path, title=title, duration_ms=dur_ms, air_date=air_date)
+
+
+def _candidate_titles(path: Path) -> list[str]:
+    """All titles to try against the catalog index, in priority order.
+    Filename first (more reliable for the C# back-catalog), ID3 second
+    (helps when filename is a hash or random id). Deduped, non-empty."""
+    out: list[str] = []
+    fn = _title_from_filename(path)
+    if fn:
+        out.append(fn)
+    id3, _air, _dur = _read_id3(path)
+    if id3 and id3 not in out:
+        out.append(id3)
+    return out
 
 
 # ----- main entry --------------------------------------------------------
@@ -215,9 +241,17 @@ def _candidate_files(import_root: Path) -> list[Path]:
 
 
 def _import_one(parsed: ParsedFile, index: dict[str, CatalogMatch]) -> tuple[bool, str]:
-    """Try to import a single file. Returns (matched, summary_line)."""
-    key = normalize_title(parsed.title)
-    match = index.get(key) if key else None
+    """Try to import a single file. Returns (matched, summary_line).
+    Walks every candidate title (filename + ID3) against the catalog —
+    first match wins, so a file with a junky ID3 tag still imports if
+    its filename resolves."""
+    candidates = _candidate_titles(parsed.path)
+    match: Optional[CatalogMatch] = None
+    for title in candidates:
+        key = normalize_title(title)
+        if key and key in index:
+            match = index[key]
+            break
     if not match:
         # Move to _unmatched/ with original filename — preserve so the
         # user can rename + re-drop later.
@@ -226,7 +260,8 @@ def _import_one(parsed: ParsedFile, index: dict[str, CatalogMatch]) -> tuple[boo
         if dst.exists():
             dst = IMPORT_UNMATCHED_DIR / f"{dst.stem}-{parsed.path.stat().st_mtime_ns}{dst.suffix}"
         shutil.move(str(parsed.path), str(dst))
-        return False, f"UNMATCHED  {parsed.path.name!r}  title={parsed.title!r}"
+        first = candidates[0] if candidates else parsed.path.stem
+        return False, f"UNMATCHED  {parsed.path.name!r}  title={first!r}"
 
     # Episode-id strategy: prefer the AIO broadcast number from
     # shortName (e.g. 657). Fall back to a 7-hex-digit hash of the

@@ -106,6 +106,7 @@ class SettingsVm @Inject constructor(
 @Composable
 fun SettingsScreen(
     onOpenDebug: () -> Unit = {},
+    onOpenTransfers: () -> Unit = {},
     vm: SettingsVm = hiltViewModel(),
 ) {
     val s by vm.state.collectAsState()
@@ -214,6 +215,23 @@ fun SettingsScreen(
                                else "Last push: queued $count upload${if (count == 1) "" else "s"} (run in background).",
                         style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.testTag("backup-last-result"),
+                    )
+                }
+
+                // Direct link to the Transfers screen — was previously
+                // only reachable from a Backup-tab TopAppBar action,
+                // which the user couldn't find when uploads looked
+                // stuck. Anchor it to the same panel that shows the
+                // unarchived count so the obvious next action ("show
+                // me which files") is one tap away.
+                TextButton(
+                    onClick = onOpenTransfers,
+                    modifier = Modifier.testTag("settings-open-transfers"),
+                ) {
+                    Text(
+                        if (uploadingCount > 0)
+                            "View transfer activity ($uploadingCount uploading) →"
+                        else "View transfer activity →",
                     )
                 }
 
