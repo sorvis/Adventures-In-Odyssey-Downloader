@@ -58,6 +58,13 @@ class BrowseVm @Inject constructor(
     fun refresh() = viewModelScope.launch {
         nas.listAlbums().fold({ albums.value = it; error.value = null },
                               { error.value = "Couldn't reach NAS: ${it.message}" })
+        // Mirror the full server episode list into the local DB so the
+        // Album tab's "☁ on backup" badge lights up across the
+        // library, not just for episodes the user has searched. Pure
+        // metadata — no audio downloads. Failure is non-fatal: the
+        // album list above already loaded; the user keeps a working
+        // Backup tab even if the per-episode mirror failed.
+        nas.listAllEpisodes().onSuccess { mirrorServerEpisodes(it) }
     }
 
     fun search(q: String, album: String?) = viewModelScope.launch {

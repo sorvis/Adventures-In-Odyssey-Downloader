@@ -102,6 +102,29 @@ class NasClient @Inject constructor(
         }
     }
 
+    /**
+     * Fetch every episode the server knows about, paging until the
+     * result page is short. Used by BrowseVm.refresh() to mirror the
+     * full library into the local DB so the Album tab can show
+     * "☁ on backup" badges without the user having to type a search
+     * first. Pure metadata — no audio bytes.
+     */
+    suspend fun listAllEpisodes(pageSize: Int = 200): Result<List<NasEpisode>> {
+        val all = mutableListOf<NasEpisode>()
+        var offset = 0
+        while (true) {
+            val page = search(q = null, album = null, limit = pageSize, offset = offset)
+                .getOrElse { return Result.failure(it) }
+            all += page
+            if (page.size < pageSize) break
+            offset += page.size
+            // Defensive: bail at 50k to avoid runaway loops on a buggy
+            // server that always returns full pages.
+            if (offset > 50_000) break
+        }
+        return Result.success(all)
+    }
+
     suspend fun search(q: String?, album: String?, limit: Int = 50, offset: Int = 0):
             Result<List<NasEpisode>> = call { base, token ->
         val params = buildList {
