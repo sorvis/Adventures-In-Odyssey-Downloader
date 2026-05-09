@@ -2,6 +2,7 @@ package com.odyssey.player
 
 import android.app.Application
 import androidx.test.core.app.ApplicationProvider
+import com.odyssey.app.SettingsRepo
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -27,7 +28,7 @@ class MediaCacheTest {
     @Test
     fun `cache dir is created at filesDir media-cache`() {
         val ctx = ApplicationProvider.getApplicationContext<Application>()
-        val mediaCache = MediaCache(ctx)
+        val mediaCache = MediaCache(ctx, SettingsRepo(ctx))
 
         val expected = File(ctx.filesDir, MediaCache.CACHE_DIR_NAME)
         assertTrue("media-cache dir should exist after MediaCache init", expected.isDirectory)
@@ -40,7 +41,7 @@ class MediaCacheTest {
     @Test
     fun `mediaSourceDataFactory constructs a non-null factory`() {
         val ctx = ApplicationProvider.getApplicationContext<Application>()
-        val mediaCache = MediaCache(ctx)
+        val mediaCache = MediaCache(ctx, SettingsRepo(ctx))
         try {
             val factory = mediaCache.mediaSourceDataFactory()
             // createDataSource() must succeed without throwing — proves the

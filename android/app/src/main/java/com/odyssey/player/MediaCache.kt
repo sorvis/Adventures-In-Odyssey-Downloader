@@ -5,12 +5,16 @@ import androidx.media3.database.StandaloneDatabaseProvider
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.datasource.HttpDataSource
 import androidx.media3.datasource.cache.CacheDataSink
 import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
 import androidx.media3.datasource.cache.SimpleCache
+import com.odyssey.app.SettingsRepo
 import com.odyssey.debug.DebugLogger
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
 import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -31,7 +35,10 @@ import javax.inject.Singleton
  * played. The LRU evictor (500MB cap) eventually reclaims space.
  */
 @Singleton
-class MediaCache @Inject constructor(@ApplicationContext private val ctx: Context) {
+class MediaCache @Inject constructor(
+    @ApplicationContext private val ctx: Context,
+    private val settings: SettingsRepo,
+) {
 
     private val cacheDir: File = File(ctx.filesDir, CACHE_DIR_NAME).apply { mkdirs() }
 
@@ -63,12 +70,44 @@ class MediaCache @Inject constructor(@ApplicationContext private val ctx: Contex
             // Cached upstream is HTTP-only — local schemes are handled by
             // the plain factory below, so we don't need a DefaultDataSource
             // here that includes a FileDataSource.
-            .setUpstreamDataSourceFactory(DefaultHttpDataSource.Factory())
+            .setUpstreamDataSourceFactory(authAwareHttpFactory())
             .setCacheWriteDataSinkFactory(CacheDataSink.Factory().setCache(cache))
             // Don't fail reads when cache writes hit disk-full / evictor.
             .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR),
         plainFactory = DefaultDataSource.Factory(ctx),
     )
+
+    /**
+     * HTTP factory that injects `Authorization: Bearer <token>` on
+     * every request when a NAS bearer is configured. Lets the player
+     * stream directly from the self-hosted backup service's protected
+     * /episodes/N/audio endpoint without a separate URL-rewriting
+     * dance. Reads settings on every createDataSource() call so a
+     * token rotation picks up at the next playback.
+     *
+     * Side effect: oneplace.com requests also carry the header. Public
+     * AIO endpoints don't validate Authorization so they ignore the
+     * extra bytes.
+     */
+    private fun authAwareHttpFactory(): HttpDataSource.Factory {
+        return object : HttpDataSource.Factory {
+            override fun createDataSource(): HttpDataSource {
+                val current = runCatching { runBlocking { settings.flow.first() } }.getOrNull()
+                val token = current?.nasToken?.takeIf { it.isNotBlank() }
+                val factory = DefaultHttpDataSource.Factory()
+                if (token != null) {
+                    factory.setDefaultRequestProperties(
+                        mapOf("Authorization" to "Bearer $token"),
+                    )
+                }
+                return factory.createDataSource()
+            }
+
+            override fun setDefaultRequestProperties(
+                defaultRequestProperties: Map<String, String>,
+            ): HttpDataSource.Factory = this
+        }
+    }
 
     /**
      * @deprecated kept temporarily for any caller still on the old name.

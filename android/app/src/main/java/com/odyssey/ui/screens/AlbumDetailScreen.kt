@@ -4,7 +4,11 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.collectAsState
@@ -32,9 +36,13 @@ import com.odyssey.catalog.EpisodeOwnership
 import com.odyssey.catalog.LocalEpisodeKey
 import com.odyssey.catalog.joinAlbumOwnership
 import com.odyssey.catalog.ownershipSummary
+import com.odyssey.app.SettingsRepo
 import com.odyssey.data.local.EpisodeDao
 import com.odyssey.data.local.LocalEpisodeEntity
 import com.odyssey.data.local.PlaybackDao
+import com.odyssey.nas.NasClient
+import com.odyssey.work.WorkScheduler
+import kotlinx.coroutines.flow.first
 import com.odyssey.debug.DebugLogger
 import com.odyssey.player.EpisodePlayer
 import com.odyssey.player.PlaySource
@@ -53,6 +61,9 @@ class AlbumDetailVm @Inject constructor(
     private val playback: PlaybackDao,
     private val catalog: AioCatalogRepo,
     private val player: EpisodePlayer,
+    private val nas: NasClient,
+    private val scheduler: WorkScheduler,
+    private val settings: SettingsRepo,
 ) : ViewModel() {
 
     /**
@@ -101,14 +112,56 @@ class AlbumDetailVm @Inject constructor(
         DebugLogger.i("AlbumDetailVm", "play(${local.episodeId}) from album detail")
         viewModelScope.launch {
             try {
-                when (playSourceFor(local.filePath, local.downloadUrl)) {
-                    is PlaySource.Local -> player.playLocal(local, artwork)
-                    is PlaySource.Stream -> player.playStream(local.episodeId, local.downloadUrl, local.title, artwork)
+                when {
+                    // On-disk file — playLocal beats every other path.
+                    local.filePath != null -> player.playLocal(local, artwork)
+                    // Server-mirrored row (downloadUrl is "backup://N").
+                    // Resolve the real audio URL via NasClient and stream
+                    // — auth header is injected by MediaCache's HTTP
+                    // factory so the bearer-token-protected /audio
+                    // endpoint accepts the request.
+                    local.downloadUrl.startsWith("backup://") -> {
+                        val audio = nas.audioUrl(local.episodeId).getOrNull()
+                        if (audio == null) {
+                            DebugLogger.w("AlbumDetailVm", "play(${local.episodeId}) — backup URL but NAS not configured")
+                            return@launch
+                        }
+                        player.playStream(local.episodeId, audio.url, local.title, artwork)
+                    }
+                    // Oneplace download URL — public, no auth needed.
+                    else -> when (playSourceFor(local.filePath, local.downloadUrl)) {
+                        is PlaySource.Local -> player.playLocal(local, artwork)
+                        is PlaySource.Stream -> player.playStream(local.episodeId, local.downloadUrl, local.title, artwork)
+                    }
                 }
             } catch (t: Throwable) {
                 DebugLogger.e("AlbumDetailVm", "play threw", t)
             }
         }
+    }
+
+    /**
+     * Pin a server-only episode onto the phone for offline play.
+     * Schedules the same RestoreEpisodeWorker the Backup tab uses.
+     * Same call regardless of whether the row is server-mirrored
+     * or genuinely UNAVAILABLE (the catalog episode just isn't on
+     * the user's phone yet) — the worker creates the row.
+     */
+    fun pinOffline(row: CatalogEpisodeWithOwnership) = viewModelScope.launch {
+        val local = row.localEpisode as? LocalEpisodeEntity ?: run {
+            DebugLogger.w("AlbumDetailVm", "pinOffline — no local row for ${row.catalogEp.name}")
+            return@launch
+        }
+        val allowMetered = settings.flow.first().allowMeteredDownloads
+        scheduler.enqueueRestore(
+            episodeId = local.episodeId,
+            title = local.title,
+            airDate = local.airDate,
+            album = null, // server-side enrichment handles album
+            description = local.description,
+            durationSecs = local.durationMs / 1000,
+            allowMetered = allowMetered,
+        )
     }
 }
 
@@ -191,7 +244,11 @@ fun AlbumDetailScreen(
                 }
             }
             items(visible, key = { it.catalogEp.shortName.ifBlank { it.catalogEp.name } }) { row ->
-                AlbumEpisodeRow(row, onPlay = { vm.play(row) })
+                AlbumEpisodeRow(
+                    row,
+                    onPlay = { vm.play(row) },
+                    onPinOffline = { vm.pinOffline(row) },
+                )
             }
         }
     }
@@ -236,13 +293,29 @@ private fun AlbumDetailHeader(a: AlbumWithOwnership) {
 }
 
 @Composable
-private fun AlbumEpisodeRow(row: CatalogEpisodeWithOwnership, onPlay: () -> Unit) {
+private fun AlbumEpisodeRow(
+    row: CatalogEpisodeWithOwnership,
+    onPlay: () -> Unit,
+    onPinOffline: () -> Unit = {},
+) {
+    val onPhone = row.ownership == EpisodeOwnership.DOWNLOADED
+    // Playable whenever we have ANY way to source bytes: local file,
+    // oneplace stream URL, or a backup://N row resolvable via NAS audio
+    // URL inside AlbumDetailVm.play.
     val playable = row.ownership != EpisodeOwnership.UNAVAILABLE
     val displayName = row.catalogEp.shortName.ifBlank { row.catalogEp.name }
+    val local = row.localEpisode as? LocalEpisodeEntity
+    val description = local?.description?.takeIf { it.isNotBlank() }
+    // Card only earns its tap when there's something to reveal —
+    // description text or any actionable button.
+    val canExpand = description != null || playable || (row.backedUp && !onPhone)
+    var expanded by remember { mutableStateOf(false) }
+
     ElevatedCard(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(enabled = playable, onClick = onPlay)
+            .animateContentSize()
+            .clickable(enabled = canExpand) { expanded = !expanded }
             .testTag(
                 when (row.ownership) {
                     EpisodeOwnership.DOWNLOADED -> "album-ep-downloaded"
@@ -266,8 +339,8 @@ private fun AlbumEpisodeRow(row: CatalogEpisodeWithOwnership, onPlay: () -> Unit
                 // Two independent dimensions: on-phone (local file) and
                 // on-backup (archivedAt set). A row can be both, either,
                 // or — for catalog episodes the user has never touched —
-                // neither (UNAVAILABLE). Stack the badges so each fits
-                // a small label without truncating.
+                // neither (UNAVAILABLE). Stack so each badge gets its
+                // own line without truncating.
                 Column(horizontalAlignment = Alignment.End) {
                     when (row.ownership) {
                         EpisodeOwnership.DOWNLOADED -> Text(
@@ -293,5 +366,45 @@ private fun AlbumEpisodeRow(row: CatalogEpisodeWithOwnership, onPlay: () -> Unit
                 }
             },
         )
+        if (expanded) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 16.dp, end = 16.dp, bottom = 12.dp)
+                    .testTag("album-ep-expanded"),
+            ) {
+                if (description != null) {
+                    Text(
+                        text = description,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (playable) {
+                        FilledTonalButton(
+                            onClick = onPlay,
+                            modifier = Modifier.testTag("album-ep-play"),
+                        ) {
+                            Icon(Icons.Default.PlayArrow, contentDescription = null)
+                            Spacer(Modifier.width(4.dp))
+                            Text("Play")
+                        }
+                    }
+                    if (row.backedUp && !onPhone) {
+                        if (playable) Spacer(Modifier.width(8.dp))
+                        TextButton(
+                            onClick = onPinOffline,
+                            modifier = Modifier.testTag("album-ep-pin-offline"),
+                        ) {
+                            Icon(Icons.Default.Download, contentDescription = null)
+                            Spacer(Modifier.width(4.dp))
+                            Text("Pin offline")
+                        }
+                    }
+                }
+            }
+        }
     }
 }
