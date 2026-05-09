@@ -224,7 +224,7 @@ fun SettingsScreen(
             )
             OutlinedTextField(
                 value = nasUrl, onValueChange = { nasUrl = it },
-                label = { Text("URL e.g. http://192.168.2.50:8088") },
+                label = { Text("URL e.g. http://archive.lan:8088") },
                 singleLine = true, modifier = Modifier.fillMaxWidth(),
             )
             OutlinedTextField(

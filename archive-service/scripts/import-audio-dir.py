@@ -18,7 +18,7 @@ the repo root). Filenames there look like "1234-Episode Title.mp3" or
 Usage:
     archive-service/scripts/import-audio-dir.py \\
         --dir /path/to/old/episodes \\
-        --base-url http://192.168.2.50:8088 \\
+        --base-url http://archive.lan:8088 \\
         --token $(cat ~/.aio-archive-token)
 
 Optional ID3 metadata extraction needs `mutagen`:

@@ -20,7 +20,7 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."          # repo root
 ROOT="$PWD"
 
-PROXMOX_HOST="${PROXMOX_HOST:-root@192.168.2.123}"
+PROXMOX_HOST="${PROXMOX_HOST:-root@proxmox.lan}"
 LXC_ID="${LXC_ID:-121}"
 LXC_APP_PATH="${LXC_APP_PATH:-/opt/archive-service}"
 LOG="${ODYSSEY_DEPLOY_LOG:-/tmp/odyssey-deploy.log}"
@@ -81,5 +81,5 @@ echo "    ok"
 
 # --------------------- 4. summary ---------------------
 printf '\n\033[1;32m✔ archive-service deployed\033[0m\n'
-echo "    URL : ${URL:-http://192.168.2.142:8088}"
+echo "    URL : ${URL:-http://archive.lan:8088}"
 echo "    log : $LOG"

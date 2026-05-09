@@ -48,7 +48,7 @@ Stop with `docker compose down`.
 1. **Mount the Synology share on the Proxmox host** (NFS preferred for LXC bind-mounts):
    ```bash
    mkdir -p /mnt/synology/odyssey
-   mount -t nfs 192.168.2.123:/volume1/odyssey /mnt/synology/odyssey
+   mount -t nfs nas.lan:/volume1/odyssey /mnt/synology/odyssey
    # add to /etc/fstab to make it persistent
    ```
 

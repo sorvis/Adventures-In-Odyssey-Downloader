@@ -8,9 +8,9 @@ import org.junit.Test
 class ServerQrCodecTest {
     @Test
     fun `round-trip encode-decode preserves url and token`() {
-        val payload = encodeServerQr("http://192.168.2.142:8088", "abc123")
+        val payload = encodeServerQr("http://archive.example:8088", "abc123")
         val decoded = decodeServerQr(payload)
-        assertEquals("http://192.168.2.142:8088", decoded?.url)
+        assertEquals("http://archive.example:8088", decoded?.url)
         assertEquals("abc123", decoded?.token)
         assertEquals("", decoded?.cfClientId)
         assertEquals("", decoded?.cfClientSecret)
