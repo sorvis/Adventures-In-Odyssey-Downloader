@@ -40,8 +40,11 @@ import com.odyssey.app.SettingsRepo
 import com.odyssey.data.local.EpisodeDao
 import com.odyssey.data.local.LocalEpisodeEntity
 import com.odyssey.data.local.PlaybackDao
+import com.odyssey.download.RestoreProgressTracker
 import com.odyssey.nas.NasClient
 import com.odyssey.work.WorkScheduler
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import com.odyssey.debug.DebugLogger
 import com.odyssey.player.EpisodePlayer
@@ -54,6 +57,17 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
+/**
+ * Per-row pin-offline state. The card paints a green progress bar when
+ * non-null. QUEUED = WorkManager has the job but bytes haven't started
+ * flowing yet (indeterminate bar). ACTIVE = bytes are flowing
+ * (determinate bar driven by `percent`).
+ */
+sealed interface RestoreUiStatus {
+    object Queued : RestoreUiStatus
+    data class Active(val percent: Int, val totalBytes: Long) : RestoreUiStatus
+}
+
 @HiltViewModel
 class AlbumDetailVm @Inject constructor(
     savedState: SavedStateHandle,
@@ -64,6 +78,7 @@ class AlbumDetailVm @Inject constructor(
     private val nas: NasClient,
     private val scheduler: WorkScheduler,
     private val settings: SettingsRepo,
+    private val restores: RestoreProgressTracker,
 ) : ViewModel() {
 
     /**
@@ -99,6 +114,48 @@ class AlbumDetailVm @Inject constructor(
     val completedIds = playback.observeCompletedIds()
         .map { it.toSet() }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptySet())
+
+    /**
+     * Episode ids the user just tapped Pin offline for. Captures the
+     * QUEUED window between WorkManager.enqueue() and the worker
+     * actually opening its first byte (when RestoreProgressTracker
+     * starts emitting). The `restoreStatus` flow filters this against
+     * the downloaded set so finished restores fall off automatically
+     * — no explicit prune required.
+     */
+    private val pendingRestores = MutableStateFlow<Set<Long>>(emptySet())
+
+    /**
+     * Per-episode pin-offline UI status. Returns null when nothing's
+     * happening for that episode; AlbumEpisodeRow paints the progress
+     * bar only when the map has an entry. Queued + Active are merged
+     * into a single map so the row composable just looks up by id.
+     */
+    val restoreStatus: kotlinx.coroutines.flow.StateFlow<Map<Long, RestoreUiStatus>> = combine(
+        pendingRestores,
+        restores.progress,
+        episodes.observeAll().map { eps ->
+            eps.asSequence().filter { it.filePath != null }.map { it.episodeId }.toSet()
+        },
+    ) { pending, active, downloaded ->
+        val out = mutableMapOf<Long, RestoreUiStatus>()
+        // ACTIVE rows: live byte counter from the worker. Skip
+        // already-on-disk ids defensively (the tracker should clear
+        // on success but a transient race shouldn't paint a bar over
+        // a finished row).
+        for ((id, p) in active) {
+            if (id in downloaded) continue
+            out[id] = RestoreUiStatus.Active(percent = p.percent, totalBytes = p.totalBytes)
+        }
+        // QUEUED rows: user tapped Pin offline; worker hasn't streamed
+        // yet. Once the tracker starts emitting, the ACTIVE branch
+        // above wins for the same id (we don't overwrite below).
+        for (id in pending) {
+            if (id in downloaded) continue
+            if (id !in out) out[id] = RestoreUiStatus.Queued
+        }
+        out.toMap()
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
     fun play(row: CatalogEpisodeWithOwnership) {
         val local = row.localEpisode as? LocalEpisodeEntity ?: run {
@@ -152,6 +209,9 @@ class AlbumDetailVm @Inject constructor(
             DebugLogger.w("AlbumDetailVm", "pinOffline — no local row for ${row.catalogEp.name}")
             return@launch
         }
+        // Mark queued FIRST so the bar appears immediately on tap.
+        // The tracker takes over when the worker starts streaming.
+        pendingRestores.value = pendingRestores.value + local.episodeId
         val allowMetered = settings.flow.first().allowMeteredDownloads
         scheduler.enqueueRestore(
             episodeId = local.episodeId,
@@ -173,6 +233,7 @@ fun AlbumDetailScreen(
 ) {
     val album by vm.album.collectAsState()
     val completedIds by vm.completedIds.collectAsState()
+    val restoreStatus by vm.restoreStatus.collectAsState()
     var downloadedOnly by remember { mutableStateOf(false) }
     var hideListened by remember { mutableStateOf(false) }
 
@@ -244,8 +305,11 @@ fun AlbumDetailScreen(
                 }
             }
             items(visible, key = { it.catalogEp.shortName.ifBlank { it.catalogEp.name } }) { row ->
+                val ep = row.localEpisode as? LocalEpisodeEntity
+                val restore = ep?.let { restoreStatus[it.episodeId] }
                 AlbumEpisodeRow(
                     row,
+                    restore = restore,
                     onPlay = { vm.play(row) },
                     onPinOffline = { vm.pinOffline(row) },
                 )
@@ -295,6 +359,7 @@ private fun AlbumDetailHeader(a: AlbumWithOwnership) {
 @Composable
 private fun AlbumEpisodeRow(
     row: CatalogEpisodeWithOwnership,
+    restore: RestoreUiStatus?,
     onPlay: () -> Unit,
     onPinOffline: () -> Unit = {},
 ) {
@@ -387,6 +452,20 @@ private fun AlbumEpisodeRow(
                     )
                     Spacer(Modifier.height(8.dp))
                 }
+                if (restore != null) {
+                    Text(
+                        text = when (restore) {
+                            RestoreUiStatus.Queued -> "Queued — waiting to start"
+                            is RestoreUiStatus.Active ->
+                                if (restore.totalBytes > 0L) "Pulling from backup… ${restore.percent}%"
+                                else "Pulling from backup…"
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = restoreBarColor,
+                        modifier = Modifier.testTag("album-ep-restore-label"),
+                    )
+                    Spacer(Modifier.height(8.dp))
+                }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (playable) {
                         FilledTonalButton(
@@ -403,6 +482,11 @@ private fun AlbumEpisodeRow(
                         TextButton(
                             onClick = onPinOffline,
                             modifier = Modifier.testTag("album-ep-pin-offline"),
+                            // While a restore is queued/active for this row,
+                            // a second tap is a WorkManager-KEEP no-op anyway
+                            // — disable so the user gets visual feedback that
+                            // it's already in flight instead of a silent no-op.
+                            enabled = restore == null,
                         ) {
                             Icon(Icons.Default.Download, contentDescription = null)
                             Spacer(Modifier.width(4.dp))
@@ -412,5 +496,44 @@ private fun AlbumEpisodeRow(
                 }
             }
         }
+        // Green progress bar at the bottom of the card whenever a restore
+        // is queued or active for this episode. Always visible — not gated
+        // on `expanded` — so the user sees download progress at a glance
+        // without having to tap each card open.
+        when (restore) {
+            null -> Unit
+            RestoreUiStatus.Queued -> LinearProgressIndicator(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("album-ep-restore-queued"),
+                color = restoreBarColor,
+                trackColor = restoreBarTrack,
+            )
+            is RestoreUiStatus.Active -> if (restore.totalBytes > 0L) {
+                LinearProgressIndicator(
+                    progress = { restore.percent / 100f },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("album-ep-restore-active"),
+                    color = restoreBarColor,
+                    trackColor = restoreBarTrack,
+                )
+            } else {
+                LinearProgressIndicator(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("album-ep-restore-active"),
+                    color = restoreBarColor,
+                    trackColor = restoreBarTrack,
+                )
+            }
+        }
     }
 }
+
+// Material Green 600 — readable on both light and dark surfaces and
+// visually distinct from the Material You primary that the rest of
+// the app uses, so the green bar reads unambiguously as "download in
+// progress" rather than just another themed accent.
+private val restoreBarColor = Color(0xFF43A047)
+private val restoreBarTrack = Color(0x3343A047)
