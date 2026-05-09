@@ -73,8 +73,18 @@ class SettingsVm @Inject constructor(
      */
     val lastBackfillEnqueued: MutableStateFlow<Int?> = MutableStateFlow(null)
 
-    fun saveNas(url: String, token: String) = viewModelScope.launch {
+    fun saveNas(
+        url: String,
+        token: String,
+        cfClientId: String = "",
+        cfClientSecret: String = "",
+    ) = viewModelScope.launch {
         settings.setNas(url, token)
+        // Persist (or clear) the Cloudflare Access service tokens
+        // alongside the bearer so a save covers all four credentials
+        // in one tap — no chance of "I saved the URL but forgot the
+        // CF headers and now nothing connects".
+        settings.setCloudflareAccess(cfClientId, cfClientSecret)
         // Auto-trigger the backfill when valid creds are saved — first
         // connect to a backup server should push everything that's
         // already on-device. ArchiveBackfill is idempotent, so even if
@@ -151,8 +161,17 @@ fun SettingsScreen(
 
     var nasUrl by remember(current.nasUrl) { mutableStateOf(current.nasUrl) }
     var nasToken by remember(current.nasToken) { mutableStateOf(current.nasToken) }
+    var cfClientId by remember(current.cfAccessClientId) { mutableStateOf(current.cfAccessClientId) }
+    var cfClientSecret by remember(current.cfAccessClientSecret) { mutableStateOf(current.cfAccessClientSecret) }
     var retention by remember(current.retentionCount) { mutableStateOf(current.retentionCount.toString()) }
     var showQrDialog by remember { mutableStateOf(false) }
+    // Reveal the Cloudflare Access pair only when the user has
+    // already pasted at least one of them, OR they expand the
+    // optional section. Default-collapsed keeps the screen tidy
+    // for the LAN/Tailscale-only majority case.
+    var showCfFields by remember(current.cfAccessConfigured) {
+        mutableStateOf(current.cfAccessConfigured)
+    }
     val scope = rememberCoroutineScope()
 
     // ScanContract takes us into ZXing's CaptureActivity (no Play
@@ -174,8 +193,15 @@ fun SettingsScreen(
         }
         nasUrl = decoded.url
         nasToken = decoded.token
+        cfClientId = decoded.cfClientId
+        cfClientSecret = decoded.cfClientSecret
+        if (decoded.cfClientId.isNotBlank()) showCfFields = true
         scope.launch {
-            snackbarHostState.showSnackbar("Scanned. Tap Save to apply.")
+            snackbarHostState.showSnackbar(
+                if (decoded.cfClientId.isNotBlank())
+                    "Scanned (incl. Cloudflare Access tokens). Tap Save to apply."
+                else "Scanned. Tap Save to apply.",
+            )
         }
     }
 
@@ -206,8 +232,42 @@ fun SettingsScreen(
                 label = { Text("Bearer token") },
                 singleLine = true, modifier = Modifier.fillMaxWidth(),
             )
+
+            // Cloudflare Access service-token pair. Only populated when
+            // the server is fronted by a Cloudflare Tunnel + Access app
+            // — friends who connect over the public hostname need both
+            // headers on every request. Empty for the LAN / Tailscale
+            // case (the majority — owner's primary phone). The toggle
+            // hides it by default so the panel stays tidy.
+            TextButton(
+                onClick = { showCfFields = !showCfFields },
+                modifier = Modifier.testTag("toggle-cf-access"),
+            ) {
+                Text(
+                    if (showCfFields) "Hide Cloudflare Access (advanced)"
+                    else "Add Cloudflare Access (advanced)",
+                )
+            }
+            if (showCfFields) {
+                OutlinedTextField(
+                    value = cfClientId, onValueChange = { cfClientId = it },
+                    label = { Text("CF-Access-Client-Id") },
+                    singleLine = true, modifier = Modifier.fillMaxWidth().testTag("cf-client-id"),
+                )
+                OutlinedTextField(
+                    value = cfClientSecret, onValueChange = { cfClientSecret = it },
+                    label = { Text("CF-Access-Client-Secret") },
+                    singleLine = true, modifier = Modifier.fillMaxWidth().testTag("cf-client-secret"),
+                )
+                Text(
+                    "Both required when the server is exposed through a Cloudflare " +
+                    "Tunnel + Access app. Leave blank for LAN or Tailscale.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+
             Button(
-                onClick = { vm.saveNas(nasUrl, nasToken) },
+                onClick = { vm.saveNas(nasUrl, nasToken, cfClientId, cfClientSecret) },
                 modifier = Modifier.testTag("save-nas"),
             ) { Text("Save NAS settings") }
 
@@ -248,6 +308,8 @@ fun SettingsScreen(
                 ServerQrDialog(
                     url = nasUrl,
                     token = nasToken,
+                    cfClientId = cfClientId,
+                    cfClientSecret = cfClientSecret,
                     onDismiss = { showQrDialog = false },
                 )
             }
@@ -391,12 +453,16 @@ fun SettingsScreen(
 private fun ServerQrDialog(
     url: String,
     token: String,
+    cfClientId: String,
+    cfClientSecret: String,
     onDismiss: () -> Unit,
 ) {
-    // Render once per (url, token) — not on every recomposition.
+    // Render once per (url, token, cf...) — not on every recomposition.
     // Bitmap is expensive enough (matrix encode + IntArray fill) that
     // re-rendering it on dismiss-animation frames is wasteful.
-    val payload = remember(url, token) { encodeServerQr(url, token) }
+    val payload = remember(url, token, cfClientId, cfClientSecret) {
+        encodeServerQr(url, token, cfClientId, cfClientSecret)
+    }
     val bitmap = remember(payload) { renderServerQrBitmap(payload, sizePx = 720) }
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -418,8 +484,13 @@ private fun ServerQrDialog(
                 )
                 Spacer(Modifier.height(12.dp))
                 Text(
-                    "Point another phone's Scan QR at this code to copy " +
-                    "URL and token over without retyping.",
+                    text = if (cfClientId.isNotBlank())
+                        "Point another phone's Scan QR at this code. Includes " +
+                        "URL, bearer token, and Cloudflare Access service tokens — " +
+                        "the receiving phone is ready after one Save tap."
+                    else
+                        "Point another phone's Scan QR at this code to copy " +
+                        "URL and token over without retyping.",
                     style = MaterialTheme.typography.bodySmall,
                     textAlign = TextAlign.Center,
                 )

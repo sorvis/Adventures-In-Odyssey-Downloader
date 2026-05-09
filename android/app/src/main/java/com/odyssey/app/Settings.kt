@@ -18,6 +18,8 @@ private object Keys {
     val LAST_SEEN_EID = longPreferencesKey("last_seen_episode_id")
     val LAST_RUN_AT = longPreferencesKey("last_run_at_ms")
     val ALLOW_METERED = booleanPreferencesKey("allow_metered_downloads")
+    val CF_CLIENT_ID = stringPreferencesKey("cf_access_client_id")
+    val CF_CLIENT_SECRET = stringPreferencesKey("cf_access_client_secret")
 }
 
 data class Settings(
@@ -27,8 +29,19 @@ data class Settings(
     val lastSeenEpisodeId: Long,
     val lastRunAtMs: Long,
     val allowMeteredDownloads: Boolean,
+    /**
+     * Cloudflare Access service-token credentials. Required when the
+     * backup server is exposed via a Cloudflare Tunnel + Access app —
+     * the tunnel rejects every request that doesn't carry both
+     * headers (or a logged-in user cookie, which the app doesn't
+     * have). Empty for LAN / Tailscale-only deployments.
+     */
+    val cfAccessClientId: String,
+    val cfAccessClientSecret: String,
 ) {
     val nasConfigured: Boolean get() = nasUrl.isNotBlank() && nasToken.isNotBlank()
+    val cfAccessConfigured: Boolean
+        get() = cfAccessClientId.isNotBlank() && cfAccessClientSecret.isNotBlank()
 }
 
 @Singleton
@@ -42,6 +55,8 @@ class SettingsRepo @Inject constructor(@ApplicationContext private val ctx: Cont
             lastSeenEpisodeId = p[Keys.LAST_SEEN_EID] ?: 0L,
             lastRunAtMs = p[Keys.LAST_RUN_AT] ?: 0L,
             allowMeteredDownloads = p[Keys.ALLOW_METERED] ?: false,
+            cfAccessClientId = p[Keys.CF_CLIENT_ID].orEmpty(),
+            cfAccessClientSecret = p[Keys.CF_CLIENT_SECRET].orEmpty(),
         )
     }
 
@@ -49,6 +64,18 @@ class SettingsRepo @Inject constructor(@ApplicationContext private val ctx: Cont
         it[Keys.NAS_URL] = url.trim().trimEnd('/')
         it[Keys.NAS_TOKEN] = token.trim()
     }
+
+    /**
+     * Persist the optional Cloudflare Access service-token pair.
+     * Blank values clear the headers — useful when switching a phone
+     * back from "friend joining over Cloudflare" to "owner on the
+     * LAN" without uninstalling.
+     */
+    suspend fun setCloudflareAccess(clientId: String, clientSecret: String) =
+        ctx.dataStore.edit {
+            it[Keys.CF_CLIENT_ID] = clientId.trim()
+            it[Keys.CF_CLIENT_SECRET] = clientSecret.trim()
+        }
 
     suspend fun setRetention(n: Int) = ctx.dataStore.edit { it[Keys.RETENTION] = n.coerceIn(1, 100) }
     suspend fun setLastSeen(id: Long) = ctx.dataStore.edit { it[Keys.LAST_SEEN_EID] = id }

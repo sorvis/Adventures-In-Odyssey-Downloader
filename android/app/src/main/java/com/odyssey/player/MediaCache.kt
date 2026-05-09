@@ -79,27 +79,33 @@ class MediaCache @Inject constructor(
 
     /**
      * HTTP factory that injects `Authorization: Bearer <token>` on
-     * every request when a NAS bearer is configured. Lets the player
-     * stream directly from the self-hosted backup service's protected
-     * /episodes/N/audio endpoint without a separate URL-rewriting
-     * dance. Reads settings on every createDataSource() call so a
-     * token rotation picks up at the next playback.
+     * every request when a NAS bearer is configured, plus the
+     * `CF-Access-Client-Id` / `CF-Access-Client-Secret` pair when
+     * the user has set Cloudflare Access service tokens. Lets the
+     * player stream directly from the self-hosted backup service —
+     * whether that's reached over LAN, Tailscale, or a Cloudflare
+     * Tunnel — without a separate URL-rewriting dance. Reads settings
+     * on every createDataSource() call so a rotation picks up at the
+     * next playback.
      *
-     * Side effect: oneplace.com requests also carry the header. Public
-     * AIO endpoints don't validate Authorization so they ignore the
-     * extra bytes.
+     * Side effect: oneplace.com requests also carry these headers.
+     * Public AIO endpoints don't validate them so the extra bytes
+     * are ignored.
      */
     private fun authAwareHttpFactory(): HttpDataSource.Factory {
         return object : HttpDataSource.Factory {
             override fun createDataSource(): HttpDataSource {
                 val current = runCatching { runBlocking { settings.flow.first() } }.getOrNull()
-                val token = current?.nasToken?.takeIf { it.isNotBlank() }
                 val factory = DefaultHttpDataSource.Factory()
-                if (token != null) {
-                    factory.setDefaultRequestProperties(
-                        mapOf("Authorization" to "Bearer $token"),
-                    )
+                val headers = buildMap {
+                    current?.nasToken?.takeIf { it.isNotBlank() }
+                        ?.let { put("Authorization", "Bearer $it") }
+                    if (current?.cfAccessConfigured == true) {
+                        put("CF-Access-Client-Id", current.cfAccessClientId)
+                        put("CF-Access-Client-Secret", current.cfAccessClientSecret)
+                    }
                 }
+                if (headers.isNotEmpty()) factory.setDefaultRequestProperties(headers)
                 return factory.createDataSource()
             }
 

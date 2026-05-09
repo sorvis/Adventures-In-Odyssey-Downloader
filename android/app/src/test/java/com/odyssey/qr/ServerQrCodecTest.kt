@@ -12,6 +12,30 @@ class ServerQrCodecTest {
         val decoded = decodeServerQr(payload)
         assertEquals("http://192.168.2.142:8088", decoded?.url)
         assertEquals("abc123", decoded?.token)
+        assertEquals("", decoded?.cfClientId)
+        assertEquals("", decoded?.cfClientSecret)
+    }
+
+    @Test
+    fun `round-trip carries optional Cloudflare Access service tokens when present`() {
+        val payload = encodeServerQr(
+            url = "https://aio.example.com",
+            token = "abc",
+            cfClientId = "id-xyz.access",
+            cfClientSecret = "supersecret",
+        )
+        val decoded = decodeServerQr(payload)
+        assertEquals("id-xyz.access", decoded?.cfClientId)
+        assertEquals("supersecret", decoded?.cfClientSecret)
+    }
+
+    @Test
+    fun `decoding an old LAN-only QR (no cf fields in JSON) still succeeds with blank cf strings`() {
+        val decoded = decodeServerQr("odyssey-server:{\"url\":\"http://lan\",\"token\":\"t\"}")
+        assertEquals("http://lan", decoded?.url)
+        assertEquals("t", decoded?.token)
+        assertEquals("", decoded?.cfClientId)
+        assertEquals("", decoded?.cfClientSecret)
     }
 
     @Test

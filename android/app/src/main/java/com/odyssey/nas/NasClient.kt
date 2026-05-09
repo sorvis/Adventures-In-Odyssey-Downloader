@@ -1,5 +1,6 @@
 package com.odyssey.nas
 
+import com.odyssey.app.Settings
 import com.odyssey.app.SettingsRepo
 import com.odyssey.debug.DebugLogger
 import kotlinx.coroutines.Dispatchers
@@ -65,7 +66,7 @@ class NasClient @Inject constructor(
          * audio bytes for the user-facing progress UI.
          */
         onProgress: ((Long, Long) -> Unit)? = null,
-    ): Result<Unit> = call { base, token ->
+    ): Result<Unit> = call { s ->
         val audioBody = audio.asRequestBody("audio/mpeg".toMediaType())
         val countingAudio = if (onProgress != null) {
             CountingRequestBody(audioBody, audio.length(), onProgress)
@@ -85,10 +86,11 @@ class NasClient @Inject constructor(
             .addFormDataPart("audio", audio.name, countingAudio)
             .build()
 
-        val url = "$base/episodes"
+        val url = "${s.nasUrl}/episodes"
         val req = Request.Builder()
             .url(url)
-            .header("Authorization", "Bearer $token")
+            .header("Authorization", "Bearer ${s.nasToken}")
+            .applyCfAccess(s)
             .post(body)
             .build()
         DebugLogger.i("NasClient", "upload($episodeId) → POST $url (${audio.length()} bytes)")
@@ -126,15 +128,16 @@ class NasClient @Inject constructor(
     }
 
     suspend fun search(q: String?, album: String?, limit: Int = 50, offset: Int = 0):
-            Result<List<NasEpisode>> = call { base, token ->
+            Result<List<NasEpisode>> = call { s ->
         val params = buildList {
             q?.takeIf { it.isNotBlank() }?.let     { add("q=${java.net.URLEncoder.encode(it, "UTF-8")}") }
             album?.takeIf { it.isNotBlank() }?.let { add("album=${java.net.URLEncoder.encode(it, "UTF-8")}") }
             add("limit=$limit"); add("offset=$offset")
         }.joinToString("&")
         val req = Request.Builder()
-            .url("$base/episodes?$params")
-            .header("Authorization", "Bearer $token")
+            .url("${s.nasUrl}/episodes?$params")
+            .header("Authorization", "Bearer ${s.nasToken}")
+            .applyCfAccess(s)
             .build()
         http.newCall(req).execute().use { resp ->
             if (!resp.isSuccessful) error("search HTTP ${resp.code}")
@@ -142,10 +145,11 @@ class NasClient @Inject constructor(
         }
     }
 
-    suspend fun listAlbums(): Result<List<NasAlbum>> = call { base, token ->
+    suspend fun listAlbums(): Result<List<NasAlbum>> = call { s ->
         val req = Request.Builder()
-            .url("$base/albums")
-            .header("Authorization", "Bearer $token")
+            .url("${s.nasUrl}/albums")
+            .header("Authorization", "Bearer ${s.nasToken}")
+            .applyCfAccess(s)
             .build()
         http.newCall(req).execute().use { resp ->
             if (!resp.isSuccessful) error("albums HTTP ${resp.code}")
@@ -163,7 +167,7 @@ class NasClient @Inject constructor(
         ))
     }
 
-    private suspend inline fun <T> call(crossinline block: (String, String) -> T): Result<T> {
+    private suspend inline fun <T> call(crossinline block: (Settings) -> T): Result<T> {
         val s = settings.flow.first()
         if (!s.nasConfigured) return Result.failure(NasNotConfiguredException)
         // Force every NasClient call onto IO. OkHttp's execute() is
@@ -174,10 +178,28 @@ class NasClient @Inject constructor(
         // and a no-op when callers ALSO wrap (nested same-dispatcher
         // withContext is free).
         return withContext(Dispatchers.IO) {
-            runCatching { block(s.nasUrl, s.nasToken) }
+            runCatching { block(s) }
                 .onFailure { DebugLogger.w("NasClient", "call → ${it::class.simpleName}: ${it.message}", it) }
         }
     }
+}
+
+/**
+ * Apply Cloudflare Access service-token headers if the user has
+ * configured them. Required when the backup server is fronted by a
+ * Cloudflare Tunnel + Access app — without these, the edge 403s
+ * every request before it reaches the Bearer-protected FastAPI
+ * handler.
+ *
+ * Top-level so MediaCache's HTTP DataSource factory can reuse the
+ * same logic for ExoPlayer streaming.
+ */
+fun Request.Builder.applyCfAccess(s: Settings): Request.Builder {
+    if (s.cfAccessConfigured) {
+        header("CF-Access-Client-Id", s.cfAccessClientId)
+        header("CF-Access-Client-Secret", s.cfAccessClientSecret)
+    }
+    return this
 }
 
 object NasNotConfiguredException : RuntimeException("NAS not configured")
