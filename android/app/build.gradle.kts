@@ -118,6 +118,13 @@ dependencies {
     // artwork-driven UI). Works against the Compose BOM in use.
     implementation("io.coil-kt:coil-compose:2.7.0")
 
+    // QR codes — ZXing core for generation, journeyapps's CaptureActivity
+    // wrapper for scanning via ScanContract activity-result API. No Google
+    // Play Services dependency, so it works on AOSP/de-Googled builds the
+    // same way the rest of the app does.
+    implementation("com.google.zxing:core:3.5.3")
+    implementation("com.journeyapps:zxing-android-embedded:4.3.0")
+
     debugImplementation("androidx.compose.ui:ui-tooling")
 
     // JVM unit tests

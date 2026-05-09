@@ -1,5 +1,7 @@
 package com.odyssey.ui.screens
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -10,18 +12,25 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTagsAsResourceId
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanOptions
 import com.odyssey.app.SettingsRepo
 import com.odyssey.data.local.EpisodeDao
 import com.odyssey.debug.DebugLogger
 import com.odyssey.download.ArchiveProgressTracker
+import com.odyssey.qr.decodeServerQr
+import com.odyssey.qr.encodeServerQr
+import com.odyssey.qr.renderServerQrBitmap
 import com.odyssey.work.ArchiveBackfill
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -143,6 +152,32 @@ fun SettingsScreen(
     var nasUrl by remember(current.nasUrl) { mutableStateOf(current.nasUrl) }
     var nasToken by remember(current.nasToken) { mutableStateOf(current.nasToken) }
     var retention by remember(current.retentionCount) { mutableStateOf(current.retentionCount.toString()) }
+    var showQrDialog by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+
+    // ScanContract takes us into ZXing's CaptureActivity (no Play
+    // Services), then returns the decoded string here. Camera
+    // permission is requested by the embedded activity itself —
+    // we just react to the result string.
+    val scanLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
+        val raw = result.contents
+        if (raw == null) {
+            // User cancelled — silent, that's fine.
+            return@rememberLauncherForActivityResult
+        }
+        val decoded = decodeServerQr(raw)
+        if (decoded == null) {
+            scope.launch {
+                snackbarHostState.showSnackbar("That QR isn't a backup-server share.")
+            }
+            return@rememberLauncherForActivityResult
+        }
+        nasUrl = decoded.url
+        nasToken = decoded.token
+        scope.launch {
+            snackbarHostState.showSnackbar("Scanned. Tap Save to apply.")
+        }
+    }
 
     Scaffold(
         topBar = { TopAppBar(title = { Text("Settings") }) },
@@ -175,6 +210,47 @@ fun SettingsScreen(
                 onClick = { vm.saveNas(nasUrl, nasToken) },
                 modifier = Modifier.testTag("save-nas"),
             ) { Text("Save NAS settings") }
+
+            // QR share — generate a code from the current fields, or
+            // scan one from another phone to fill the fields. Faster +
+            // less error-prone than retyping a 64-char bearer token on
+            // a second device. Buttons sit side-by-side; Show is
+            // disabled when there's nothing to share.
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                OutlinedButton(
+                    onClick = { showQrDialog = true },
+                    enabled = nasUrl.isNotBlank() && nasToken.isNotBlank(),
+                    modifier = Modifier.testTag("show-server-qr"),
+                ) { Text("Show QR") }
+                OutlinedButton(
+                    onClick = {
+                        val opts = ScanOptions().apply {
+                            setPrompt("Point at a backup-server QR")
+                            setBeepEnabled(false)
+                            setOrientationLocked(false)
+                            setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                        }
+                        scanLauncher.launch(opts)
+                    },
+                    modifier = Modifier.testTag("scan-server-qr"),
+                ) { Text("Scan QR") }
+            }
+            Text(
+                "Share with another phone: tap Show QR here, Scan QR there. " +
+                "Both fields fill in automatically; tap Save on the new phone.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+
+            if (showQrDialog) {
+                ServerQrDialog(
+                    url = nasUrl,
+                    token = nasToken,
+                    onDismiss = { showQrDialog = false },
+                )
+            }
 
             // Push-to-backup status: shows how many local files haven't
             // been backed up yet, plus a manual trigger button. Save
@@ -309,4 +385,45 @@ fun SettingsScreen(
             )
         }
     }
+}
+
+@Composable
+private fun ServerQrDialog(
+    url: String,
+    token: String,
+    onDismiss: () -> Unit,
+) {
+    // Render once per (url, token) — not on every recomposition.
+    // Bitmap is expensive enough (matrix encode + IntArray fill) that
+    // re-rendering it on dismiss-animation frames is wasteful.
+    val payload = remember(url, token) { encodeServerQr(url, token) }
+    val bitmap = remember(payload) { renderServerQrBitmap(payload, sizePx = 720) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Done") }
+        },
+        title = { Text("Share backup-server connection") },
+        text = {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Image(
+                    bitmap = bitmap.asImageBitmap(),
+                    contentDescription = "Backup server QR code",
+                    modifier = Modifier
+                        .size(260.dp)
+                        .testTag("server-qr-image"),
+                )
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    "Point another phone's Scan QR at this code to copy " +
+                    "URL and token over without retyping.",
+                    style = MaterialTheme.typography.bodySmall,
+                    textAlign = TextAlign.Center,
+                )
+            }
+        },
+    )
 }
