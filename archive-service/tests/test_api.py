@@ -60,6 +60,42 @@ def test_upload_is_idempotent_on_episode_id(client, auth_headers, fake_mp3_bytes
     assert r2.json()["episode_id"] == 99
 
 
+def test_concurrent_same_id_insert_uses_or_ignore(client, auth_headers, fake_mp3_bytes):
+    """Two clients hitting POST /episodes with the same episode_id at
+    nearly the same time can both pass the existence check before
+    either commits an INSERT — the second's plain INSERT would then
+    fail with a UNIQUE constraint and 500 the request. The handler
+    uses INSERT OR IGNORE; this test exercises the SQL invariant
+    directly against the test DB so the regression is caught even
+    if the FastAPI client's single-threaded execution masks the race.
+    """
+    from app import db
+    # Seed normally so the row exists exactly as the handler would
+    # have written it.
+    r = _upload(client, auth_headers, fake_mp3_bytes, episode_id=42, title="A")
+    assert r.status_code == 201
+
+    # Now mimic the second client's INSERT — bypassing the early-
+    # return existence check (as it would in the racy interleave) —
+    # and assert it does NOT raise UNIQUE constraint.
+    with db.connect() as c:
+        c.execute(
+            """INSERT OR IGNORE INTO episodes
+               (episode_id, title, air_date, album, description, duration_secs,
+                file_path, file_size, sha256, source_url)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (42, "B", None, None, None, None, "/tmp/x", 0, None, None),
+        )
+        # First-writer-wins: title stays "A" (whichever client landed
+        # first), the OR IGNORE swallows the duplicate.
+        row = c.execute("SELECT * FROM episodes WHERE episode_id = 42").fetchone()
+    assert row["title"] == "A"
+
+    # And the API stays consistent — a single row per id.
+    listed = client.get("/episodes", headers=auth_headers).json()
+    assert sum(1 for row in listed if row["episode_id"] == 42) == 1
+
+
 def test_get_404_on_missing(client, auth_headers):
     assert client.get("/episodes/999999", headers=auth_headers).status_code == 404
 

@@ -74,8 +74,15 @@ async def create_episode(
     sha = sha256_file(out_path)
 
     with db.connect() as c:
+        # INSERT OR IGNORE so two clients racing to upload the same
+        # episode_id don't 500 on the second one — the SELECT below
+        # returns whichever row landed first. The file write that
+        # ran above is overwritten in-place by the second client's
+        # atomic-rename, but since both phones pull the same audio
+        # bytes from the same upstream source it's a benign re-write
+        # (same content, may be wasted bandwidth — acceptable).
         c.execute(
-            """INSERT INTO episodes
+            """INSERT OR IGNORE INTO episodes
                (episode_id, title, air_date, album, description, duration_secs,
                 file_path, file_size, sha256, source_url)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
