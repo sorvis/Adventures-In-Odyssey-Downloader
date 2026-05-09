@@ -305,7 +305,13 @@ private fun AlbumEpisodeRow(
     val playable = row.ownership != EpisodeOwnership.UNAVAILABLE
     val displayName = row.catalogEp.shortName.ifBlank { row.catalogEp.name }
     val local = row.localEpisode as? LocalEpisodeEntity
-    val description = local?.description?.takeIf { it.isNotBlank() }
+    // Catalog description (from the Salesforce-backed AIO API) is the
+    // most reliable source — it's there for every episode the AIO
+    // catalog knows about. Local DB description is a fallback for
+    // catalog-misses (rare) or for episodes the user has on disk that
+    // somehow don't match a catalog row.
+    val description = row.catalogEp.description?.takeIf { it.isNotBlank() }
+        ?: local?.description?.takeIf { it.isNotBlank() }
     // Card only earns its tap when there's something to reveal —
     // description text or any actionable button.
     val canExpand = description != null || playable || (row.backedUp && !onPhone)

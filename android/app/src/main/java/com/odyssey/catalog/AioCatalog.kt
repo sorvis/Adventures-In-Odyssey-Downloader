@@ -53,4 +53,5 @@ data class AioCatalogEpisode(
     val thumbnailMedium: String? = null,
     val mediaLengthMs: Long? = null,
     val subtype: String? = null,
+    val description: String? = null,
 )

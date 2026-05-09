@@ -72,6 +72,7 @@ def slim_album(album: dict) -> dict:
                 "thumbnailMedium": ep.get("thumbnail_medium"),
                 "mediaLengthMs": ep.get("media_length"),
                 "subtype": ep.get("subtype"),
+                "description": ep.get("description"),
             }
             for ep in (album.get("contentList") or [])
             if (ep.get("name") or ep.get("short_name"))  # skip blanks
