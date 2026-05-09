@@ -57,8 +57,17 @@ DATA_HOST_DIR="${ODYSSEY_DATA_HOST_DIR:-./_data}"
 mkdir -p "$DATA_HOST_DIR"
 
 # ---------- 2. compose up ----------
+# Activate the `cloudflare` profile (cloudflared sidecar) only when the
+# operator has actually pasted a tunnel token. Without this, profiles
+# stay opt-in: a fresh install runs the archive service on the LAN
+# only, no surprise public exposure.
+COMPOSE_ARGS=()
+if [[ -n "${CLOUDFLARED_TUNNEL_TOKEN:-}" ]]; then
+  COMPOSE_ARGS+=(--profile cloudflare)
+  step "Cloudflare tunnel token detected — starting cloudflared sidecar"
+fi
 step "Bringing up odyssey-archive"
-$COMPOSE up -d --build
+$COMPOSE "${COMPOSE_ARGS[@]}" up -d --build
 
 # ---------- 3. wait for /healthz ----------
 PORT="${ODYSSEY_PORT:-8088}"

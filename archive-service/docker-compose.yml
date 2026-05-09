@@ -23,3 +23,26 @@ services:
       timeout: 5s
       retries: 3
       start_period: 5s
+
+  # Optional Cloudflare Tunnel sidecar. Lives behind the `cloudflare`
+  # profile so it only starts when scripts/up.sh sees a non-blank
+  # CLOUDFLARED_TUNNEL_TOKEN (i.e. the operator has done the one-time
+  # Cloudflare dashboard setup). Outbound-only — no inbound port
+  # forwarding needed on the home router. LAN + Tailscale access to
+  # `archive` above is unaffected; the tunnel is purely additive.
+  #
+  # Ingress (which public hostname → which container port) is configured
+  # in the Cloudflare Zero Trust dashboard, not here, because the
+  # token-based tunnel format pulls config from the control plane.
+  # Point your tunnel's ingress at `http://archive:8088`.
+  cloudflared:
+    image: cloudflare/cloudflared:2024.10.0
+    container_name: odyssey-cloudflared
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARED_TUNNEL_TOKEN:-}
+    depends_on:
+      - archive
+    profiles:
+      - cloudflare
