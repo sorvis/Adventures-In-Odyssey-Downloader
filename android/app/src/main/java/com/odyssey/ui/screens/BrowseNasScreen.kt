@@ -20,6 +20,11 @@ import androidx.lifecycle.viewModelScope
 import com.odyssey.app.SettingsRepo
 import com.odyssey.data.local.EpisodeDao
 import com.odyssey.data.local.LocalEpisodeEntity
+import com.odyssey.download.ArchiveProgressTracker
+import com.odyssey.download.DownloadProgressTracker
+import com.odyssey.download.RestoreProgressTracker
+import com.odyssey.download.TransferRow
+import com.odyssey.download.mergeTransfers
 import com.odyssey.nas.NasAlbum
 import com.odyssey.nas.NasClient
 import com.odyssey.nas.NasEpisode
@@ -28,6 +33,7 @@ import com.odyssey.work.WorkScheduler
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -41,6 +47,9 @@ class BrowseVm @Inject constructor(
     private val player: PlayerController,
     private val episodes: EpisodeDao,
     private val scheduler: WorkScheduler,
+    downloads: DownloadProgressTracker,
+    uploads: ArchiveProgressTracker,
+    restores: RestoreProgressTracker,
 ) : ViewModel() {
     val configured = settings.flow.map { it.nasConfigured }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
@@ -54,6 +63,34 @@ class BrowseVm @Inject constructor(
     val localFiles = episodes.observeDownloaded()
         .map { list -> list.map { it.episodeId }.toSet() }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptySet())
+
+    /**
+     * In-flight transfers (downloads + uploads + restores + queued
+     * uploads) merged into a single sorted list. Renders as a
+     * collapsible strip at the top of the Sync screen so the user
+     * doesn't need to flip to a separate Transfers tab to watch
+     * progress.
+     *
+     * Same merge logic the standalone TransfersScreen uses — wired
+     * directly here so the screen has its own copy and doesn't have
+     * to share a ViewModel.
+     */
+    val transferRows = combine(
+        downloads.progress,
+        uploads.progress,
+        restores.progress,
+        episodes.observeAll(),
+        episodes.observeUnarchivedDownloaded(),
+    ) { dl, up, rs, eps, unarchived ->
+        val titles = eps.associate { it.episodeId to it.title }
+        mergeTransfers(
+            downloads = dl,
+            uploads = up,
+            titlesById = titles,
+            queuedUploadIds = unarchived.map { it.episodeId }.toSet(),
+            restores = rs,
+        )
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList<TransferRow>())
 
     fun refresh() = viewModelScope.launch {
         nas.listAlbums().fold({ albums.value = it; error.value = null },
@@ -147,39 +184,83 @@ class BrowseVm @Inject constructor(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BrowseNasScreen(
-    onOpenTransfers: () -> Unit = {},
     vm: BrowseVm = hiltViewModel(),
 ) {
     val configured by vm.configured.collectAsState()
+    val transfers by vm.transferRows.collectAsState()
 
     Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("NAS Archive") },
-                actions = {
-                    TextButton(
-                        onClick = onOpenTransfers,
-                        modifier = Modifier.testTag("open-transfers"),
-                    ) { Text("Transfers") }
-                },
-            )
-        },
+        topBar = { TopAppBar(title = { Text("Sync") }) },
     ) { padding ->
-        Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-            if (!configured) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("No NAS configured.", style = MaterialTheme.typography.titleMedium)
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        "The app works fully without one — set up your NAS in Settings " +
-                        "to browse and pull from your archive.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.padding(horizontal = 32.dp),
-                    )
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding),
+        ) {
+            // Active transfers strip — auto-shows when something's
+            // running, hidden when idle. Lives above the browse
+            // surface so a user who just tapped Pin offline (or
+            // whose daily check fired) sees progress without leaving
+            // the tab. The standalone TransfersScreen route is still
+            // wired (Settings deep-link) but this is the primary
+            // entry point now.
+            if (transfers.isNotEmpty()) {
+                TransfersStrip(transfers, modifier = Modifier.testTag("transfers-strip"))
+                HorizontalDivider()
+            }
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                if (!configured) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("No backup server configured.", style = MaterialTheme.typography.titleMedium)
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "The app works fully without one — set up your backup " +
+                            "server in Settings to browse and pull from your archive.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.padding(horizontal = 32.dp),
+                        )
+                    }
+                } else {
+                    BrowseContent(vm)
                 }
-            } else {
-                BrowseContent(vm)
+            }
+        }
+    }
+}
+
+/**
+ * Compact list of in-flight transfer rows. Wraps the same row card
+ * the standalone TransfersScreen uses so the look is identical
+ * across both surfaces. Capped height — long lists scroll inside
+ * the strip rather than pushing the browse surface off-screen.
+ */
+@Composable
+private fun TransfersStrip(
+    rows: List<TransferRow>,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text(
+            "Active transfers",
+            style = MaterialTheme.typography.labelMedium,
+            modifier = Modifier.padding(start = 4.dp),
+        )
+        // Bounded height: 3 rows ≈ 230dp. Beyond that the strip
+        // scrolls so we don't crowd out the search/album list below.
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 230.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            items(rows, key = { "${it.kind}-${it.episodeId}" }) { row ->
+                TransferRowCard(row)
             }
         }
     }

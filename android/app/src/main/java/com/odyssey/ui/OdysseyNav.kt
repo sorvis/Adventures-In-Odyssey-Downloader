@@ -35,8 +35,10 @@ private sealed class Tab(val route: String, val label: String, val icon: android
     data object Recent     : Tab("recent",     "Recent",   Icons.Default.Home)
     data object Albums     : Tab("albums",     "Albums",   Icons.Default.Album)
     data object Downloaded : Tab("downloaded", "Library",  Icons.Default.Download)
-    // "Backup" = self-hosted backup server (formerly NAS tab).
-    data object Backup     : Tab("backup",     "Backup",   Icons.Default.CloudDone)
+    // "Sync" = browse self-hosted backup server + watch in-flight
+    // transfers in one surface (formerly two: "Backup" tab + a
+    // standalone Transfers screen reachable from a top-bar button).
+    data object Backup     : Tab("backup",     "Sync",     Icons.Default.CloudSync)
     data object Settings   : Tab("settings",   "Settings", Icons.Default.Settings)
 }
 
@@ -106,7 +108,7 @@ fun OdysseyNav() {
                 }
                 composable(Tab.Downloaded.route) { DownloadedScreen() }
                 composable(Tab.Backup.route) {
-                    BrowseNasScreen(onOpenTransfers = { nav.navigate(ROUTE_TRANSFERS) })
+                    BrowseNasScreen()
                 }
                 composable(ROUTE_TRANSFERS) {
                     TransfersScreen(onBack = { nav.popBackStack() })

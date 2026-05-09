@@ -127,7 +127,7 @@ fun TransfersScreen(
 }
 
 @Composable
-private fun TransferRowCard(row: TransferRow) {
+internal fun TransferRowCard(row: TransferRow) {
     val tag = buildString {
         append("transfer-row-")
         append(
