@@ -136,7 +136,8 @@ class BrowseVm @Inject constructor(
             }
             episodes.upsert(
                 LocalEpisodeEntity(
-                    episodeId = ep.episode_id,
+                    providerId = "aio",
+                    externalId = ep.episode_id.toString(),
                     title = ep.title,
                     airDate = ep.air_date,
                     description = ep.description,
@@ -147,7 +148,6 @@ class BrowseVm @Inject constructor(
                     durationMs = (ep.duration_secs ?: 0L) * 1000,
                     downloadedAt = null,
                     archivedAt = now,
-                    providerId = "aio",
                 ),
             )
         }

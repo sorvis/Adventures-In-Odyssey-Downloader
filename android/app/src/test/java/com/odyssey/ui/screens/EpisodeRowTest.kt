@@ -418,7 +418,7 @@ class EpisodeRowTest {
         // BACKLOG.md. Until that's wired, headline is title-only.
         composeRule.setContent {
             EpisodeRow(
-                ep = episode().copy(episodeId = 1278383L),
+                ep = episode().copy(externalId = "1278383"),
                 played = false,
                 expanded = false,
                 onToggleExpand = {},
@@ -619,7 +619,8 @@ class EpisodeRowTest {
         filePath: String? = null,
         description: String? = "Some description.",
     ): LocalEpisodeEntity = LocalEpisodeEntity(
-        episodeId = 1L,
+        providerId = "aio",
+        externalId = "1",
         title = "Some Episode",
         airDate = "2026-05-03",
         description = description,

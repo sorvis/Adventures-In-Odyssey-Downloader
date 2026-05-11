@@ -122,7 +122,8 @@ class ArchiveBackfillTest {
     // ---- helpers ----------------------------------------------------
 
     private fun ep(id: Long, filePath: String?, archivedAt: Long?) = LocalEpisodeEntity(
-        episodeId = id,
+        providerId = "aio",
+        externalId = id.toString(),
         title = "ep $id",
         airDate = null,
         description = null,
@@ -151,8 +152,12 @@ class ArchiveBackfillTest {
         }
         override fun observeAll(): Flow<List<LocalEpisodeEntity>> = flowOf(rows)
         override fun observeDownloaded(): Flow<List<LocalEpisodeEntity>> = flowOf(rows)
-        override suspend fun byId(id: Long): LocalEpisodeEntity? = rows.firstOrNull { it.episodeId == id }
+        override suspend fun byId(id: Long): LocalEpisodeEntity? =
+            rows.firstOrNull { it.providerId == "aio" && it.externalId == id.toString() }
+        override suspend fun byKey(providerId: String, externalId: String): LocalEpisodeEntity? =
+            rows.firstOrNull { it.providerId == providerId && it.externalId == externalId }
         override suspend fun existingIds(ids: List<Long>): List<Long> = emptyList()
+        override suspend fun existingKeys(providerId: String, externalIds: List<String>): List<String> = emptyList()
         override suspend fun upsert(e: LocalEpisodeEntity) {}
         override suspend fun markDownloaded(id: Long, path: String, size: Long, ts: Long) {}
         override suspend fun markUndownloaded(id: Long) {}

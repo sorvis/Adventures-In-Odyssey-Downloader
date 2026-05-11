@@ -5,9 +5,25 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.flow.Flow
 
-@Entity(tableName = "local_episodes")
+@Entity(
+    tableName = "local_episodes",
+    primaryKeys = ["providerId", "externalId"],
+)
 data class LocalEpisodeEntity(
-    @PrimaryKey val episodeId: Long,
+    /**
+     * Which ShowProvider this episode came from — "aio" today,
+     * "ysh" once that lands. Part of the composite PK alongside
+     * externalId so sku_id-shaped YSH ids can never collide with AIO
+     * broadcast numbers.
+     */
+    val providerId: String,
+    /**
+     * Stable id within the provider — oneplace CMS id stringified
+     * for AIO, sku_id stringified for YSH (sometimes prefixed,
+     * e.g. "ysh-sku-1958"). Stored as TEXT so non-numeric ids
+     * (GUIDs from future RSS feeds) work out of the box.
+     */
+    val externalId: String,
     val title: String,
     val airDate: String?,
     val description: String?,
@@ -20,14 +36,6 @@ data class LocalEpisodeEntity(
     val archivedAt: Long?,        // epoch ms; null while not pushed to NAS
     val imageUrl: String? = null, // remote artwork URL; loaded by Coil in the row
     /**
-     * Which ShowProvider this episode came from — "aio" today, "ysh"
-     * eventually. Defaulted so old rows backfill cleanly during the
-     * v2→v3 migration. The PK stays `episodeId`; we'll move to a
-     * composite (providerId, externalId) PK once a second provider
-     * actually lands.
-     */
-    val providerId: String = "aio",
-    /**
      * Album the episode belongs to. AIO uses the existing
      * AioCatalogRepo for album organization so this stays null for
      * AIO rows; YSH always populates these three fields from the
@@ -36,7 +44,22 @@ data class LocalEpisodeEntity(
     val albumName: String? = null,
     val albumImageUrl: String? = null,
     val albumTrackOrder: Int? = null,
-)
+) {
+    /**
+     * AIO-only back-compat accessor for code paths still keyed on the
+     * legacy `Long` episode id. AIO externalIds are always numeric
+     * (oneplace CMS ids or broadcast numbers), so `toLong()` is safe
+     * for any row this property is called on. YSH rows use non-numeric
+     * externalIds (`"ysh-sku-1958"`); calling this on a YSH row throws,
+     * which is intended — those code paths need to switch to
+     * externalId-based access as they get YSH-aware.
+     *
+     * Getter-only — Room only persists backing fields, so this is
+     * naturally non-column without needing `@Ignore`.
+     */
+    val episodeId: Long
+        get() = externalId.toLong()
+}
 
 /**
  * One row per oneplace-YSH episode whose title couldn't be matched
@@ -58,33 +81,59 @@ data class YshUnmatchedTitleEntity(
     val attemptCount: Int,         // bumped on each daily-check re-encounter
 )
 
-@Entity(tableName = "playback_positions")
+@Entity(
+    tableName = "playback_positions",
+    primaryKeys = ["providerId", "externalId"],
+)
 data class PlaybackPositionEntity(
-    @PrimaryKey val episodeId: Long,
+    val providerId: String,
+    val externalId: String,
     val positionMs: Long,
     val durationMs: Long,
     val updatedAt: Long,
     val completedAt: Long?,       // set when ≥95% reached
-)
+) {
+    /** AIO-only back-compat accessor, mirrors LocalEpisodeEntity.episodeId. */
+    val episodeId: Long
+        get() = externalId.toLong()
+}
 
 @Dao
 interface EpisodeDao {
-    @Query("SELECT * FROM local_episodes ORDER BY airDate DESC, episodeId DESC")
+    @Query("SELECT * FROM local_episodes ORDER BY airDate DESC, externalId DESC")
     fun observeAll(): Flow<List<LocalEpisodeEntity>>
 
-    @Query("SELECT * FROM local_episodes WHERE filePath IS NOT NULL ORDER BY airDate DESC, episodeId DESC")
+    @Query("SELECT * FROM local_episodes WHERE filePath IS NOT NULL ORDER BY airDate DESC, externalId DESC")
     fun observeDownloaded(): Flow<List<LocalEpisodeEntity>>
 
-    @Query("SELECT * FROM local_episodes WHERE episodeId = :id")
+    /**
+     * AIO-only legacy lookup. Existing callers pass the oneplace CMS
+     * id (or broadcast number) as Long — this back-compat method
+     * stringifies it and filters on providerId='aio' so AIO row
+     * resolution behaves exactly as before. New YSH-aware code should
+     * call `byKey(providerId, externalId)` instead.
+     */
+    @Query("SELECT * FROM local_episodes WHERE externalId = :id AND providerId = 'aio'")
     suspend fun byId(id: Long): LocalEpisodeEntity?
 
-    @Query("SELECT episodeId FROM local_episodes WHERE episodeId IN (:ids)")
+    @Query("SELECT * FROM local_episodes WHERE providerId = :providerId AND externalId = :externalId")
+    suspend fun byKey(providerId: String, externalId: String): LocalEpisodeEntity?
+
+    /**
+     * AIO-only legacy existence-check, used by DailyCheckWorker to
+     * skip already-ingested rows. YSH equivalent is
+     * `existingKeys(providerId, externalIds)`.
+     */
+    @Query("SELECT CAST(externalId AS INTEGER) FROM local_episodes WHERE externalId IN (:ids) AND providerId = 'aio'")
     suspend fun existingIds(ids: List<Long>): List<Long>
+
+    @Query("SELECT externalId FROM local_episodes WHERE providerId = :providerId AND externalId IN (:externalIds)")
+    suspend fun existingKeys(providerId: String, externalIds: List<String>): List<String>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(e: LocalEpisodeEntity)
 
-    @Query("UPDATE local_episodes SET filePath = :path, fileSize = :size, downloadedAt = :ts WHERE episodeId = :id")
+    @Query("UPDATE local_episodes SET filePath = :path, fileSize = :size, downloadedAt = :ts WHERE externalId = :id AND providerId = 'aio'")
     suspend fun markDownloaded(id: Long, path: String, size: Long, ts: Long)
 
     /**
@@ -92,10 +141,10 @@ interface EpisodeDao {
      * the row falls back to streamable. Used by PlaybackRecovery when a
      * downloaded file fails ExoPlayer's parser.
      */
-    @Query("UPDATE local_episodes SET filePath = NULL, fileSize = 0, downloadedAt = NULL WHERE episodeId = :id")
+    @Query("UPDATE local_episodes SET filePath = NULL, fileSize = 0, downloadedAt = NULL WHERE externalId = :id AND providerId = 'aio'")
     suspend fun markUndownloaded(id: Long)
 
-    @Query("UPDATE local_episodes SET archivedAt = :ts WHERE episodeId = :id")
+    @Query("UPDATE local_episodes SET archivedAt = :ts WHERE externalId = :id AND providerId = 'aio'")
     suspend fun markArchived(id: Long, ts: Long)
 
     /**
@@ -109,12 +158,12 @@ interface EpisodeDao {
     @Query("UPDATE local_episodes SET archivedAt = NULL WHERE filePath IS NOT NULL")
     suspend fun clearAllArchived(): Int
 
-    @Query("DELETE FROM local_episodes WHERE episodeId = :id")
+    @Query("DELETE FROM local_episodes WHERE externalId = :id AND providerId = 'aio'")
     suspend fun delete(id: Long)
 
     @Query("""SELECT * FROM local_episodes
               WHERE filePath IS NOT NULL
-              ORDER BY airDate ASC, episodeId ASC""")
+              ORDER BY airDate ASC, externalId ASC""")
     suspend fun downloadedOldestFirst(): List<LocalEpisodeEntity>
 
     /**
@@ -130,7 +179,7 @@ interface EpisodeDao {
     @Query("""SELECT * FROM local_episodes
               WHERE filePath IS NOT NULL
                 AND archivedAt IS NULL
-              ORDER BY airDate ASC, episodeId ASC""")
+              ORDER BY airDate ASC, externalId ASC""")
     fun observeUnarchivedDownloaded(): Flow<List<LocalEpisodeEntity>>
 
     @Query("""SELECT * FROM local_episodes
@@ -141,13 +190,25 @@ interface EpisodeDao {
 
 @Dao
 interface PlaybackDao {
-    @Query("SELECT * FROM playback_positions WHERE episodeId = :id")
+    /**
+     * AIO-only legacy lookup keyed by oneplace CMS id (Long). YSH-aware
+     * callers should use `getByKey(providerId, externalId)`.
+     */
+    @Query("SELECT * FROM playback_positions WHERE externalId = :id AND providerId = 'aio'")
     suspend fun get(id: Long): PlaybackPositionEntity?
+
+    @Query("SELECT * FROM playback_positions WHERE providerId = :providerId AND externalId = :externalId")
+    suspend fun getByKey(providerId: String, externalId: String): PlaybackPositionEntity?
 
     @Query("SELECT * FROM playback_positions ORDER BY updatedAt DESC LIMIT 1")
     fun observeMostRecent(): Flow<PlaybackPositionEntity?>
 
-    @Query("SELECT episodeId FROM playback_positions WHERE completedAt IS NOT NULL")
+    /**
+     * Completed-ids stream. AIO-only legacy shape — coerces externalId
+     * to Long (always works for AIO; YSH externalIds aren't numeric and
+     * are filtered out by the WHERE clause).
+     */
+    @Query("SELECT CAST(externalId AS INTEGER) FROM playback_positions WHERE completedAt IS NOT NULL AND providerId = 'aio'")
     fun observeCompletedIds(): Flow<List<Long>>
 
     /** Used by the row UI to show "X min left" on episodes the user
@@ -183,7 +244,7 @@ interface YshUnmatchedDao {
         PlaybackPositionEntity::class,
         YshUnmatchedTitleEntity::class,
     ],
-    version = 4,
+    version = 5,
     exportSchema = false,
 )
 abstract class OdysseyDb : RoomDatabase() {
@@ -245,5 +306,98 @@ val MIGRATION_3_4: Migration = object : Migration(3, 4) {
             )
             """.trimIndent()
         )
+    }
+}
+
+/**
+ * v4 → v5: composite primary key on `(providerId, externalId)` for
+ * `local_episodes` and `playback_positions`. Until v4 the PK was
+ * `episodeId: Long` which works for AIO (one provider, ids globally
+ * unique) but breaks the moment a second provider's externalId
+ * collides with an AIO broadcast number. YSH sku_ids land in the
+ * same 2000-range as AIO broadcast numbers — this migration unblocks
+ * that.
+ *
+ * Strategy: rename the existing tables, create the v5 shapes, copy
+ * rows with `externalId = CAST(episodeId AS TEXT)` (every v4 row is
+ * either AIO with a numeric oneplace CMS id, or AIO with a broadcast
+ * number — both round-trip through CAST), drop the v4 tables. Row
+ * counts and contents are preserved exactly.
+ */
+val MIGRATION_4_5: Migration = object : Migration(4, 5) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        // --- local_episodes ---------------------------------------------
+        db.execSQL("ALTER TABLE local_episodes RENAME TO local_episodes_v4")
+        db.execSQL(
+            """
+            CREATE TABLE local_episodes (
+                providerId       TEXT    NOT NULL,
+                externalId       TEXT    NOT NULL,
+                title            TEXT    NOT NULL,
+                airDate          TEXT,
+                description      TEXT,
+                sourceUrl        TEXT    NOT NULL,
+                downloadUrl      TEXT    NOT NULL,
+                filePath         TEXT,
+                fileSize         INTEGER NOT NULL,
+                durationMs       INTEGER NOT NULL,
+                downloadedAt     INTEGER,
+                archivedAt       INTEGER,
+                imageUrl         TEXT,
+                albumName        TEXT,
+                albumImageUrl    TEXT,
+                albumTrackOrder  INTEGER,
+                PRIMARY KEY (providerId, externalId)
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            INSERT INTO local_episodes (
+                providerId, externalId, title, airDate, description,
+                sourceUrl, downloadUrl, filePath, fileSize, durationMs,
+                downloadedAt, archivedAt, imageUrl, albumName,
+                albumImageUrl, albumTrackOrder
+            )
+            SELECT
+                providerId,
+                CAST(episodeId AS TEXT),
+                title, airDate, description, sourceUrl, downloadUrl,
+                filePath, fileSize, durationMs, downloadedAt, archivedAt,
+                imageUrl, albumName, albumImageUrl, albumTrackOrder
+            FROM local_episodes_v4
+            """.trimIndent()
+        )
+        db.execSQL("DROP TABLE local_episodes_v4")
+
+        // --- playback_positions -----------------------------------------
+        db.execSQL("ALTER TABLE playback_positions RENAME TO playback_positions_v4")
+        db.execSQL(
+            """
+            CREATE TABLE playback_positions (
+                providerId   TEXT    NOT NULL,
+                externalId   TEXT    NOT NULL,
+                positionMs   INTEGER NOT NULL,
+                durationMs   INTEGER NOT NULL,
+                updatedAt    INTEGER NOT NULL,
+                completedAt  INTEGER,
+                PRIMARY KEY (providerId, externalId)
+            )
+            """.trimIndent()
+        )
+        // Every v4 playback_positions row is AIO by definition — there
+        // was no provider column. Backfill providerId='aio' for all.
+        db.execSQL(
+            """
+            INSERT INTO playback_positions (
+                providerId, externalId, positionMs, durationMs,
+                updatedAt, completedAt
+            )
+            SELECT 'aio', CAST(episodeId AS TEXT), positionMs, durationMs,
+                   updatedAt, completedAt
+            FROM playback_positions_v4
+            """.trimIndent()
+        )
+        db.execSQL("DROP TABLE playback_positions_v4")
     }
 }

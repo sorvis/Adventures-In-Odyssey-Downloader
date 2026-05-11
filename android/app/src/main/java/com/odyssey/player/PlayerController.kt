@@ -341,7 +341,11 @@ class PlayerController @Inject constructor(
         val complete = if (shouldMarkComplete(pos, dur)) System.currentTimeMillis() else null
         CoroutineScope(Dispatchers.IO).launch {
             runCatching {
-                playback.upsert(PlaybackPositionEntity(id, pos, dur, System.currentTimeMillis(), complete))
+                // PlayerController is AIO-only today — the mediaId parsing
+                // assumes a bare Long. YSH playback paths land alongside
+                // the show-switcher UI in step 9, and at that point we
+                // switch to decoded `(providerId, externalId)` keys.
+                playback.upsert(PlaybackPositionEntity("aio", id.toString(), pos, dur, System.currentTimeMillis(), complete))
             }.onFailure { DebugLogger.w("PlayerController", "persist — playback.upsert failed", it) }
         }
     }
@@ -374,7 +378,8 @@ class PlayerController @Inject constructor(
             runCatching {
                 playback.upsert(
                     PlaybackPositionEntity(
-                        snap.episodeId, snap.positionMs, snap.durationMs,
+                        "aio", snap.episodeId.toString(),
+                        snap.positionMs, snap.durationMs,
                         System.currentTimeMillis(), complete,
                     ),
                 )

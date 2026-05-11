@@ -18,21 +18,21 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * Verifies MIGRATION_3_4 — the additive prep for YSH support. v3
- * shipped with a single-column providerId on local_episodes; v4 adds
- * three nullable album columns and a new ysh_unmatched_titles table.
- * Existing rows must come through unmodified except for picking up
- * the three new columns as null.
+ * Verifies the v3 → v4 → v5 migration chain. v3 shipped with a
+ * single-column providerId on local_episodes; v4 adds three nullable
+ * album columns and creates `ysh_unmatched_titles`; v5 rewrites both
+ * `local_episodes` and `playback_positions` to use a composite PK on
+ * (providerId, externalId) instead of the single Long `episodeId`.
  *
  * Approach: hand-build a v3 schema via SupportSQLiteOpenHelper, seed
- * a sample AIO row, close, then open the DB through Room at v4 with
- * MIGRATION_3_4 registered. Read back via the DAOs and confirm:
- *   - the AIO row survived and its album fields are null
+ * a sample AIO row, close, then open the DB through Room at v5 with
+ * all migrations registered. Room runs 3→4 then 4→5 in sequence.
+ * Read back via the DAOs and confirm:
+ *   - the AIO row survived with externalId = the stringified episodeId
  *   - the new ysh_unmatched_titles table exists and supports insert
  *     + observeCount via the DAO
- *
- * The composite-PK / type-ripple work happens in v4→v5; nothing here
- * touches the existing episodeId: Long PK.
+ *   - the new composite-PK accessors round-trip a YSH row with the
+ *     three album columns populated.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(application = Application::class, sdk = [33])
@@ -88,11 +88,15 @@ class OdysseyDbMigration3to4Test {
         // After migration, inserting a row with the new album fields
         // populated must read back identically — proves the columns
         // are wired through Room's entity binding, not just SQLite.
+        // YSH externalIds are non-numeric ("ysh-sku-1958") so we have
+        // to use byKey(providerId, externalId) — the legacy byId(Long)
+        // shim is intentionally AIO-only.
         seedV3Database()
         val db = openV4()
 
         val yshRow = LocalEpisodeEntity(
-            episodeId = 1958L,             // YSH sku_id
+            providerId = "ysh",
+            externalId = "ysh-sku-1958",
             title = "Madeleine's Courage",
             airDate = "2021-06-01",
             description = "Madeleine defends the fort.",
@@ -104,7 +108,6 @@ class OdysseyDbMigration3to4Test {
             downloadedAt = null,
             archivedAt = null,
             imageUrl = null,
-            providerId = "ysh",
             albumName = "Exciting Events - Volume 11",
             albumImageUrl = "https://your-story-hour.s3.amazonaws.com/.../EE11.jpg",
             albumTrackOrder = 2,
@@ -112,13 +115,35 @@ class OdysseyDbMigration3to4Test {
 
         runBlocking {
             db.episodes().upsert(yshRow)
-            val readBack = db.episodes().byId(1958L)
+            val readBack = db.episodes().byKey("ysh", "ysh-sku-1958")
             assertNotNull(readBack)
             assertEquals("Exciting Events - Volume 11", readBack!!.albumName)
             assertEquals(2, readBack.albumTrackOrder)
             assertEquals("ysh", readBack.providerId)
+            assertEquals("ysh-sku-1958", readBack.externalId)
+            // Legacy byId(1958) must NOT return this YSH row — it
+            // filters on providerId='aio'.
+            assertNull(db.episodes().byId(1958L))
         }
 
+        db.close()
+    }
+
+    @Test
+    fun aioRowSurvivesV5_PKChange_with_externalIdStringifiedFromLegacyEpisodeId() {
+        seedV3Database()
+        val db = openV4()
+        runBlocking {
+            // Legacy AIO byId(Long) still works as a back-compat shim.
+            val row = db.episodes().byId(1278294L)
+            assertNotNull("AIO row should survive composite-PK migration", row)
+            // And the new composite key access returns the same row.
+            val byKey = db.episodes().byKey("aio", "1278294")
+            assertNotNull(byKey)
+            assertEquals(row!!.title, byKey!!.title)
+            // externalId is the stringified legacy episodeId.
+            assertEquals("1278294", byKey.externalId)
+        }
         db.close()
     }
 
@@ -128,7 +153,7 @@ class OdysseyDbMigration3to4Test {
 
     private fun openV4(): OdysseyDb =
         Room.databaseBuilder(ctx, OdysseyDb::class.java, dbName)
-            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
             .allowMainThreadQueries()
             .build()
 

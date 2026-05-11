@@ -93,7 +93,8 @@ class DownloadedVmTest {
 
     private fun makeEp(filePath: String? = null, downloadUrl: String = "https://cdn.example/x.mp3") =
         LocalEpisodeEntity(
-            episodeId = 1L,
+            providerId = "aio",
+            externalId = "1",
             title = "Some Episode",
             airDate = "2026-05-08",
             description = null,
@@ -139,7 +140,9 @@ class DownloadedVmTest {
         override fun observeAll(): Flow<List<LocalEpisodeEntity>> = flowOf(emptyList())
         override fun observeDownloaded(): Flow<List<LocalEpisodeEntity>> = flowOf(emptyList())
         override suspend fun byId(id: Long): LocalEpisodeEntity? = null
+        override suspend fun byKey(providerId: String, externalId: String): LocalEpisodeEntity? = null
         override suspend fun existingIds(ids: List<Long>): List<Long> = emptyList()
+        override suspend fun existingKeys(providerId: String, externalIds: List<String>): List<String> = emptyList()
         override suspend fun upsert(e: LocalEpisodeEntity) {}
         override suspend fun markDownloaded(id: Long, path: String, size: Long, ts: Long) {}
         override suspend fun markUndownloaded(id: Long) {}
@@ -153,6 +156,7 @@ class DownloadedVmTest {
 
     private class NoopPlaybackDao : PlaybackDao {
         override suspend fun get(id: Long): PlaybackPositionEntity? = null
+        override suspend fun getByKey(providerId: String, externalId: String): PlaybackPositionEntity? = null
         override fun observeMostRecent(): Flow<PlaybackPositionEntity?> = flowOf(null)
         override fun observeCompletedIds(): Flow<List<Long>> = flowOf(emptyList())
         override fun observeAllPositions(): Flow<List<PlaybackPositionEntity>> = flowOf(emptyList())

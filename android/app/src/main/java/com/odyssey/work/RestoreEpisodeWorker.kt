@@ -83,7 +83,8 @@ class RestoreEpisodeWorker @AssistedInject constructor(
             progress.clear(id)
             val now = System.currentTimeMillis()
             val row = (existing ?: LocalEpisodeEntity(
-                episodeId = id,
+                providerId = "aio",
+                externalId = id.toString(),
                 title = title.ifBlank { "Episode $id" },
                 airDate = airDate,
                 description = description,
@@ -98,7 +99,6 @@ class RestoreEpisodeWorker @AssistedInject constructor(
                 durationMs = durationSecs * 1000,
                 downloadedAt = null,
                 archivedAt = null,
-                providerId = "aio",
             )).copy(
                 title = (existing?.title ?: title).ifBlank { "Episode $id" },
                 filePath = out.absolutePath,

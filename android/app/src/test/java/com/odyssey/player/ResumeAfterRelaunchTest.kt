@@ -59,7 +59,8 @@ class ResumeAfterRelaunchTest {
         db1.episodes().upsert(seedEpisode(episodeId))
         db1.playback().upsert(
             PlaybackPositionEntity(
-                episodeId = episodeId,
+                providerId = "aio",
+                externalId = episodeId.toString(),
                 positionMs = resumeAtMs,
                 durationMs = durationMs,
                 updatedAt = 1L,
@@ -129,11 +130,11 @@ class ResumeAfterRelaunchTest {
         val db1 = openDb()
         db1.episodes().upsert(seedEpisode(episodeId))
         db1.playback().upsert(
-            PlaybackPositionEntity(episodeId, 5 * 60_000L, 25 * 60_000L, 1L, null),
+            PlaybackPositionEntity("aio", episodeId.toString(), 5 * 60_000L, 25 * 60_000L, 1L, null),
         )
         // 5-second save loop fires again, with the up-to-date offset.
         db1.playback().upsert(
-            PlaybackPositionEntity(episodeId, mostRecentMs, 25 * 60_000L, 2L, null),
+            PlaybackPositionEntity("aio", episodeId.toString(), mostRecentMs, 25 * 60_000L, 2L, null),
         )
         db1.close()
 
@@ -152,7 +153,8 @@ class ResumeAfterRelaunchTest {
             .build()
 
     private fun seedEpisode(episodeId: Long) = LocalEpisodeEntity(
-        episodeId = episodeId,
+        providerId = "aio",
+        externalId = episodeId.toString(),
         title = "War of the Words",
         airDate = "May 8, 2026",
         description = null,

@@ -157,7 +157,8 @@ class DailyCheckWorkerTest {
         // dedupe still works.
         episodes.upsert(
             com.odyssey.data.local.LocalEpisodeEntity(
-                episodeId = 265L,
+                providerId = "aio",
+                externalId = "265",
                 title = "War of the Words",
                 airDate = "May 8, 2026",
                 description = null,
@@ -212,13 +213,19 @@ class DailyCheckWorkerTest {
         assertEquals(7, rows.count { it.providerId == "aio" })
         assertEquals(2, rows.count { it.providerId == "fake" })
 
-        // Both fake rows enqueued for download just like AIO ones.
+        // Only AIO rows enqueue downloads in the current transitional
+        // state — DownloadEnqueuer is still keyed by Long episodeId
+        // (AIO-only). Non-AIO rows land in the DB metadata but won't
+        // auto-download until the enqueuer becomes provider-aware
+        // (planned for the multi-show worker rewrite). The fake
+        // provider's externalIds are non-AIO numeric strings, so they
+        // should NOT appear in the enqueue calls.
         val fakeIds = setOf(9000000001L, 9000000002L)
         assertTrue(
-            "fake provider episodes should also be enqueued",
-            enqueuer.calls.any { it.episodeId in fakeIds },
+            "fake provider episodes should NOT be enqueued yet (DownloadEnqueuer is AIO-only)",
+            enqueuer.calls.none { it.episodeId in fakeIds },
         )
-        assertEquals(9, enqueuer.calls.size)
+        assertEquals("only the 7 AIO episodes should be enqueued", 7, enqueuer.calls.size)
 
         // lastSeen is updated to the AIO newest only (fake provider's
         // state isn't tracked in SettingsRepo in H-lite). Value is

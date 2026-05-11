@@ -53,15 +53,23 @@ class DailyCheckWorker @AssistedInject constructor(
             return@runCatching Result.success()
         }
 
-        val episodeIds = fetched.map { (_, ep) -> ep.externalId.toLong() }
-        val existing = episodes.existingIds(episodeIds).toSet()
+        // Dedup by (providerId, externalId). Existing AIO rows are
+        // checked via the AIO-only existingIds(Long) shim today; multi-
+        // provider dedup will land alongside the step 3 worker rewrite.
+        // For now, build the existing set with the AIO-flavored lookup
+        // and accept that non-AIO providers may re-upsert (REPLACE
+        // semantics make that a no-op when keys match).
+        val aioIds = fetched
+            .filter { (p, _) -> p.id == AioOneplaceProvider.ID }
+            .map { (_, ep) -> ep.externalId.toLong() }
+        val existing = if (aioIds.isNotEmpty()) episodes.existingIds(aioIds).toSet() else emptySet()
 
         for ((provider, ep) in fetched) {
-            val episodeId = ep.externalId.toLong()
-            if (episodeId in existing) continue
+            if (provider.id == AioOneplaceProvider.ID && ep.externalId.toLong() in existing) continue
             episodes.upsert(
                 LocalEpisodeEntity(
-                    episodeId    = episodeId,
+                    providerId   = provider.id,
+                    externalId   = ep.externalId,
                     title        = ep.title,
                     airDate      = ep.airDate,
                     description  = ep.description,
@@ -73,10 +81,18 @@ class DailyCheckWorker @AssistedInject constructor(
                     downloadedAt = null,
                     archivedAt   = null,
                     imageUrl     = ep.imageUrl,
-                    providerId   = provider.id,
                 )
             )
-            scheduler.enqueueDownload(episodeId, allowMetered = s.allowMeteredDownloads)
+            // DownloadEnqueuer is still keyed by Long episodeId (AIO-only
+            // path). For AIO providers the externalId IS the Long id;
+            // for non-AIO providers the download enqueue path needs the
+            // step-3 rewrite. Skip enqueue for non-AIO until then —
+            // YshFreeStreamProvider and YshOneplaceProvider rows land in
+            // the DB but won't auto-download until DownloadEnqueuer
+            // becomes provider-aware.
+            if (provider.id == AioOneplaceProvider.ID) {
+                scheduler.enqueueDownload(ep.externalId.toLong(), allowMetered = s.allowMeteredDownloads)
+            }
         }
 
         // lastSeen is AIO-only until per-provider state lands. The first
