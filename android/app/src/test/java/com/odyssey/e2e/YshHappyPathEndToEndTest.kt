@@ -195,6 +195,88 @@ class YshHappyPathEndToEndTest {
     }
 
     @Test
+    fun refresh_does_NOT_clobber_an_already_downloaded_ysh_row() = runBlocking {
+        // Regression for the v0.1.38 user-reported bug: "downloads
+        // tries with progress but pressing refresh seems to make it
+        // go away". DailyCheckWorker's existing-row dedup only
+        // covered AIO; YSH rows got re-upserted on every daily check,
+        // wiping filePath / fileSize / downloadedAt.
+        //
+        // Seed a YSH row that's already been downloaded, then run
+        // the daily check twice (the second pass simulates the user
+        // hitting Refresh). The downloaded fields must survive.
+        episodes.upsert(
+            com.odyssey.data.local.LocalEpisodeEntity(
+                providerId   = "ysh",
+                externalId   = "ysh-sku-1958",
+                title        = "Madeleine's Courage",
+                airDate      = "2021-06-01",
+                description  = "...",
+                sourceUrl    = "https://yourstoryhour.org/ee-vol-11",
+                downloadUrl  = "https://s3/EE-11-02.mp3",
+                filePath     = "/data/odyssey/episodes/ysh/ysh-sku-1958.mp3",
+                fileSize     = 1_234_567L,
+                durationMs   = 30 * 60_000L,
+                downloadedAt = 1L,
+                archivedAt   = null,
+                albumName    = "Exciting Events - Volume 11",
+                albumImageUrl = "https://s3/EE11.jpg",
+                albumTrackOrder = 2,
+            ),
+        )
+
+        // YshFreeStreamProvider that returns a stub list including
+        // the same sku — every refresh would normally re-upsert.
+        val fakeProvider = object : ShowProvider {
+            override val id = "ysh"
+            override val displayName = "Your Story Hour"
+            override val artistName = "Your Story Hour"
+            override suspend fun newSince(
+                lastSeenExternalId: String?,
+                maxFetch: Int,
+            ) = listOf(
+                com.odyssey.show.ProviderEpisode(
+                    externalId = "ysh-sku-1958",
+                    title = "Madeleine's Courage",
+                    airDate = "2021-06-01",
+                    description = "...",
+                    downloadUrl = "https://s3/EE-11-02.mp3",
+                    sourceUrl = "https://yourstoryhour.org/ee-vol-11",
+                    durationSeconds = 1800,
+                    imageUrl = null,
+                ),
+            )
+        }
+        settings.setProviderEnabled("ysh", true)
+
+        // First refresh — row already exists, dedup skips upsert.
+        buildWorker(setOf(fakeProvider)).doWork()
+        val rowAfter1 = episodes.byKey("ysh", "ysh-sku-1958")!!
+        assertNotNull(rowAfter1.filePath)
+        assertEquals(1_234_567L, rowAfter1.fileSize)
+
+        // Second refresh (simulates user pressing Refresh) — must
+        // still skip the upsert.
+        buildWorker(setOf(fakeProvider)).doWork()
+        val rowAfter2 = episodes.byKey("ysh", "ysh-sku-1958")!!
+        assertNotNull(
+            "downloaded file path must survive a daily-check refresh",
+            rowAfter2.filePath,
+        )
+        assertEquals(
+            "downloaded file size must survive a daily-check refresh",
+            1_234_567L,
+            rowAfter2.fileSize,
+        )
+        // Album metadata also intact.
+        assertEquals("Exciting Events - Volume 11", rowAfter2.albumName)
+        assertEquals(2, rowAfter2.albumTrackOrder)
+        // And the row never re-enqueued for download since the dedup
+        // covered it.
+        assertEquals(0, enqueuer.calls.size)
+    }
+
+    @Test
     fun switching_active_show_lets_LazyColumn_key_extractor_run_on_ysh_rows_without_throwing() =
         runBlocking {
             // Seed the DB directly with one AIO + one YSH row — we

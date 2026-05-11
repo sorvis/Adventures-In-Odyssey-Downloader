@@ -59,19 +59,22 @@ class DailyCheckWorker @AssistedInject constructor(
             return@runCatching Result.success()
         }
 
-        // Dedup by (providerId, externalId). Existing AIO rows are
-        // checked via the AIO-only existingIds(Long) shim today; multi-
-        // provider dedup will land alongside the step 3 worker rewrite.
-        // For now, build the existing set with the AIO-flavored lookup
-        // and accept that non-AIO providers may re-upsert (REPLACE
-        // semantics make that a no-op when keys match).
-        val aioIds = fetched
-            .filter { (p, _) -> p.id == AioOneplaceProvider.ID }
-            .map { (_, ep) -> ep.externalId.toLong() }
-        val existing = if (aioIds.isNotEmpty()) episodes.existingIds(aioIds).toSet() else emptySet()
+        // Per-provider dedup by (providerId, externalId). Critically,
+        // this MUST cover every provider — non-AIO providers used to
+        // bypass the dedup, which meant every daily check re-upserted
+        // YSH rows with filePath=null/fileSize=0/downloadedAt=null,
+        // wiping out completed (or in-flight) download metadata. User
+        // bug report (v0.1.38): "downloads disappear on refresh."
+        val perProviderExternalIds = fetched.groupBy({ it.first.id }, { it.second.externalId })
+        val existing: Set<Pair<String, String>> = buildSet {
+            for ((providerId, ids) in perProviderExternalIds) {
+                if (ids.isEmpty()) continue
+                episodes.existingKeys(providerId, ids).forEach { add(providerId to it) }
+            }
+        }
 
         for ((provider, ep) in fetched) {
-            if (provider.id == AioOneplaceProvider.ID && ep.externalId.toLong() in existing) continue
+            if ((provider.id to ep.externalId) in existing) continue
             episodes.upsert(
                 LocalEpisodeEntity(
                     providerId   = provider.id,
