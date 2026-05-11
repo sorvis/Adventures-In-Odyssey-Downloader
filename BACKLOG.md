@@ -19,6 +19,14 @@ The product niche is **daily-aired Christian/educational radio
 shows** (AIO + eventually Your Story Hour). Generic RSS is opportunistic
 — support it later only if it falls out of the abstraction trivially.
 
+**YSH design landed (not yet implemented)**: see
+[`docs/ysh-design.md`](docs/ysh-design.md). Includes two YSH providers
+(yourstoryhour.org free-streaming + oneplace.com YSH), full catalog
+ingestion for album metadata via title-join, v3→v4 composite-PK
+migration, an active-show mode switch in nav, and archive-service
+per-show subdirectory layout. Probe data preserved in
+[`docs/ysh-probe/`](docs/ysh-probe/).
+
 What's still owed for full multi-show:
 
 ### Common surface — what every provider has to expose
