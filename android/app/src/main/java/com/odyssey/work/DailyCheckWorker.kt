@@ -40,8 +40,14 @@ class DailyCheckWorker @AssistedInject constructor(
     override suspend fun doWork(): Result = runCatching {
         val s = settings.flow.first()
         val maxFetch = if (s.lastSeenEpisodeId == 0L) 7 else 50
+        // YSH (and any future show) only ingests once the user has
+        // turned it on via the show-switcher dropdown's "Manage shows…"
+        // entry (which deep-links to Settings → Shows). AIO defaults
+        // to enabled for everyone.
+        val enabled = settings.enabledProviders.first()
+        val activeProviders = providers.filter { it.id in enabled }
 
-        val fetched = providers.flatMap { provider ->
+        val fetched = activeProviders.flatMap { provider ->
             val lastSeen = if (provider.id == AioOneplaceProvider.ID) {
                 s.lastSeenEpisodeId.takeIf { it != 0L }?.toString()
             } else null

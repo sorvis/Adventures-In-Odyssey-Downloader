@@ -26,6 +26,19 @@ private object Keys {
     val ALLOW_METERED = booleanPreferencesKey("allow_metered_downloads")
     val CF_CLIENT_ID = stringPreferencesKey("cf_access_client_id")
     val CF_CLIENT_SECRET = stringPreferencesKey("cf_access_client_secret")
+    /**
+     * Currently-selected show on the main screen. Drives which set
+     * of episodes the UI filters to and which artist string the
+     * MediaMetadata picks up for an episode whose provider matches.
+     * Defaults to "aio" — existing users see no change on upgrade.
+     */
+    val ACTIVE_SHOW = stringPreferencesKey("active_show")
+    /**
+     * Provider ids the daily-check worker is allowed to ingest from.
+     * YSH defaults OFF per design — the user discovers it via the
+     * "Manage shows…" entry on the switcher dropdown.
+     */
+    val ENABLED_PROVIDERS = stringSetPreferencesKey("enabled_providers")
 }
 
 /**
@@ -130,6 +143,36 @@ class SettingsRepo @Inject constructor(@ApplicationContext private val ctx: Cont
 
     suspend fun setLastSeen(providerId: String, externalId: String) =
         ctx.dataStore.edit { it[lastSeenKey(providerId)] = externalId }
+
+    // -----------------------------------------------------------------
+    // Active-show + per-provider enable (step 9 of YSH plan).
+    //
+    // activeShow is purely UX state — which show the user is browsing
+    // right now. Defaults to "aio" so existing installs don't notice
+    // any change until they tap the show-switcher dropdown.
+    //
+    // enabledProviders gates the daily-check worker's ingestion. YSH
+    // defaults to OFF — the user discovers it via the "Manage shows…"
+    // entry below the active-shows list in the dropdown. AIO defaults
+    // to ON for everyone.
+    // -----------------------------------------------------------------
+
+    val activeShow: Flow<String> = ctx.dataStore.data.map { p ->
+        p[Keys.ACTIVE_SHOW] ?: "aio"
+    }
+
+    suspend fun setActiveShow(providerId: String) =
+        ctx.dataStore.edit { it[Keys.ACTIVE_SHOW] = providerId }
+
+    val enabledProviders: Flow<Set<String>> = ctx.dataStore.data.map { p ->
+        p[Keys.ENABLED_PROVIDERS] ?: setOf("aio")
+    }
+
+    suspend fun setProviderEnabled(providerId: String, enabled: Boolean) =
+        ctx.dataStore.edit { p ->
+            val current = p[Keys.ENABLED_PROVIDERS] ?: setOf("aio")
+            p[Keys.ENABLED_PROVIDERS] = if (enabled) current + providerId else current - providerId
+        }
 
     /**
      * Wipe all stored preferences. Test-only — Robolectric reuses the

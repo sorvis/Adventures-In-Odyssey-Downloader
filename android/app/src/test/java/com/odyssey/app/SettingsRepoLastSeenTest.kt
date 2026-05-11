@@ -93,4 +93,39 @@ class SettingsRepoLastSeenTest {
         repo.setLastSeen("ysh", "ysh-sku-1958")
         assertEquals("ysh-sku-1958", repo.lastSeenFor("ysh").first())
     }
+
+    @Test
+    fun `activeShow defaults to aio on a fresh install`() = runBlocking {
+        assertEquals("aio", SettingsRepo(ctx).activeShow.first())
+    }
+
+    @Test
+    fun `setActiveShow persists`() = runBlocking {
+        val repo = SettingsRepo(ctx)
+        repo.setActiveShow("ysh")
+        assertEquals("ysh", repo.activeShow.first())
+    }
+
+    @Test
+    fun `enabledProviders defaults to AIO only - YSH is opt-in`() = runBlocking {
+        val repo = SettingsRepo(ctx)
+        assertEquals(setOf("aio"), repo.enabledProviders.first())
+    }
+
+    @Test
+    fun `setProviderEnabled adds and removes ids without disturbing the rest`() = runBlocking {
+        val repo = SettingsRepo(ctx)
+
+        repo.setProviderEnabled("ysh", true)
+        assertEquals(setOf("aio", "ysh"), repo.enabledProviders.first())
+
+        repo.setProviderEnabled("ysh", false)
+        assertEquals(setOf("aio"), repo.enabledProviders.first())
+
+        // Disabling AIO is allowed by the API (the UI can prevent it
+        // if we want to enforce "at least one show always on"; for
+        // now the data layer is unopinionated).
+        repo.setProviderEnabled("aio", false)
+        assertEquals(emptySet<String>(), repo.enabledProviders.first())
+    }
 }

@@ -81,13 +81,11 @@ class DailyCheckWorkerTest {
         episodes = db.episodes()
         settings = SettingsRepo(ctx)
         // Robolectric reuses the Application across tests, so DataStore
-        // file persists. Without this reset, a prior test that set
-        // lastSeenEpisodeId would leak into the next test's worker run
-        // and short-circuit newSince().
-        runBlocking {
-            settings.setLastSeen(0L)
-            settings.setLastRun(0L)
-        }
+        // file persists. clearAllForTest() wipes everything so each
+        // @Test starts from defaults (enabledProviders = {"aio"},
+        // lastSeen/lastRun = 0, etc.). Tests that need YSH or a fake
+        // provider enabled set that explicitly inside the test body.
+        runBlocking { settings.clearAllForTest() }
         enqueuer = RecordingEnqueuer()
     }
 
@@ -202,6 +200,10 @@ class DailyCheckWorkerTest {
             ),
         )
         providers = setOf(aioProvider, fake)
+        // Step 9 gate: non-AIO providers only ingest when the user has
+        // opted in. Simulate the dropdown's "Manage shows…" enable
+        // flow turning the fake provider on.
+        settings.setProviderEnabled("fake", true)
 
         val worker = buildWorker()
         val result = worker.doWork()
@@ -233,6 +235,29 @@ class DailyCheckWorkerTest {
         // why CMS ids stopped flowing through.
         val s = settings.flow.first()
         assertEquals(265L, s.lastSeenEpisodeId)
+    }
+
+    @Test
+    fun `disabled providers are skipped - opt-in gate honored`() = runBlocking {
+        // Two registered providers; only AIO enabled (default).
+        val fake = FakeShowProvider(
+            id = "fake",
+            displayName = "Fake Show",
+            artistName = "Fake Show",
+            episodes = listOf(fakeEpisode(externalId = "8000000001", title = "Should Not Ingest")),
+        )
+        providers = setOf(aioProvider, fake)
+        server.enqueue(html(loadFixture("/oneplace/listen.html")))
+        server.enqueue(json(loadFixture("/oneplace/api_page1.json")))
+        server.enqueue(json(loadFixture("/oneplace/api_page2.json")))
+
+        val worker = buildWorker()
+        worker.doWork()
+
+        val rows = episodes.observeAll().first()
+        // AIO ingests; fake provider is excluded entirely.
+        assertTrue("AIO rows should still ingest", rows.any { it.providerId == "aio" })
+        assertTrue("fake provider must be excluded", rows.none { it.providerId == "fake" })
     }
 
     @Test
