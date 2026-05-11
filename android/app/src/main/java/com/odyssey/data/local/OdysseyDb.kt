@@ -46,19 +46,26 @@ data class LocalEpisodeEntity(
     val albumTrackOrder: Int? = null,
 ) {
     /**
-     * AIO-only back-compat accessor for code paths still keyed on the
-     * legacy `Long` episode id. AIO externalIds are always numeric
-     * (oneplace CMS ids or broadcast numbers), so `toLong()` is safe
-     * for any row this property is called on. YSH rows use non-numeric
-     * externalIds (`"ysh-sku-1958"`); calling this on a YSH row throws,
-     * which is intended — those code paths need to switch to
-     * externalId-based access as they get YSH-aware.
+     * Long-keyed view of the row id, kept so code paths that pre-date
+     * the composite (providerId, externalId) PK keep compiling AND
+     * keep RUNNING when YSH rows flow through them. AIO externalIds
+     * are numeric (oneplace CMS ids or broadcast numbers); YSH rows
+     * use prefixed strings like "ysh-sku-1958" — `toLong()` throws on
+     * those, which previously crashed the Recent/Downloaded LazyColumn
+     * the moment a YSH row hit the list (LazyColumn key extractor,
+     * `progress[ep.episodeId]` map lookups, expandedIds membership
+     * checks, etc.).
+     *
+     * The hash fallback gives YSH rows a stable, distinct-per-row Long
+     * so per-row state (expanded, progress, playback position) works
+     * without crashes. Collisions are theoretically possible at scale
+     * but vanishingly unlikely for the ~1000-track YSH catalog.
      *
      * Getter-only — Room only persists backing fields, so this is
      * naturally non-column without needing `@Ignore`.
      */
     val episodeId: Long
-        get() = externalId.toLong()
+        get() = externalId.toLongOrNull() ?: externalId.hashCode().toLong()
 }
 
 /**
@@ -93,9 +100,10 @@ data class PlaybackPositionEntity(
     val updatedAt: Long,
     val completedAt: Long?,       // set when ≥95% reached
 ) {
-    /** AIO-only back-compat accessor, mirrors LocalEpisodeEntity.episodeId. */
+    /** Mirrors LocalEpisodeEntity.episodeId — never-throws getter
+     *  with hash fallback for non-numeric YSH externalIds. */
     val episodeId: Long
-        get() = externalId.toLong()
+        get() = externalId.toLongOrNull() ?: externalId.hashCode().toLong()
 }
 
 @Dao
