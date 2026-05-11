@@ -218,7 +218,7 @@ def test_filename_title_beats_useless_id3(configured_env):
     assert summary.imported == 1, summary.samples
     # The catalog matched on the filename's "Afraid, Not!", not the
     # date string from ID3.
-    assert (config.AUDIO_DIR / "20-a-journey-of-choices" / "261-afraid-not.mp3").exists()
+    assert (config.AUDIO_DIR / "aio" / "20-a-journey-of-choices" / "261-afraid-not.mp3").exists()
 
 
 # ----- end-to-end -----------------------------------------------------
@@ -242,7 +242,7 @@ def test_run_import_matched_file_lands_in_album_folder(configured_env):
     assert not src.exists()
 
     # Target file must exist under audio/<album-slug>/<id>-<title-slug>.mp3.
-    expected_album_dir = config.AUDIO_DIR / "20-a-journey-of-choices"
+    expected_album_dir = config.AUDIO_DIR / "aio" / "20-a-journey-of-choices"
     assert expected_album_dir.is_dir()
     files = list(expected_album_dir.iterdir())
     assert len(files) == 1
@@ -366,7 +366,7 @@ def test_run_import_records_per_file_errors_without_aborting(configured_env, mon
     assert summary.errors == 1
     assert summary.imported == 1
     # The good file must still have been processed.
-    assert (config.AUDIO_DIR / "20-a-journey-of-choices" / "264-making-the-grade.mp3").exists()
+    assert (config.AUDIO_DIR / "aio" / "20-a-journey-of-choices" / "264-making-the-grade.mp3").exists()
 
 
 def test_main_cli_returns_zero_on_clean_run(configured_env, capsys, monkeypatch):
@@ -412,7 +412,7 @@ def test_id3_title_is_preferred_over_filename(configured_env):
     summary = run_import(drop)
     assert summary.imported == 1
     # ID3 title beat the filename; row landed in the right album.
-    assert (config.AUDIO_DIR / "20-a-journey-of-choices" / "261-afraid-not.mp3").exists()
+    assert (config.AUDIO_DIR / "aio" / "20-a-journey-of-choices" / "261-afraid-not.mp3").exists()
 
 
 def test_run_import_matches_part_suffix_filename_against_catalog_part_of_M(configured_env):
@@ -432,7 +432,7 @@ def test_run_import_matches_part_suffix_filename_against_catalog_part_of_M(confi
     # Episode_id should be the canonical broadcast number 37 from the
     # catalog's shortName, NOT the filename's prefix (also 37 here,
     # but the principle is "catalog wins").
-    assert (config.AUDIO_DIR / "camp-what-a-nut" / "37-camp-what-a-nut-part-1-of-2.mp3").exists()
+    assert (config.AUDIO_DIR / "aio" / "camp-what-a-nut" / "37-camp-what-a-nut-part-1-of-2.mp3").exists()
 
 
 def test_run_import_maps_ampersand_to_and(configured_env):
@@ -470,7 +470,7 @@ def test_run_import_falls_back_to_filename_id_when_title_is_typoed(configured_en
     assert summary.imported == 1, summary.samples
     # The file should have landed under album 20 — the catalog's
     # canonical title (not the typoed filename) wins.
-    assert (config.AUDIO_DIR / "20-a-journey-of-choices" / "263-when-bad-isn-t-so-good.mp3").exists()
+    assert (config.AUDIO_DIR / "aio" / "20-a-journey-of-choices" / "263-when-bad-isn-t-so-good.mp3").exists()
 
 
 def test_run_import_filename_id_fallback_uses_canonical_catalog_title(configured_env):
@@ -487,7 +487,7 @@ def test_run_import_filename_id_fallback_uses_canonical_catalog_title(configured
 
     summary = run_import(drop)
     assert summary.imported == 1
-    assert (config.AUDIO_DIR / "20-a-journey-of-choices" / "264-making-the-grade.mp3").exists()
+    assert (config.AUDIO_DIR / "aio" / "20-a-journey-of-choices" / "264-making-the-grade.mp3").exists()
 
 
 def test_run_import_skips_pure_date_filenames_as_unmatched(configured_env):

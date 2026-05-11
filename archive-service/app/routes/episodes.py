@@ -84,11 +84,18 @@ async def create_episode(
         c.execute(
             """INSERT OR IGNORE INTO episodes
                (episode_id, title, air_date, album, description, duration_secs,
-                file_path, file_size, sha256, source_url)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                file_path, file_size, sha256, source_url,
+                provider_id, external_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 episode_id, title, air_date, album, description, duration_secs,
                 str(out_path), size, sha, source_url,
+                # Legacy POST handler — no provider_id form field, so
+                # the row is AIO by definition. external_id mirrors
+                # episode_id stringified so the unique index can find
+                # the row alongside any multi-show ones the new POST
+                # route writes (step 11b).
+                "aio", str(episode_id),
             ),
         )
         row = c.execute(

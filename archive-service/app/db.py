@@ -35,6 +35,39 @@ def init() -> None:
     IMPORT_UNMATCHED_DIR.mkdir(parents=True, exist_ok=True)
     with connect() as c:
         c.executescript(SCHEMA)
+        _migrate_schema(c)
+
+
+def _migrate_schema(c: sqlite3.Connection) -> None:
+    """v1 → v2 schema migration. Adds the multi-show columns to the
+    `episodes` table — kept in the migrator (not the inline CREATE
+    above) so that legacy installs whose first contact with the new
+    server is this exact path land in the same end state as fresh
+    installs. Idempotent: skips columns that already exist.
+
+      provider_id: which show this episode came from ("aio" today,
+                   "ysh" once the new client routes land).
+      external_id: stable id within the provider — oneplace CMS id
+                   stringified for AIO, sku_id stringified for YSH.
+                   Stays nullable on legacy rows until the backfill
+                   below; new inserts always populate it.
+    """
+    cols = {row["name"] for row in c.execute("PRAGMA table_info(episodes)")}
+    if "provider_id" not in cols:
+        c.execute("ALTER TABLE episodes ADD COLUMN provider_id TEXT NOT NULL DEFAULT 'aio'")
+    if "external_id" not in cols:
+        c.execute("ALTER TABLE episodes ADD COLUMN external_id TEXT")
+    # Backfill external_id for any pre-migration row that's still
+    # NULL — stringify the legacy episode_id. Cheap; runs only when
+    # there are unmigrated rows.
+    c.execute(
+        "UPDATE episodes SET external_id = CAST(episode_id AS TEXT) "
+        "WHERE external_id IS NULL"
+    )
+    c.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_episodes_provider_external "
+        "ON episodes(provider_id, external_id) WHERE external_id IS NOT NULL"
+    )
 
 
 @contextmanager
