@@ -33,9 +33,16 @@ class OdysseyApp : Application(), Configuration.Provider {
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             diskLayoutMigrator.migrateIfNeeded()
             // Load any cached YSH album catalog into memory so the
-            // provider's title-join hits work from launch. Refresh
-            // worker overwrites this asynchronously.
+            // provider's title-join hits work from launch.
             yshCatalog.load()
+            // Fresh installs: kick a one-shot catalog refresh so YSH
+            // ingestion has a populated index on the first daily
+            // check, instead of waiting up to a week for the periodic
+            // worker. Cheap (few-KB JSON), idempotent (worker is
+            // unique-named); no-op when the cache is already warm.
+            if (yshCatalog.state.value == null) {
+                workScheduler.runYshCatalogRefreshNow()
+            }
         }
     }
 }

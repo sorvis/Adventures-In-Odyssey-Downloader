@@ -89,16 +89,9 @@ class DailyCheckWorker @AssistedInject constructor(
                     imageUrl     = ep.imageUrl,
                 )
             )
-            // DownloadEnqueuer is still keyed by Long episodeId (AIO-only
-            // path). For AIO providers the externalId IS the Long id;
-            // for non-AIO providers the download enqueue path needs the
-            // step-3 rewrite. Skip enqueue for non-AIO until then —
-            // YshFreeStreamProvider and YshOneplaceProvider rows land in
-            // the DB but won't auto-download until DownloadEnqueuer
-            // becomes provider-aware.
-            if (provider.id == AioOneplaceProvider.ID) {
-                scheduler.enqueueDownload(ep.externalId.toLong(), allowMetered = s.allowMeteredDownloads)
-            }
+            // DownloadEnqueuer is now provider-aware — every newly
+            // ingested row queues a download regardless of provider.
+            scheduler.enqueueDownload(provider.id, ep.externalId, allowMetered = s.allowMeteredDownloads)
         }
 
         // lastSeen is AIO-only until per-provider state lands. The first

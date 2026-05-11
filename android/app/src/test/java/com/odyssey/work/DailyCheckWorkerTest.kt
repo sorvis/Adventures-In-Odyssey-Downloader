@@ -215,19 +215,18 @@ class DailyCheckWorkerTest {
         assertEquals(7, rows.count { it.providerId == "aio" })
         assertEquals(2, rows.count { it.providerId == "fake" })
 
-        // Only AIO rows enqueue downloads in the current transitional
-        // state — DownloadEnqueuer is still keyed by Long episodeId
-        // (AIO-only). Non-AIO rows land in the DB metadata but won't
-        // auto-download until the enqueuer becomes provider-aware
-        // (planned for the multi-show worker rewrite). The fake
-        // provider's externalIds are non-AIO numeric strings, so they
-        // should NOT appear in the enqueue calls.
-        val fakeIds = setOf(9000000001L, 9000000002L)
-        assertTrue(
-            "fake provider episodes should NOT be enqueued yet (DownloadEnqueuer is AIO-only)",
-            enqueuer.calls.none { it.episodeId in fakeIds },
+        // DownloadEnqueuer is now provider-aware (post step-after-10).
+        // Every ingested row enqueues a download regardless of show.
+        assertEquals("7 AIO + 2 fake = 9 downloads enqueued", 9, enqueuer.calls.size)
+        assertEquals(
+            "fake provider rows are queued under their providerId",
+            2,
+            enqueuer.calls.count { it.providerId == "fake" },
         )
-        assertEquals("only the 7 AIO episodes should be enqueued", 7, enqueuer.calls.size)
+        assertEquals(
+            7,
+            enqueuer.calls.count { it.providerId == "aio" },
+        )
 
         // lastSeen is updated to the AIO newest only (fake provider's
         // state isn't tracked in SettingsRepo in H-lite). Value is
@@ -318,10 +317,20 @@ class DailyCheckWorkerTest {
 
     /** Records every enqueueDownload call so the test can assert what got scheduled. */
     private class RecordingEnqueuer : DownloadEnqueuer {
-        data class Call(val episodeId: Long, val allowMetered: Boolean)
+        data class Call(
+            val providerId: String,
+            val externalId: String,
+            val episodeId: Long,
+            val allowMetered: Boolean,
+        )
         val calls = mutableListOf<Call>()
-        override fun enqueueDownload(episodeId: Long, allowMetered: Boolean) {
-            calls += Call(episodeId, allowMetered)
+        override fun enqueueDownload(providerId: String, externalId: String, allowMetered: Boolean) {
+            calls += Call(
+                providerId = providerId,
+                externalId = externalId,
+                episodeId = externalId.toLongOrNull() ?: -1L,
+                allowMetered = allowMetered,
+            )
         }
     }
 

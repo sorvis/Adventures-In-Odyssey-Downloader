@@ -103,9 +103,19 @@ class WorkScheduler @Inject constructor(@ApplicationContext private val ctx: Con
         const val CHECK_NOW_WORK = "odyssey-check-now"
     }
 
-    override fun enqueueDownload(episodeId: Long, allowMetered: Boolean) {
+    override fun enqueueDownload(providerId: String, externalId: String, allowMetered: Boolean) {
         val req = OneTimeWorkRequestBuilder<DownloadEpisodeWorker>()
-            .setInputData(workDataOf(DownloadEpisodeWorker.KEY_EPISODE_ID to episodeId))
+            .setInputData(
+                workDataOf(
+                    DownloadEpisodeWorker.KEY_PROVIDER_ID to providerId,
+                    DownloadEpisodeWorker.KEY_EXTERNAL_ID to externalId,
+                    // Back-compat with the AIO-only Long input — kept so a
+                    // pending OneTimeWorkRequest enqueued by a pre-update
+                    // build still routes correctly when WorkManager replays
+                    // it. New code paths read providerId+externalId.
+                    DownloadEpisodeWorker.KEY_EPISODE_ID to (externalId.toLongOrNull() ?: -1L),
+                ),
+            )
             .setConstraints(
                 Constraints.Builder()
                     .setRequiredNetworkType(if (allowMetered) NetworkType.CONNECTED else NetworkType.UNMETERED)
@@ -114,7 +124,7 @@ class WorkScheduler @Inject constructor(@ApplicationContext private val ctx: Con
             )
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 5, TimeUnit.MINUTES)
             .build()
-        wm.enqueueUniqueWork("download-$episodeId", ExistingWorkPolicy.KEEP, req)
+        wm.enqueueUniqueWork("download-$providerId-$externalId", ExistingWorkPolicy.KEEP, req)
     }
 
     override fun enqueueArchive(episodeId: Long, allowMetered: Boolean) {
