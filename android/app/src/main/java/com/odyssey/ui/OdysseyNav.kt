@@ -26,6 +26,25 @@ import com.odyssey.ui.screens.NowPlayingScreen
 import com.odyssey.ui.screens.RecentScreen
 import com.odyssey.ui.screens.SettingsScreen
 import com.odyssey.ui.screens.TransfersScreen
+import com.odyssey.ui.screens.YSH_ALBUM_DETAIL_ARG
+import com.odyssey.ui.screens.YshAlbumDetailScreen
+import com.odyssey.ui.screens.YshAlbumListScreen
+import androidx.hilt.navigation.compose.hiltViewModel
+import com.odyssey.app.SettingsRepo
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.stateIn
+import javax.inject.Inject
+
+@HiltViewModel
+class OdysseyNavVm @Inject constructor(
+    settings: SettingsRepo,
+) : ViewModel() {
+    val activeShow = settings.activeShow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), "aio")
+}
 
 private const val ROUTE_NOW_PLAYING = "now-playing"
 private const val ROUTE_DEBUG = "debug"
@@ -45,10 +64,13 @@ private sealed class Tab(val route: String, val label: String, val icon: android
 private val tabs = listOf(Tab.Recent, Tab.Albums, Tab.Downloaded, Tab.Backup, Tab.Settings)
 
 @Composable
-fun OdysseyNav() {
+fun OdysseyNav(
+    navVm: OdysseyNavVm = hiltViewModel(),
+) {
     val nav = rememberNavController()
     val backStack by nav.currentBackStackEntryAsState()
     val currentRoute = backStack?.destination?.route ?: Tab.Recent.route
+    val activeShow by navVm.activeShow.collectAsState()
     // Sub-routes (album/{key}, now-playing, debug) shouldn't deselect the parent tab.
     val tabRoute = tabs.firstOrNull { currentRoute.startsWith(it.route) }?.route ?: currentRoute
 
@@ -98,13 +120,31 @@ fun OdysseyNav() {
                     })
                 }
                 composable(Tab.Albums.route) {
-                    AlbumListScreen(onOpenAlbum = { key -> nav.navigate("album/$key") })
+                    // Albums tab adapts to the active show. AIO uses
+                    // its catalog-backed list + ownership join; YSH
+                    // lists albums grouped from local_episodes rows.
+                    // When the user flips active show in Settings the
+                    // composable re-binds automatically.
+                    if (activeShow == "ysh") {
+                        YshAlbumListScreen(onOpenAlbum = { name ->
+                            val encoded = java.net.URLEncoder.encode(name, "UTF-8")
+                            nav.navigate("ysh-album/$encoded")
+                        })
+                    } else {
+                        AlbumListScreen(onOpenAlbum = { key -> nav.navigate("album/$key") })
+                    }
                 }
                 composable(
                     route = "album/{albumKey}",
                     arguments = listOf(navArgument("albumKey") { type = NavType.StringType }),
                 ) {
                     AlbumDetailScreen(onBack = { nav.popBackStack() })
+                }
+                composable(
+                    route = "ysh-album/{$YSH_ALBUM_DETAIL_ARG}",
+                    arguments = listOf(navArgument(YSH_ALBUM_DETAIL_ARG) { type = NavType.StringType }),
+                ) {
+                    YshAlbumDetailScreen(onBack = { nav.popBackStack() })
                 }
                 composable(Tab.Downloaded.route) { DownloadedScreen() }
                 composable(Tab.Backup.route) {

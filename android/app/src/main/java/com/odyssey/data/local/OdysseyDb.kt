@@ -186,7 +186,50 @@ interface EpisodeDao {
               WHERE filePath IS NOT NULL
                 AND archivedAt IS NULL""")
     suspend fun unarchivedDownloaded(): List<LocalEpisodeEntity>
+
+    /**
+     * YSH "Albums" view — every distinct album name across the user's
+     * ingested YSH tracks with a downloaded-count badge. AIO doesn't
+     * use this query (its album view is backed by AioCatalogRepo, not
+     * `local_episodes.albumName`). Drives the YshAlbumListScreen
+     * landed in step 10.
+     */
+    @Query("""
+      SELECT albumName       AS albumName,
+             MIN(albumImageUrl) AS coverUrl,
+             COUNT(*)        AS trackCount,
+             SUM(CASE WHEN filePath IS NOT NULL THEN 1 ELSE 0 END) AS downloadedCount
+        FROM local_episodes
+       WHERE providerId = 'ysh' AND albumName IS NOT NULL
+    GROUP BY albumName
+    ORDER BY albumName ASC
+    """)
+    fun observeYshAlbumSummaries(): Flow<List<YshAlbumSummary>>
+
+    /**
+     * Tracks for a single YSH album, ordered by the catalog's track
+     * order then title (for any rows whose orderIndex didn't survive
+     * the join). Drives YshAlbumDetailScreen.
+     */
+    @Query("""
+      SELECT * FROM local_episodes
+       WHERE providerId = 'ysh' AND albumName = :albumName
+    ORDER BY albumTrackOrder ASC, title ASC
+    """)
+    fun observeYshAlbumTracks(albumName: String): Flow<List<LocalEpisodeEntity>>
 }
+
+/**
+ * Row class for the YSH album-list query. Plain data — no Room
+ * annotations because the GROUP BY result projects all four columns
+ * directly into the constructor.
+ */
+data class YshAlbumSummary(
+    val albumName: String,
+    val coverUrl: String?,
+    val trackCount: Int,
+    val downloadedCount: Int,
+)
 
 @Dao
 interface PlaybackDao {

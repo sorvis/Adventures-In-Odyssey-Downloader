@@ -152,6 +152,8 @@ class DownloadedVmTest {
         override suspend fun downloadedOldestFirst(): List<LocalEpisodeEntity> = emptyList()
         override fun observeUnarchivedDownloaded(): Flow<List<LocalEpisodeEntity>> = flowOf(emptyList())
         override suspend fun unarchivedDownloaded(): List<LocalEpisodeEntity> = emptyList()
+        override fun observeYshAlbumSummaries(): Flow<List<com.odyssey.data.local.YshAlbumSummary>> = flowOf(emptyList())
+        override fun observeYshAlbumTracks(albumName: String): Flow<List<LocalEpisodeEntity>> = flowOf(emptyList())
     }
 
     private class NoopPlaybackDao : PlaybackDao {
