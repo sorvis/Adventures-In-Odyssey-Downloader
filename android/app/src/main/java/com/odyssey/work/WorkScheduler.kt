@@ -31,6 +31,48 @@ class WorkScheduler @Inject constructor(@ApplicationContext private val ctx: Con
         )
     }
 
+    /**
+     * Weekly YSH album-catalog refresh. Small JSON, ~5 pages today;
+     * weeks of staleness don't break provider behavior because
+     * YshOneplaceProvider falls back to the on-disk cache (or the
+     * unmatched-titles flow when nothing is cached yet).
+     */
+    fun ensureYshCatalogRefresh() {
+        val req = PeriodicWorkRequestBuilder<YshCatalogRefreshWorker>(7, TimeUnit.DAYS)
+            .setConstraints(
+                Constraints.Builder()
+                    .setRequiredNetworkType(NetworkType.CONNECTED)
+                    .build()
+            )
+            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 1, TimeUnit.HOURS)
+            .build()
+        wm.enqueueUniquePeriodicWork(
+            "odyssey-ysh-catalog-refresh",
+            ExistingPeriodicWorkPolicy.KEEP,
+            req,
+        )
+    }
+
+    /**
+     * Fire a one-shot YSH catalog refresh — used right after a fresh
+     * install so the catalog populates without waiting up to a week
+     * for the periodic worker, and from Settings → "Refresh now".
+     */
+    fun runYshCatalogRefreshNow() {
+        val req = OneTimeWorkRequestBuilder<YshCatalogRefreshWorker>()
+            .setConstraints(
+                Constraints.Builder()
+                    .setRequiredNetworkType(NetworkType.CONNECTED)
+                    .build()
+            )
+            .build()
+        wm.enqueueUniqueWork(
+            "odyssey-ysh-catalog-refresh-now",
+            ExistingWorkPolicy.REPLACE,
+            req,
+        )
+    }
+
     fun runDailyCheckNow() {
         val req = OneTimeWorkRequestBuilder<DailyCheckWorker>()
             .setConstraints(

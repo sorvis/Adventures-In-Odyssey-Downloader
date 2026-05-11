@@ -1,0 +1,393 @@
+{
+  "count": [
+    {
+      "total": 4
+    }
+  ],
+  "items": [
+    {
+      "id": 44,
+      "title": "Bible Comes Alive - Album 4",
+      "slug": "bible-comes-alive-album-4",
+      "primary_image": "https://your-story-hour.s3.amazonaws.com/images/albums/170726-BibleComesAlive4.jpg",
+      "lang_code": "en",
+      "skus": [
+        {
+          "id": 155,
+          "title": "Audio CD",
+          "type": "physical",
+          "order_index": 0
+        },
+        {
+          "id": 156,
+          "title": "MP3",
+          "type": "digital_album",
+          "order_index": 0
+        },
+        {
+          "id": 157,
+          "title": "The Daring Act",
+          "type": "digital_track",
+          "order_index": 0
+        },
+        {
+          "id": 158,
+          "title": "The Land of Uz",
+          "type": "digital_track",
+          "order_index": 1
+        },
+        {
+          "id": 159,
+          "title": "The Charming Prince",
+          "type": "digital_track",
+          "order_index": 2
+        },
+        {
+          "id": 160,
+          "title": "The Four Friends",
+          "type": "digital_track",
+          "order_index": 3
+        },
+        {
+          "id": 161,
+          "title": "In the King's Court",
+          "type": "digital_track",
+          "order_index": 4
+        },
+        {
+          "id": 162,
+          "title": "The Fiery Affair at Dura",
+          "type": "digital_track",
+          "order_index": 5
+        },
+        {
+          "id": 163,
+          "title": "Seven Years a Beast",
+          "type": "digital_track",
+          "order_index": 6
+        },
+        {
+          "id": 164,
+          "title": "The Bloodless Hand",
+          "type": "digital_track",
+          "order_index": 7
+        },
+        {
+          "id": 165,
+          "title": "The Lions and the Villains",
+          "type": "digital_track",
+          "order_index": 8
+        },
+        {
+          "id": 166,
+          "title": "The Man Who Ran From God",
+          "type": "digital_track",
+          "order_index": 9
+        },
+        {
+          "id": 167,
+          "title": "Mary of Nazareth",
+          "type": "digital_track",
+          "order_index": 10
+        },
+        {
+          "id": 168,
+          "title": "Born Under a Star",
+          "type": "digital_track",
+          "order_index": 11
+        },
+        {
+          "id": 169,
+          "title": "The King Grows Up",
+          "type": "digital_track",
+          "order_index": 12
+        },
+        {
+          "id": 170,
+          "title": "A Voice in the Desert",
+          "type": "digital_track",
+          "order_index": 13
+        },
+        {
+          "id": 171,
+          "title": "Journey to Jerusalem",
+          "type": "digital_track",
+          "order_index": 14
+        },
+        {
+          "id": 172,
+          "title": "Happiness in Galilee",
+          "type": "digital_track",
+          "order_index": 15
+        },
+        {
+          "id": 173,
+          "title": "Jesus the Healer",
+          "type": "digital_track",
+          "order_index": 16
+        },
+        {
+          "id": 174,
+          "title": "Matthew's Magnificent Party",
+          "type": "digital_track",
+          "order_index": 17
+        },
+        {
+          "id": 175,
+          "title": "Troubled Waters",
+          "type": "digital_track",
+          "order_index": 18
+        },
+        {
+          "id": 176,
+          "title": "The Road to Happiness",
+          "type": "digital_track",
+          "order_index": 19
+        },
+        {
+          "id": 177,
+          "title": "The Greatest Miracle",
+          "type": "digital_track",
+          "order_index": 20
+        },
+        {
+          "id": 178,
+          "title": "Prisoner in a Desert Dungeon",
+          "type": "digital_track",
+          "order_index": 21
+        },
+        {
+          "id": 179,
+          "title": "Stormy Times",
+          "type": "digital_track",
+          "order_index": 22
+        },
+        {
+          "id": 180,
+          "title": "A Boy's Amazing Lunch & A Fisherman Who Couldn't Swim",
+          "type": "digital_track",
+          "order_index": 23
+        }
+      ]
+    },
+    {
+      "id": 129,
+      "title": "Exciting Events - Volume 17",
+      "slug": "exciting-events-volume-17",
+      "primary_image": "https://your-story-hour.s3.amazonaws.com/images/albums/Exciting%20Events%20Volume%2017.png",
+      "lang_code": "en",
+      "skus": [
+        {
+          "id": 2740,
+          "title": "MP3",
+          "type": "digital_album",
+          "order_index": 0
+        },
+        {
+          "id": 2741,
+          "title": "Mysterious Rays (Marie Curie Part 1)",
+          "type": "digital_track",
+          "order_index": 0
+        },
+        {
+          "id": 2758,
+          "title": "Audio CD",
+          "type": "physical",
+          "order_index": 0
+        },
+        {
+          "id": 2742,
+          "title": "Glowing Salts (Marie Curie Part 2)",
+          "type": "digital_track",
+          "order_index": 1
+        },
+        {
+          "id": 2743,
+          "title": "The Little Girl Who Could",
+          "type": "digital_track",
+          "order_index": 2
+        },
+        {
+          "id": 2744,
+          "title": "No Such Thing as a Bad Boy",
+          "type": "digital_track",
+          "order_index": 3
+        },
+        {
+          "id": 2745,
+          "title": "The $14 Horse",
+          "type": "digital_track",
+          "order_index": 4
+        },
+        {
+          "id": 2746,
+          "title": "Where is Tom Cat? / Big Ole Bruno",
+          "type": "digital_track",
+          "order_index": 5
+        }
+      ]
+    },
+    {
+      "id": 57,
+      "title": "Great Stories - Volume 7",
+      "slug": "great-stories-volume-7",
+      "primary_image": "https://your-story-hour.s3.amazonaws.com/images/albums/170726-GreatStories7.jpg",
+      "lang_code": "en",
+      "skus": [
+        {
+          "id": 487,
+          "title": "Audio CD",
+          "type": "physical",
+          "order_index": 0
+        },
+        {
+          "id": 488,
+          "title": "MP3",
+          "type": "digital_album",
+          "order_index": 0
+        },
+        {
+          "id": 489,
+          "title": "Patriot Silversmith (Paul Revere Part 1)",
+          "type": "digital_track",
+          "order_index": 0
+        },
+        {
+          "id": 490,
+          "title": "The Road to Revolution (Paul Revere Part 2)",
+          "type": "digital_track",
+          "order_index": 1
+        },
+        {
+          "id": 491,
+          "title": "Paul Revere's Famous Ride (Paul Revere Part 3)",
+          "type": "digital_track",
+          "order_index": 2
+        },
+        {
+          "id": 492,
+          "title": "The Shots at Lexington (Paul Revere Part 4)",
+          "type": "digital_track",
+          "order_index": 3
+        },
+        {
+          "id": 493,
+          "title": "Boy Craftsman (Eli Whitney Part 1)",
+          "type": "digital_track",
+          "order_index": 4
+        },
+        {
+          "id": 494,
+          "title": "Master Mechanic (Eli Whitney Part 2)",
+          "type": "digital_track",
+          "order_index": 5
+        },
+        {
+          "id": 495,
+          "title": "Girl Captive (Mary Jemison Part 1)",
+          "type": "digital_track",
+          "order_index": 6
+        },
+        {
+          "id": 496,
+          "title": "Seneca Woman (Mary Jemison Part 2)",
+          "type": "digital_track",
+          "order_index": 7
+        },
+        {
+          "id": 497,
+          "title": "Sybil Ludington, Girl Patriot",
+          "type": "digital_track",
+          "order_index": 8
+        },
+        {
+          "id": 498,
+          "title": "Lucretia Mott",
+          "type": "digital_track",
+          "order_index": 9
+        },
+        {
+          "id": 499,
+          "title": "Gold, Loneliness and Letters (Gold Rush and Pony Express Part 1)",
+          "type": "digital_track",
+          "order_index": 10
+        },
+        {
+          "id": 500,
+          "title": "Thundering Hoofbeats (Gold Rush and Pony Express Part 2)",
+          "type": "digital_track",
+          "order_index": 11
+        }
+      ]
+    },
+    {
+      "id": 123,
+      "title": "La Pasi\u00f3n de Cristo (Compilaci\u00f3n)",
+      "slug": "pasion-de-cristo",
+      "primary_image": "https://your-story-hour.s3.amazonaws.com/spanish/images/La%20Pasion%20de%20Cristo.png",
+      "lang_code": "es",
+      "skus": [
+        {
+          "id": 2353,
+          "title": "Audio CD",
+          "type": "physical",
+          "order_index": 0
+        },
+        {
+          "id": 2354,
+          "title": "MP3",
+          "type": "digital_album",
+          "order_index": 0
+        },
+        {
+          "id": 2355,
+          "title": "Mar\u00eda de Nazaret",
+          "type": "digital_track",
+          "order_index": 0
+        },
+        {
+          "id": 2356,
+          "title": "Nacido Bajo Una Estrella",
+          "type": "digital_track",
+          "order_index": 1
+        },
+        {
+          "id": 2357,
+          "title": "La Gran Disputa",
+          "type": "digital_track",
+          "order_index": 2
+        },
+        {
+          "id": 2358,
+          "title": "Una Noche Memorable",
+          "type": "digital_track",
+          "order_index": 3
+        },
+        {
+          "id": 2359,
+          "title": "Traicionado",
+          "type": "digital_track",
+          "order_index": 4
+        },
+        {
+          "id": 2360,
+          "title": "El Juicio",
+          "type": "digital_track",
+          "order_index": 5
+        },
+        {
+          "id": 2361,
+          "title": "El Camino al Lugar de la Calavera",
+          "type": "digital_track",
+          "order_index": 6
+        },
+        {
+          "id": 2362,
+          "title": "Una Promesa para Cumplir",
+          "type": "digital_track",
+          "order_index": 7
+        }
+      ]
+    }
+  ]
+}
