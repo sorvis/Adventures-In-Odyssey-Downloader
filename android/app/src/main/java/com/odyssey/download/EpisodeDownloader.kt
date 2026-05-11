@@ -15,14 +15,36 @@ class EpisodeDownloader @Inject constructor(
     @ApplicationContext private val ctx: Context,
     private val http: OkHttpClient,
 ) {
-    private val rootDir: File by lazy {
+    /**
+     * Top-level episodes directory. Per-provider subdirectories sit
+     * underneath so AIO downloads don't collide with YSH downloads when
+     * their externalIds happen to share a numeric range. Exposed
+     * package-internal so DiskLayoutMigrator can enumerate legacy files
+     * directly under this dir without going through fileFor().
+     */
+    internal val rootDir: File by lazy {
         File(ctx.getExternalFilesDir(null), "Episodes").apply { mkdirs() }
     }
 
-    fun fileFor(episodeId: Long, title: String): File {
-        val safe = title.replace(Regex("[^A-Za-z0-9 ._-]"), "_").take(80)
-        return File(rootDir, "$episodeId-$safe.mp3")
+    /**
+     * New provider-aware path: `rootDir/<providerId>/<externalId>-<safeTitle>.mp3`.
+     * YSH externalIds like "ysh-sku-1958" round-trip safely through the
+     * filename slugger.
+     */
+    fun fileFor(providerId: String, externalId: String, title: String): File {
+        val safeTitle = title.replace(Regex("[^A-Za-z0-9 ._-]"), "_").take(80)
+        val safeId = externalId.replace(Regex("[^A-Za-z0-9._-]"), "_")
+        val providerDir = File(rootDir, providerId).apply { mkdirs() }
+        return File(providerDir, "$safeId-$safeTitle.mp3")
     }
+
+    /**
+     * Legacy AIO-only shim — keeps DownloadEpisodeWorker / RestoreEpisodeWorker
+     * call sites compiling unchanged. Equivalent to
+     * `fileFor("aio", episodeId.toString(), title)`.
+     */
+    fun fileFor(episodeId: Long, title: String): File =
+        fileFor("aio", episodeId.toString(), title)
 
     /**
      * Download the URL to `out`, resuming from `out.length()` if it already
