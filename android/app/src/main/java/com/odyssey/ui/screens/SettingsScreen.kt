@@ -31,10 +31,13 @@ import com.odyssey.download.ArchiveProgressTracker
 import com.odyssey.qr.decodeServerQr
 import com.odyssey.qr.encodeServerQr
 import com.odyssey.qr.renderServerQrBitmap
+import com.odyssey.show.ProviderRegistry
+import com.odyssey.show.ShowProvider
 import com.odyssey.work.ArchiveBackfill
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -46,8 +49,38 @@ class SettingsVm @Inject constructor(
     private val episodes: EpisodeDao,
     private val backfill: ArchiveBackfill,
     archiveProgress: ArchiveProgressTracker,
+    /** All registered ShowProviders, deduplicated by id. */
+    val providerRegistry: ProviderRegistry,
 ) : ViewModel() {
     val state = settings.flow.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    /** Provider ids the daily-check worker is allowed to ingest from. */
+    val enabledProviders = settings.enabledProviders
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), setOf("aio"))
+
+    /** Currently-active show. Drives the radio selection in the Shows card. */
+    val activeShow = settings.activeShow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), "aio")
+
+    /** All registered providers (one entry per show id). */
+    val allProviders: List<ShowProvider> get() = providerRegistry.all
+
+    fun setProviderEnabled(providerId: String, enabled: Boolean) = viewModelScope.launch {
+        settings.setProviderEnabled(providerId, enabled)
+        // If the user just disabled the show they were viewing, slide
+        // them back to a still-enabled one. Prefers AIO; if AIO is
+        // also disabled, picks whichever id remains. If nothing is
+        // enabled, leave the activeShow stale — no useful target.
+        if (!enabled && activeShow.value == providerId) {
+            val stillEnabled = settings.enabledProviders.first()
+            val fallback = stillEnabled.firstOrNull { it == "aio" } ?: stillEnabled.firstOrNull()
+            if (fallback != null) settings.setActiveShow(fallback)
+        }
+    }
+
+    fun setActiveShow(providerId: String) = viewModelScope.launch {
+        settings.setActiveShow(providerId)
+    }
 
     /**
      * Live count of "downloaded but not yet pushed to backup". Drives
@@ -217,6 +250,14 @@ fun SettingsScreen(
                 .semantics { testTagsAsResourceId = true },
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            ShowsCard(
+                providers = vm.allProviders,
+                enabledIds = vm.enabledProviders.collectAsState().value,
+                activeId = vm.activeShow.collectAsState().value,
+                onToggle = vm::setProviderEnabled,
+                onPickActive = vm::setActiveShow,
+            )
+
             Text("NAS archive (optional)", style = MaterialTheme.typography.titleMedium)
             Text(
                 "Leave blank to run standalone — daily downloads still work without a NAS.",
@@ -497,4 +538,76 @@ private fun ServerQrDialog(
             }
         },
     )
+}
+
+/**
+ * Per-show enable + active-show picker. Lives at the top of the
+ * Settings screen so users can find the YSH toggle without scrolling.
+ *
+ * Each registered provider gets a row with a Switch on the right; the
+ * active show carries a leading check icon. AIO is always shown
+ * first (alphabetical fallback after that). Disabling the active
+ * show automatically moves the active selection to a still-enabled
+ * provider (preferring AIO) — handled in the ViewModel.
+ */
+@Composable
+internal fun ShowsCard(
+    providers: List<ShowProvider>,
+    enabledIds: Set<String>,
+    activeId: String,
+    onToggle: (providerId: String, enabled: Boolean) -> Unit,
+    onPickActive: (providerId: String) -> Unit,
+) {
+    Card(modifier = Modifier.fillMaxWidth().testTag("shows-card")) {
+        Column(
+            Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text("Shows", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "Pick which shows the daily check downloads. Tap a row to make it active — " +
+                "the active show is what you see when you open the app.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            providers
+                .sortedWith(compareBy({ it.id != "aio" }, { it.displayName }))
+                .forEach { p ->
+                    val enabled = p.id in enabledIds
+                    val isActive = p.id == activeId
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("show-row-${p.id}"),
+                    ) {
+                        Column(
+                            Modifier
+                                .weight(1f)
+                                .padding(end = 8.dp),
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                // Plain unicode checkmark avoids pulling in
+                                // material-icons-extended just for one
+                                // small affordance.
+                                if (isActive) {
+                                    Text("✓ ", style = MaterialTheme.typography.bodyLarge)
+                                }
+                                Text(p.displayName, style = MaterialTheme.typography.bodyLarge)
+                            }
+                            if (enabled && !isActive) {
+                                TextButton(
+                                    onClick = { onPickActive(p.id) },
+                                    modifier = Modifier.testTag("make-active-${p.id}"),
+                                ) { Text("Make active") }
+                            }
+                        }
+                        Switch(
+                            checked = enabled,
+                            onCheckedChange = { onToggle(p.id, it) },
+                            modifier = Modifier.testTag("show-toggle-${p.id}"),
+                        )
+                    }
+                }
+        }
+    }
 }
