@@ -3,4 +3,5 @@ __pycache__/
 *.pyc
 .venv/
 .pytest_cache/
+.coverage
 _data/        # local-dev data dir (compose default when ODYSSEY_DATA_HOST_DIR is unset)
