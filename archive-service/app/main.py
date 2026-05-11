@@ -4,7 +4,7 @@ from fastapi import FastAPI
 
 from . import db
 from .migrate_layout import migrate_layout
-from .routes import episodes, albums
+from .routes import episodes, albums, providers
 
 
 @asynccontextmanager
@@ -33,3 +33,4 @@ def healthz():
 
 app.include_router(episodes.router)
 app.include_router(albums.router)
+app.include_router(providers.router)
