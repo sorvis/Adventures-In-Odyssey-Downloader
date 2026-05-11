@@ -24,4 +24,8 @@ abstract class ShowModule {
     @Binds
     @IntoSet
     abstract fun bindYshFreeStreamProvider(impl: YshFreeStreamProvider): ShowProvider
+
+    @Binds
+    @IntoSet
+    abstract fun bindYshOneplaceProvider(impl: YshOneplaceProvider): ShowProvider
 }
