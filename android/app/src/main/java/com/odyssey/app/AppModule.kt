@@ -4,9 +4,11 @@ import android.content.Context
 import androidx.room.Room
 import com.odyssey.data.local.MIGRATION_1_2
 import com.odyssey.data.local.MIGRATION_2_3
+import com.odyssey.data.local.MIGRATION_3_4
 import com.odyssey.data.local.OdysseyDb
 import com.odyssey.data.local.EpisodeDao
 import com.odyssey.data.local.PlaybackDao
+import com.odyssey.data.local.YshUnmatchedDao
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -23,11 +25,12 @@ object AppModule {
     @Provides @Singleton
     fun provideDb(@ApplicationContext ctx: Context): OdysseyDb =
         Room.databaseBuilder(ctx, OdysseyDb::class.java, "odyssey.db")
-            .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
             .build()
 
     @Provides fun provideEpisodeDao(db: OdysseyDb): EpisodeDao = db.episodes()
     @Provides fun providePlaybackDao(db: OdysseyDb): PlaybackDao = db.playback()
+    @Provides fun provideYshUnmatchedDao(db: OdysseyDb): YshUnmatchedDao = db.yshUnmatched()
 
     @Provides @Singleton
     fun provideOkHttp(): OkHttpClient = OkHttpClient.Builder()
