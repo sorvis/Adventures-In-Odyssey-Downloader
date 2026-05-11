@@ -28,6 +28,14 @@ interface EpisodePlayer {
         streamUrl: String,
         title: String,
         artworkUrl: String? = null,
+        /**
+         * Which provider this stream belongs to. Drives the artist
+         * string in MediaMetadata so lockscreens display the correct
+         * show name. Defaults to AIO so existing AIO-only call sites
+         * (BrowseNasScreen, AlbumDetailScreen, RecentScreen,
+         * DownloadedScreen) keep working unchanged.
+         */
+        providerId: String = "aio",
     )
 
     /**

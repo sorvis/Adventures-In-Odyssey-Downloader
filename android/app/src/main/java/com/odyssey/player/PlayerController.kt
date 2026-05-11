@@ -13,6 +13,7 @@ import com.odyssey.data.local.LocalEpisodeEntity
 import com.odyssey.data.local.PlaybackDao
 import com.odyssey.data.local.PlaybackPositionEntity
 import com.odyssey.debug.DebugLogger
+import com.odyssey.show.ProviderRegistry
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
@@ -36,6 +37,7 @@ class PlayerController @Inject constructor(
     @ApplicationContext private val ctx: Context,
     private val playback: PlaybackDao,
     private val recovery: PlaybackRecovery,
+    private val providers: ProviderRegistry,
 ) : EpisodePlayer {
     private var controller: MediaController? = null
     private var saveJob: Job? = null
@@ -133,7 +135,7 @@ class PlayerController @Inject constructor(
             .setUri(android.net.Uri.fromFile(java.io.File(path)))
             .setMediaMetadata(
                 MediaMetadata.Builder()
-                    .setTitle(ep.title).setArtist("Adventures in Odyssey")
+                    .setTitle(ep.title).setArtist(providers.artistFor(ep.providerId))
                     .apply {
                         ep.description?.takeIf { it.isNotBlank() }
                             ?.let { setDescription(it) }
@@ -169,6 +171,7 @@ class PlayerController @Inject constructor(
         streamUrl: String,
         title: String,
         artworkUrl: String?,
+        providerId: String,
     ) {
         DebugLogger.i("PlayerController", "playStream($episodeId) url=$streamUrl")
         val c = try {
@@ -201,6 +204,7 @@ class PlayerController @Inject constructor(
             .setMediaMetadata(
                 MediaMetadata.Builder()
                     .setTitle(title)
+                    .setArtist(providers.artistFor(providerId))
                     .apply {
                         artworkUrl?.takeIf { it.isNotBlank() }
                             ?.let { setArtworkUri(android.net.Uri.parse(it)) }
