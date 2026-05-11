@@ -12,10 +12,15 @@ import javax.inject.Singleton
  * oneplace.com scraper. Verified live 2026-05-03; the original C# date-string
  * approach is dead — site is now Alpine.js + JSON API.
  *
- * Bootstrap: GET /ministries/adventures-in-odyssey/listen/  → contains the
- *   latest episodeId as a bare assignment in inline JS.
+ * Bootstrap: GET /ministries/<show-slug>/listen/  → contains the latest
+ *   episodeId as a bare assignment in inline JS. The show-slug differs
+ *   per show (`adventures-in-odyssey`, `your-story-hour`, …) so the
+ *   listen URL is a method argument rather than a field — one client
+ *   instance can serve every oneplace-syndicated show.
  * Older episodes: GET /api/related-episodes?eid=<id>&ps=<n>&watch=false →
  *   JSON array, ordered newest-first, paginated by feeding back the last id.
+ *   Episode IDs are globally unique across shows (one CMS sequence), so the
+ *   API endpoint is the same regardless of which show seeded the cursor.
  *
  * Public endpoint, no auth. CDN MP3 URLs at zcast.swncdn.com support Range.
  */
@@ -23,17 +28,21 @@ import javax.inject.Singleton
 class OneplaceClient @Inject constructor(
     private val http: OkHttpClient,
 ) {
-    /** URLs are overridable for tests; production paths default to the live site. */
-    var listenUrl: String = "https://www.oneplace.com/ministries/adventures-in-odyssey/listen/"
-    var apiUrl: String    = "https://www.oneplace.com/api/related-episodes"
+    /**
+     * Overridable for tests; production value is the live API. Stays a `var`
+     * (rather than a method arg) because the API URL is the same for every
+     * oneplace-syndicated show — show identity is only carried in the
+     * listenUrl seed and the eid cursor that flows out of it.
+     */
+    var apiUrl: String = "https://www.oneplace.com/api/related-episodes"
 
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
     // bare assignment: episodeId=1278294
     private val bootstrapRe = Regex("""episodeId[=:"\s]+(\d{6,})""")
 
-    /** Returns the most recent episode ID currently displayed. */
-    suspend fun latestEpisodeId(): Long? = runCatching {
+    /** Returns the most recent episode ID currently displayed for the show at `listenUrl`. */
+    suspend fun latestEpisodeId(listenUrl: String): Long? = runCatching {
         val body = get(listenUrl)
         bootstrapRe.find(body)?.groupValues?.get(1)?.toLong()
     }.getOrNull()
@@ -45,15 +54,16 @@ class OneplaceClient @Inject constructor(
     }
 
     /**
-     * Convenience: walk the API backward from the current latest until either
-     * `lastSeen` is reached or `maxFetch` total episodes are accumulated.
-     * Returns episodes ordered newest-first, EXCLUDING `lastSeen` itself.
+     * Convenience: walk the API backward from the current latest (seeded
+     * from `listenUrl`'s bootstrap page) until either `lastSeen` is reached
+     * or `maxFetch` total episodes are accumulated. Returns episodes
+     * ordered newest-first, EXCLUDING `lastSeen` itself.
      *
      * Pass lastSeen = 0 on a fresh install — caller decides how far back to go
      * via maxFetch.
      */
-    suspend fun newSince(lastSeen: Long, maxFetch: Int = 100): List<OneplaceEpisode> {
-        val latest = latestEpisodeId() ?: return emptyList()
+    suspend fun newSince(listenUrl: String, lastSeen: Long, maxFetch: Int = 100): List<OneplaceEpisode> {
+        val latest = latestEpisodeId(listenUrl) ?: return emptyList()
         if (latest == lastSeen) return emptyList()
 
         val out = mutableListOf<OneplaceEpisode>()

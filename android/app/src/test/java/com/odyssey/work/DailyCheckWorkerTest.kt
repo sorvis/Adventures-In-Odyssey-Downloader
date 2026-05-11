@@ -69,11 +69,13 @@ class DailyCheckWorkerTest {
         ctx = ApplicationProvider.getApplicationContext()
         server = MockWebServer().apply { start() }
         oneplace = OneplaceClient(OkHttpClient()).apply {
-            // Redirect at the MockWebServer for both endpoints.
-            listenUrl = server.url("/listen").toString()
+            // Redirect the API at the MockWebServer (listen URL is now
+            // per-provider, redirected on the provider instance below).
             apiUrl = server.url("/api").toString()
         }
-        aioProvider = AioOneplaceProvider(oneplace, com.odyssey.catalog.AioCatalogRepo(ctx))
+        aioProvider = AioOneplaceProvider(oneplace, com.odyssey.catalog.AioCatalogRepo(ctx)).apply {
+            listenUrl = server.url("/listen").toString()
+        }
         providers = setOf(aioProvider)
         db = Room.inMemoryDatabaseBuilder(ctx, OdysseyDb::class.java).allowMainThreadQueries().build()
         episodes = db.episodes()

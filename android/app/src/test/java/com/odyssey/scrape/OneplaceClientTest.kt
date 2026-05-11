@@ -19,13 +19,15 @@ import org.junit.Test
  * report is the scrape layer's fault or a runtime-side issue (Hilt,
  * WorkManager, observability).
  *
- * The production client targets oneplace.com; tests redirect it at a
- * MockWebServer by overwriting its `listenUrl` / `apiUrl` properties.
+ * The production client targets oneplace.com; tests redirect the API
+ * by overwriting its `apiUrl` field and pass a mock listen URL per
+ * call (listen URL is now per-show, not a per-client field).
  */
 class OneplaceClientTest {
 
     private lateinit var server: MockWebServer
     private lateinit var client: OneplaceClient
+    private lateinit var listenUrl: String
 
     @Before
     fun setUp() {
@@ -42,19 +44,19 @@ class OneplaceClientTest {
     @Test
     fun `latestEpisodeId extracts the bootstrap episodeId from the live listen page`() = runTest {
         server.enqueue(html(fixture("/oneplace/listen.html")))
-        assertEquals(1278294L, client.latestEpisodeId())
+        assertEquals(1278294L, client.latestEpisodeId(listenUrl))
     }
 
     @Test
     fun `latestEpisodeId returns null when the page has no episodeId assignment`() = runTest {
         server.enqueue(html("<html><body>no bootstrap here</body></html>"))
-        assertNull(client.latestEpisodeId())
+        assertNull(client.latestEpisodeId(listenUrl))
     }
 
     @Test
     fun `latestEpisodeId returns null on HTTP error`() = runTest {
         server.enqueue(MockResponse().setResponseCode(503))
-        assertNull(client.latestEpisodeId())
+        assertNull(client.latestEpisodeId(listenUrl))
     }
 
     // ----- episodesBefore / JSON deserialization -----
@@ -105,7 +107,7 @@ class OneplaceClientTest {
         server.enqueue(json(fixture("/oneplace/api_page1.json")))
         server.enqueue(json(fixture("/oneplace/api_page2.json")))
 
-        val results = client.newSince(lastSeen = 0L, maxFetch = 7)
+        val results = client.newSince(listenUrl, lastSeen = 0L, maxFetch = 7)
 
         assertEquals("expected 7 episodes (5 from page1 + 2 from page2)", 7, results.size)
         // Newest first.
@@ -121,7 +123,7 @@ class OneplaceClientTest {
 
         // page1 ids: 1278383, 1278382, 1278381, 1278380, 1278379. Pretend we've
         // already seen 1278381 — should get the two newer ones and stop.
-        val results = client.newSince(lastSeen = 1278381L, maxFetch = 50)
+        val results = client.newSince(listenUrl, lastSeen = 1278381L, maxFetch = 50)
 
         assertEquals(2, results.size)
         assertEquals(listOf(1278383L, 1278382L), results.map { it.episodeId })
@@ -131,21 +133,21 @@ class OneplaceClientTest {
     fun `newSince returns empty when latest equals lastSeen (nothing new since last run)`() = runTest {
         server.enqueue(html(fixture("/oneplace/listen.html")))
         // No API call should be needed — latest (1278294) == lastSeen.
-        val results = client.newSince(lastSeen = 1278294L, maxFetch = 50)
+        val results = client.newSince(listenUrl, lastSeen = 1278294L, maxFetch = 50)
         assertTrue(results.isEmpty())
     }
 
     @Test
     fun `newSince returns empty list when bootstrap fails`() = runTest {
         server.enqueue(MockResponse().setResponseCode(500))
-        assertTrue(client.newSince(lastSeen = 0L, maxFetch = 7).isEmpty())
+        assertTrue(client.newSince(listenUrl, lastSeen = 0L, maxFetch = 7).isEmpty())
     }
 
     @Test
     fun `newSince terminates when the API returns an empty page`() = runTest {
         server.enqueue(html(fixture("/oneplace/listen.html")))
         server.enqueue(json("[]"))                  // empty page → loop breaks
-        val results = client.newSince(lastSeen = 0L, maxFetch = 50)
+        val results = client.newSince(listenUrl, lastSeen = 0L, maxFetch = 50)
         assertTrue(results.isEmpty())
     }
 
@@ -165,7 +167,7 @@ class OneplaceClientTest {
             ?: error("fixture not found: $path (is src/test/resources/$path checked in?)")
 
     private fun redirectClientTo(base: HttpUrl) {
-        client.listenUrl = base.newBuilder()
+        listenUrl = base.newBuilder()
             .addPathSegments("ministries/adventures-in-odyssey/listen/").build().toString()
         client.apiUrl = base.newBuilder()
             .addPathSegments("api/related-episodes").build().toString().trimEnd('/')

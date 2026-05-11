@@ -15,12 +15,28 @@ private object Keys {
     val NAS_URL = stringPreferencesKey("nas_url")
     val NAS_TOKEN = stringPreferencesKey("nas_token")
     val RETENTION = intPreferencesKey("retention_count")
+    /**
+     * Legacy AIO-only lastSeen cursor. Kept readable so existing
+     * installs don't lose their cursor on upgrade; new code reads via
+     * `SettingsRepo.lastSeenFor("aio")` which falls back to this when
+     * the new per-provider key is unset.
+     */
     val LAST_SEEN_EID = longPreferencesKey("last_seen_episode_id")
     val LAST_RUN_AT = longPreferencesKey("last_run_at_ms")
     val ALLOW_METERED = booleanPreferencesKey("allow_metered_downloads")
     val CF_CLIENT_ID = stringPreferencesKey("cf_access_client_id")
     val CF_CLIENT_SECRET = stringPreferencesKey("cf_access_client_secret")
 }
+
+/**
+ * Per-provider lastSeen cursor — `externalId` (stringified) of the
+ * newest episode the daily-check worker has already ingested for the
+ * given provider. Keyed by provider id so each show advances
+ * independently; YSH-FreeStream providers can leave this unset
+ * because they're snapshot-source providers (no chronological cursor).
+ */
+private fun lastSeenKey(providerId: String) =
+    stringPreferencesKey("last_seen_external_id__$providerId")
 
 data class Settings(
     val nasUrl: String,
@@ -82,4 +98,46 @@ class SettingsRepo @Inject constructor(@ApplicationContext private val ctx: Cont
     suspend fun setLastRun(ms: Long) = ctx.dataStore.edit { it[Keys.LAST_RUN_AT] = ms }
     suspend fun setAllowMeteredDownloads(allow: Boolean) =
         ctx.dataStore.edit { it[Keys.ALLOW_METERED] = allow }
+
+    // -----------------------------------------------------------------
+    // Per-provider lastSeen API (multi-show prep, step 2 of YSH plan).
+    //
+    // The legacy long-keyed cursor (`lastSeenEpisodeId` above) stays in
+    // place during the transition: DailyCheckWorker still writes through
+    // it for AIO until step 3 rewrites the worker to iterate providers.
+    // `lastSeenFor("aio")` reads the new key first, falls back to the
+    // legacy long, so existing installs don't lose their cursor on
+    // upgrade.
+    // -----------------------------------------------------------------
+
+    /**
+     * Newest externalId already ingested for `providerId`, or null on
+     * a fresh install (or for snapshot-source providers that never
+     * advance a cursor).
+     *
+     * AIO has a legacy-key fallback: pre-upgrade installs stored the
+     * cursor as `Keys.LAST_SEEN_EID` (Long). When the new
+     * `last_seen_external_id__aio` key is unset, we surface the legacy
+     * value stringified so the worker doesn't re-pull 50 episodes on
+     * the first run of the new version.
+     */
+    fun lastSeenFor(providerId: String): Flow<String?> = ctx.dataStore.data.map { p ->
+        p[lastSeenKey(providerId)]
+            ?: if (providerId == "aio") {
+                p[Keys.LAST_SEEN_EID]?.takeIf { it != 0L }?.toString()
+            } else null
+    }
+
+    suspend fun setLastSeen(providerId: String, externalId: String) =
+        ctx.dataStore.edit { it[lastSeenKey(providerId)] = externalId }
+
+    /**
+     * Wipe all stored preferences. Test-only — Robolectric reuses the
+     * Application across tests in a class, so DataStore values leak
+     * between @Test methods otherwise. Production code never calls this.
+     */
+    @androidx.annotation.VisibleForTesting
+    internal suspend fun clearAllForTest() {
+        ctx.dataStore.edit { it.clear() }
+    }
 }

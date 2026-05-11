@@ -34,13 +34,17 @@ class AioOneplaceProvider @Inject constructor(
     override val displayName = "Adventures in Odyssey"
     override val artistName = "Adventures in Odyssey"
 
+    /** Overridable for tests; production targets oneplace.com. */
+    var listenUrl: String = LISTEN_URL
+
     override suspend fun newSince(lastSeenExternalId: String?, maxFetch: Int): List<ProviderEpisode> {
         val lastSeen = lastSeenExternalId?.toLongOrNull() ?: 0L
-        return oneplace.newSince(lastSeen, maxFetch).map { it.toProvider(catalog) }
+        return oneplace.newSince(listenUrl, lastSeen, maxFetch).map { it.toProvider(catalog) }
     }
 
     companion object {
         const val ID = "aio"
+        const val LISTEN_URL = "https://www.oneplace.com/ministries/adventures-in-odyssey/listen/"
     }
 }
 
