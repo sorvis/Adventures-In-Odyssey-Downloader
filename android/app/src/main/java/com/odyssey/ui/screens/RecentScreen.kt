@@ -78,18 +78,21 @@ class RecentVm @Inject constructor(
 
     val progress = downloadProgress.progress
     val archive = archiveProgress.progress
-    // Sort by parsed air-date desc, falling back to episodeId desc. The
-    // SQL ORDER BY in EpisodeDao.observeAll() sorts the airDate string,
-    // which works in-year but breaks across year boundaries — re-sorting
-    // here with parseAirDateMillis fixes that.
-    val items = episodes.observeAll()
-        .map { eps ->
-            eps.sortedWith(
+    // Sort by parsed air-date desc, falling back to externalId desc.
+    // The SQL ORDER BY in EpisodeDao.observeAll() sorts the airDate
+    // string, which works in-year but breaks across year boundaries —
+    // re-sorting here with parseAirDateMillis fixes that.
+    //
+    // Filtered by activeShow so flipping to YSH in the dropdown
+    // immediately shows YSH episodes here too. AIO/YSH externalIds
+    // never overlap (different prefixes) so the filter is a clean cut.
+    val items = combine(episodes.observeAll(), settings.activeShow) { eps, active ->
+        eps.filter { it.providerId == active }
+            .sortedWith(
                 compareByDescending<LocalEpisodeEntity> { parseAirDateMillis(it.airDate) }
-                    .thenByDescending { it.episodeId },
+                    .thenByDescending { it.externalId },
             )
-        }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val resume = playback.observeMostRecent().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     // Episodes the user has finished (≥95% per OdysseyPlaybackService). Used
@@ -249,6 +252,7 @@ fun RecentScreen(
             TopAppBar(
                 title = { Text("Recent") },
                 actions = {
+                    ShowSwitcher(onOpenSettings = onNavigateToSettings)
                     // Pull-to-refresh is the primary trigger; this icon
                     // is the discoverability fallback for users who
                     // don't think to swipe. Both call vm.checkNow().

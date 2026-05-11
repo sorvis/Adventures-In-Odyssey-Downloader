@@ -29,6 +29,7 @@ import com.odyssey.player.PlaySource
 import com.odyssey.player.playSourceFor
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -49,6 +50,7 @@ class DownloadedVm @Inject constructor(
     val playback: PlaybackDao,
     private val player: EpisodePlayer,
     private val scheduler: WorkScheduler,
+    private val settings: com.odyssey.app.SettingsRepo,
     private val downloadProgress: DownloadProgressTracker,
     private val archiveProgress: com.odyssey.download.ArchiveProgressTracker,
     val catalog: AioCatalogRepo,
@@ -57,14 +59,15 @@ class DownloadedVm @Inject constructor(
     val progress = downloadProgress.progress
     val archive = archiveProgress.progress
 
-    val items = episodes.observeDownloaded()
-        .map { eps ->
-            eps.sortedWith(
+    // Filtered to the active show — flipping mode in the top-bar
+    // dropdown swaps the list to that show's downloaded files.
+    val items = combine(episodes.observeDownloaded(), settings.activeShow) { eps, active ->
+        eps.filter { it.providerId == active }
+            .sortedWith(
                 compareByDescending<LocalEpisodeEntity> { parseAirDateMillis(it.airDate) }
-                    .thenByDescending { it.episodeId },
+                    .thenByDescending { it.externalId },
             )
-        }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val completedIds = playback.observeCompletedIds()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList<Long>())
@@ -131,7 +134,10 @@ class DownloadedVm @Inject constructor(
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalComposeUiApi::class)
 @Composable
-fun DownloadedScreen(vm: DownloadedVm = hiltViewModel()) {
+fun DownloadedScreen(
+    onOpenSettings: () -> Unit = {},
+    vm: DownloadedVm = hiltViewModel(),
+) {
     val items by vm.items.collectAsState()
     val completedIds by vm.completedIds.collectAsState()
     val positions by vm.positions.collectAsState()
@@ -140,7 +146,14 @@ fun DownloadedScreen(vm: DownloadedVm = hiltViewModel()) {
     val playerState by vm.playerState.collectAsState()
     var expandedIds by remember { mutableStateOf(setOf<Long>()) }
 
-    Scaffold(topBar = { TopAppBar(title = { Text("Library") }) }) { padding ->
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Library") },
+                actions = { ShowSwitcher(onOpenSettings = onOpenSettings) },
+            )
+        },
+    ) { padding ->
         if (items.isEmpty()) {
             Box(
                 modifier = Modifier.fillMaxSize().padding(padding),

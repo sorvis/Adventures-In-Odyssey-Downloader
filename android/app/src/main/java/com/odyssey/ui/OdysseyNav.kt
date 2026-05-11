@@ -161,7 +161,17 @@ fun OdysseyNav(
                 ) {
                     YshAlbumDetailScreen(onBack = { nav.popBackStack() })
                 }
-                composable(Tab.Downloaded.route) { DownloadedScreen() }
+                composable(Tab.Downloaded.route) {
+                    DownloadedScreen(
+                        onOpenSettings = {
+                            nav.navigate(Tab.Settings.route) {
+                                popUpTo(nav.graph.startDestinationId) { saveState = true }
+                                launchSingleTop = true
+                                restoreState = true
+                            }
+                        },
+                    )
+                }
                 composable(Tab.Backup.route) {
                     BrowseNasScreen()
                 }

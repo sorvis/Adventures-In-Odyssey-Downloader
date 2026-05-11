@@ -38,15 +38,17 @@ class ShowSwitcherVm @Inject constructor(
 }
 
 /**
- * Compact top-bar affordance that lets the user flip activeShow with
- * a single tap from the album list. Renders only when at least two
- * providers are enabled — otherwise it's a single-item menu, which is
- * a footgun that wastes screen real estate. Discovery for a brand-new
- * YSH user happens in Settings → Shows; the dropdown exists for fast
- * switching once both shows are on.
+ * Compact top-bar affordance with two render modes depending on how
+ * many providers are enabled:
  *
- * The "Manage shows…" footer entry deep-links to Settings → Shows so
- * users can disable a show without rummaging through the nav.
+ *   1. Two or more enabled → full dropdown. Tap to switch active
+ *      show; "Manage shows…" footer deep-links to Settings.
+ *   2. Exactly one enabled → a non-clickable label of the active
+ *      show's displayName, so the user always has a visible
+ *      indicator of which mode they're in. (Discovery for a brand-
+ *      new YSH user happens in Settings → Shows; once two shows are
+ *      on, this widget grows into the interactive dropdown.)
+ *   3. Zero enabled → renders nothing.
  */
 @Composable
 fun ShowSwitcher(
@@ -57,14 +59,36 @@ fun ShowSwitcher(
     val active by vm.activeShow.collectAsState()
     val enabled by vm.enabledProviders.collectAsState()
     val visibleProviders = vm.providerRegistry.all.filter { it.id in enabled }
-    if (visibleProviders.size < 2) return  // see kdoc
-    ShowSwitcherUi(
-        providers = visibleProviders,
-        activeId = active,
-        onPickActive = vm::setActiveShow,
-        onOpenSettings = onOpenSettings,
-        modifier = modifier,
-    )
+    when (visibleProviders.size) {
+        0 -> return
+        1 -> ActiveShowLabel(
+            displayName = visibleProviders.first().displayName,
+            modifier = modifier,
+        )
+        else -> ShowSwitcherUi(
+            providers = visibleProviders,
+            activeId = active,
+            onPickActive = vm::setActiveShow,
+            onOpenSettings = onOpenSettings,
+            modifier = modifier,
+        )
+    }
+}
+
+/**
+ * Static "current mode" label — used when only one show is enabled so
+ * the user still has a visible cue of which show they're in. Public
+ * for tests; production callers go through ShowSwitcher.
+ */
+@Composable
+internal fun ActiveShowLabel(displayName: String, modifier: Modifier = Modifier) {
+    androidx.compose.foundation.layout.Box(modifier = modifier.padding(end = 4.dp)) {
+        AssistChip(
+            onClick = {},
+            enabled = false,
+            label = { Text(displayName, modifier = Modifier.testTag("active-show-label")) },
+        )
+    }
 }
 
 /**
