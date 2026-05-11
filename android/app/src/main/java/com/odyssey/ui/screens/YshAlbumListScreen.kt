@@ -49,12 +49,18 @@ class YshAlbumListVm @Inject constructor(
 @Composable
 fun YshAlbumListScreen(
     onOpenAlbum: (albumName: String) -> Unit = {},
+    onOpenSettings: () -> Unit = {},
     vm: YshAlbumListVm = hiltViewModel(),
 ) {
     val albums by vm.albums.collectAsState()
 
     Scaffold(
-        topBar = { TopAppBar(title = { Text("Your Story Hour") }) },
+        topBar = {
+            TopAppBar(
+                title = { Text("Your Story Hour") },
+                actions = { ShowSwitcher(onOpenSettings = onOpenSettings) },
+            )
+        },
     ) { padding ->
         if (albums.isEmpty()) {
             YshAlbumsEmptyState(modifier = Modifier.padding(padding).padding(24.dp))

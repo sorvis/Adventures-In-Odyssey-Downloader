@@ -127,13 +127,26 @@ fun OdysseyNav(
                     // lists albums grouped from local_episodes rows.
                     // When the user flips active show in Settings the
                     // composable re-binds automatically.
+                    val onOpenSettings = {
+                        nav.navigate(Tab.Settings.route) {
+                            popUpTo(nav.graph.startDestinationId) { saveState = true }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    }
                     if (activeShow == "ysh") {
-                        YshAlbumListScreen(onOpenAlbum = { name ->
-                            val encoded = java.net.URLEncoder.encode(name, "UTF-8")
-                            nav.navigate("ysh-album/$encoded")
-                        })
+                        YshAlbumListScreen(
+                            onOpenAlbum = { name ->
+                                val encoded = java.net.URLEncoder.encode(name, "UTF-8")
+                                nav.navigate("ysh-album/$encoded")
+                            },
+                            onOpenSettings = onOpenSettings,
+                        )
                     } else {
-                        AlbumListScreen(onOpenAlbum = { key -> nav.navigate("album/$key") })
+                        AlbumListScreen(
+                            onOpenAlbum = { key -> nav.navigate("album/$key") },
+                            onOpenSettings = onOpenSettings,
+                        )
                     }
                 }
                 composable(

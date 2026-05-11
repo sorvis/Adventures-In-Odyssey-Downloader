@@ -77,6 +77,7 @@ class AlbumListVm @Inject constructor(
 @Composable
 fun AlbumListScreen(
     onOpenAlbum: (String) -> Unit = {},
+    onOpenSettings: () -> Unit = {},
     vm: AlbumListVm = hiltViewModel(),
 ) {
     val albums by vm.albums.collectAsState()
@@ -95,6 +96,7 @@ fun AlbumListScreen(
             TopAppBar(
                 title = { Text("Albums") },
                 actions = {
+                    ShowSwitcher(onOpenSettings = onOpenSettings)
                     Box {
                         IconButton(
                             onClick = { filterMenuOpen = true },
