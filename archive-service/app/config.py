@@ -13,4 +13,11 @@ IMPORT_UNMATCHED_DIR = IMPORT_DIR / "_unmatched"
 # Catalog asset baked into the image at build time. Refresh by
 # re-running scripts/aio-scrape-catalog.py and re-building.
 CATALOG_PATH = Path("/srv/aio_catalog.json")
+# Your Story Hour catalog (album/track index from yourstoryhour.org).
+# Refresh by re-running archive-service/scripts/refresh-ysh-catalog.sh.
+# Optional — if absent the YSH importer falls back to title-only
+# matching against episode SKUs gathered at upload time.
+YSH_CATALOG_PATH = Path(
+    os.environ.get("ODYSSEY_YSH_CATALOG_PATH", "/srv/ysh_catalog.json")
+)
 AUTH_TOKEN = os.environ["ODYSSEY_AUTH_TOKEN"]
