@@ -26,6 +26,7 @@ import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 import com.odyssey.app.SettingsRepo
 import com.odyssey.data.local.EpisodeDao
+import com.odyssey.data.local.YshUnmatchedDao
 import com.odyssey.debug.DebugLogger
 import com.odyssey.download.ArchiveProgressTracker
 import com.odyssey.qr.decodeServerQr
@@ -51,7 +52,13 @@ class SettingsVm @Inject constructor(
     archiveProgress: ArchiveProgressTracker,
     /** All registered ShowProviders, deduplicated by id. */
     val providerRegistry: ProviderRegistry,
+    yshUnmatched: YshUnmatchedDao,
 ) : ViewModel() {
+    /** Count of YSH titles that didn't match the catalog. Drives a
+     *  "Review unmatched (N)" entry on the Shows card so misses are
+     *  visible without opening Debug logs. */
+    val yshUnmatchedCount = yshUnmatched.observeCount()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
     val state = settings.flow.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     /** Provider ids the daily-check worker is allowed to ingest from. */
@@ -159,6 +166,7 @@ class SettingsVm @Inject constructor(
 fun SettingsScreen(
     onOpenDebug: () -> Unit = {},
     onOpenTransfers: () -> Unit = {},
+    onOpenYshUnmatched: () -> Unit = {},
     vm: SettingsVm = hiltViewModel(),
 ) {
     val s by vm.state.collectAsState()
@@ -256,6 +264,8 @@ fun SettingsScreen(
                 activeId = vm.activeShow.collectAsState().value,
                 onToggle = vm::setProviderEnabled,
                 onPickActive = vm::setActiveShow,
+                yshUnmatchedCount = vm.yshUnmatchedCount.collectAsState().value,
+                onOpenYshUnmatched = onOpenYshUnmatched,
             )
 
             Text("NAS archive (optional)", style = MaterialTheme.typography.titleMedium)
@@ -557,6 +567,8 @@ internal fun ShowsCard(
     activeId: String,
     onToggle: (providerId: String, enabled: Boolean) -> Unit,
     onPickActive: (providerId: String) -> Unit,
+    yshUnmatchedCount: Int = 0,
+    onOpenYshUnmatched: () -> Unit = {},
 ) {
     Card(modifier = Modifier.fillMaxWidth().testTag("shows-card")) {
         Column(
@@ -608,6 +620,18 @@ internal fun ShowsCard(
                         )
                     }
                 }
+            // Unmatched-titles surface — only shown when there's
+            // something to review. Tapping deep-links to the
+            // dedicated review screen.
+            if (yshUnmatchedCount > 0) {
+                Divider(Modifier.padding(vertical = 4.dp))
+                TextButton(
+                    onClick = onOpenYshUnmatched,
+                    modifier = Modifier.testTag("ysh-unmatched-button"),
+                ) {
+                    Text("Review unmatched YSH titles ($yshUnmatchedCount)")
+                }
+            }
         }
     }
 }

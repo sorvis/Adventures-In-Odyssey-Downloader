@@ -29,6 +29,7 @@ import com.odyssey.ui.screens.TransfersScreen
 import com.odyssey.ui.screens.YSH_ALBUM_DETAIL_ARG
 import com.odyssey.ui.screens.YshAlbumDetailScreen
 import com.odyssey.ui.screens.YshAlbumListScreen
+import com.odyssey.ui.screens.YshUnmatchedTitlesScreen
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.odyssey.app.SettingsRepo
 import androidx.lifecycle.ViewModel
@@ -49,6 +50,7 @@ class OdysseyNavVm @Inject constructor(
 private const val ROUTE_NOW_PLAYING = "now-playing"
 private const val ROUTE_DEBUG = "debug"
 const val ROUTE_TRANSFERS = "transfers"
+const val ROUTE_YSH_UNMATCHED = "ysh-unmatched"
 
 private sealed class Tab(val route: String, val label: String, val icon: androidx.compose.ui.graphics.vector.ImageVector) {
     data object Recent     : Tab("recent",     "Recent",   Icons.Default.Home)
@@ -157,7 +159,11 @@ fun OdysseyNav(
                     SettingsScreen(
                         onOpenDebug = { nav.navigate(ROUTE_DEBUG) },
                         onOpenTransfers = { nav.navigate(ROUTE_TRANSFERS) },
+                        onOpenYshUnmatched = { nav.navigate(ROUTE_YSH_UNMATCHED) },
                     )
+                }
+                composable(ROUTE_YSH_UNMATCHED) {
+                    YshUnmatchedTitlesScreen(onBack = { nav.popBackStack() })
                 }
                 composable(ROUTE_NOW_PLAYING) {
                     NowPlayingScreen(onBack = { nav.popBackStack() })
