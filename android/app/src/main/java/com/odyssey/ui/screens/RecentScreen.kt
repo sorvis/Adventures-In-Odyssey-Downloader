@@ -180,16 +180,32 @@ class RecentVm @Inject constructor(
      * never downloaded). Streaming alone doesn't create a downloaded
      * file, so this is the explicit "save for offline" trigger.
      */
+    /**
+     * Channel of one-line messages to show in a Snackbar. Drives the
+     * "Download queued — will start on WiFi" / "Download started"
+     * feedback after a pin tap so the user has visible proof the
+     * tap registered, instead of having to read logcat.
+     */
+    val pinMessages = MutableStateFlow<String?>(null)
+
+    fun consumePinMessage() { pinMessages.value = null }
+
     fun download(ep: LocalEpisodeEntity) {
         if (ep.filePath != null) return
         DebugLogger.i("RecentVm", "download(${ep.providerId}:${ep.externalId}) — enqueueing")
         viewModelScope.launch {
             val allowMetered = settings.flow.first().allowMeteredDownloads
             // Use the provider-aware enqueue so YSH rows route correctly.
-            // The legacy `enqueueDownload(Long)` shim defaults to AIO,
-            // which made the worker look up by (aio, <ysh-row-hashCode>)
-            // and silently fail when YSH rows tapped the pin.
             scheduler.enqueueDownload(ep.providerId, ep.externalId, allowMetered = allowMetered)
+            // Surface the pending state to the user — workers honor an
+            // UNMETERED constraint unless they've opted into metered
+            // downloads in Settings, so on cellular a tap will just
+            // wait until WiFi.
+            val onWifi = !isOnMeteredNetwork()
+            pinMessages.value = when {
+                onWifi || allowMetered -> "Download started: ${ep.title}"
+                else -> "Download queued — will start on WiFi"
+            }
         }
     }
 
@@ -239,6 +255,15 @@ fun RecentScreen(
         itemCount = items.size,
         snackbarHostState = snackbarHostState,
     )
+    // Same SnackbarHost surfaces pin-tap feedback — "Download started"
+    // or "Download queued — will start on WiFi". RecentVm.pinMessages
+    // is a single-shot signal that consumes itself on each emission.
+    val pinMessage by vm.pinMessages.collectAsState()
+    LaunchedEffect(pinMessage) {
+        val msg = pinMessage ?: return@LaunchedEffect
+        snackbarHostState.showSnackbar(msg)
+        vm.consumePinMessage()
+    }
 
     if (showWarning) {
         AlertDialog(
