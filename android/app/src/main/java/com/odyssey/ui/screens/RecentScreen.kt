@@ -231,26 +231,14 @@ fun RecentScreen(
     // but daily-check passes often finish in <1s (especially when no
     // new episodes landed since the last run) — without an explicit
     // "done" snackbar the user sees nothing and assumes the button is
-    // broken. The snackbar fires on every isRefreshing true→false
-    // transition.
+    // broken. RefreshCompleteSnackbarEffect fires on every isRefreshing
+    // true→false transition.
     val snackbarHostState = remember { SnackbarHostState() }
-    val itemCountBefore = remember { mutableStateOf<Int?>(null) }
-    LaunchedEffect(isRefreshing) {
-        if (isRefreshing) {
-            // Snapshot the row count at the start of a refresh so we
-            // can report new-vs-existing on completion.
-            itemCountBefore.value = items.size
-        } else if (itemCountBefore.value != null) {
-            val before = itemCountBefore.value!!
-            val after = items.size
-            val msg = when {
-                after > before -> "Refresh complete — ${after - before} new episode${if (after - before == 1) "" else "s"}"
-                else -> "Refresh complete — no new episodes"
-            }
-            itemCountBefore.value = null
-            snackbarHostState.showSnackbar(msg)
-        }
-    }
+    RefreshCompleteSnackbarEffect(
+        isRefreshing = isRefreshing,
+        itemCount = items.size,
+        snackbarHostState = snackbarHostState,
+    )
 
     if (showWarning) {
         AlertDialog(
@@ -610,5 +598,45 @@ internal fun EpisodeRow(
                 )
             }
         }
+    }
+}
+
+/**
+ * Snackbar effect that fires "Refresh complete — N new episodes"
+ * every time `isRefreshing` transitions true → false. Captures the
+ * row count at the start of a refresh and reports the delta on
+ * completion. Visible for tests so we can verify the user-facing
+ * copy without spinning up the full RecentVm + WorkManager stack.
+ */
+@Composable
+internal fun RefreshCompleteSnackbarEffect(
+    isRefreshing: Boolean,
+    itemCount: Int,
+    snackbarHostState: SnackbarHostState,
+) {
+    val beforeCount = remember { mutableStateOf<Int?>(null) }
+    LaunchedEffect(isRefreshing) {
+        if (isRefreshing) {
+            beforeCount.value = itemCount
+        } else if (beforeCount.value != null) {
+            val before = beforeCount.value!!
+            val msg = refreshCompleteMessage(before = before, after = itemCount)
+            beforeCount.value = null
+            snackbarHostState.showSnackbar(msg)
+        }
+    }
+}
+
+/**
+ * Pure helper: format the "Refresh complete" snackbar text from
+ * row-count deltas. Visible for tests so plural/empty cases are
+ * locked without a Compose harness.
+ */
+internal fun refreshCompleteMessage(before: Int, after: Int): String {
+    val newCount = (after - before).coerceAtLeast(0)
+    return when (newCount) {
+        0 -> "Refresh complete — no new episodes"
+        1 -> "Refresh complete — 1 new episode"
+        else -> "Refresh complete — $newCount new episodes"
     }
 }
