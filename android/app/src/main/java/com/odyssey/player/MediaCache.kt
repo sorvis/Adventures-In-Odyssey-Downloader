@@ -1,9 +1,11 @@
 package com.odyssey.player
 
 import android.content.Context
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.database.StandaloneDatabaseProvider
-import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DataSource
+import androidx.media3.datasource.DataSpec
+import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.HttpDataSource
 import androidx.media3.datasource.cache.CacheDataSink
@@ -78,26 +80,31 @@ class MediaCache @Inject constructor(
     )
 
     /**
-     * HTTP factory that injects `Authorization: Bearer <token>` on
-     * every request when a NAS bearer is configured, plus the
-     * `CF-Access-Client-Id` / `CF-Access-Client-Secret` pair when
-     * the user has set Cloudflare Access service tokens. Lets the
-     * player stream directly from the self-hosted backup service —
-     * whether that's reached over LAN, Tailscale, or a Cloudflare
-     * Tunnel — without a separate URL-rewriting dance. Reads settings
-     * on every createDataSource() call so a rotation picks up at the
-     * next playback.
+     * HTTP factory that injects auth headers **only** on requests
+     * targeting the configured NAS host. Previously we set those
+     * headers as default request properties so every HTTP request the
+     * player issued carried them — that was fine for oneplace.com
+     * (whose CDN ignores unknown Authorization headers) but BROKE
+     * yourstoryhour.org's S3 buckets, which validate the Authorization
+     * header and reject anything that isn't a SigV4 signature with
+     * HTTP 400. Symptoms before this fix: YSH playback failed with
+     * `ERROR_CODE_IO_BAD_HTTP_STATUS (2004)` the moment the user
+     * tapped Play on a streaming YSH track.
      *
-     * Side effect: oneplace.com requests also carry these headers.
-     * Public AIO endpoints don't validate them so the extra bytes
-     * are ignored.
+     * Reads settings on every `createDataSource()` call so token
+     * rotation picks up at the next playback. The returned data
+     * source captures the NAS-host snapshot and applies headers only
+     * when the open() URL matches that host — so a rotation to a new
+     * NAS during an active stream doesn't break the in-flight read.
      */
+    @androidx.annotation.OptIn(UnstableApi::class)
     private fun authAwareHttpFactory(): HttpDataSource.Factory {
         return object : HttpDataSource.Factory {
             override fun createDataSource(): HttpDataSource {
                 val current = runCatching { runBlocking { settings.flow.first() } }.getOrNull()
-                val factory = DefaultHttpDataSource.Factory()
-                val headers = buildMap {
+                val nasHost = current?.nasUrl?.takeIf { it.isNotBlank() }
+                    ?.let { runCatching { java.net.URI(it).host }.getOrNull() }
+                val headers = buildMap<String, String> {
                     current?.nasToken?.takeIf { it.isNotBlank() }
                         ?.let { put("Authorization", "Bearer $it") }
                     if (current?.cfAccessConfigured == true) {
@@ -105,8 +112,11 @@ class MediaCache @Inject constructor(
                         put("CF-Access-Client-Secret", current.cfAccessClientSecret)
                     }
                 }
-                if (headers.isNotEmpty()) factory.setDefaultRequestProperties(headers)
-                return factory.createDataSource()
+                return HostScopedHttpDataSource(
+                    delegate = DefaultHttpDataSource.Factory().createDataSource(),
+                    authHeaders = headers,
+                    nasHost = nasHost,
+                )
             }
 
             override fun setDefaultRequestProperties(
@@ -129,4 +139,38 @@ class MediaCache @Inject constructor(
         // listening; not so big it dominates the storage profile.
         const val MAX_BYTES: Long = 500L * 1024 * 1024
     }
+}
+
+/**
+ * HttpDataSource decorator that adds `Authorization` / `CF-Access-*`
+ * headers ONLY when the per-request URL points at the configured
+ * NAS host. Other hosts (oneplace.com, yourstoryhour S3) see a
+ * vanilla HTTP request — necessary because AWS S3 returns HTTP 400
+ * when an unknown Authorization header is present.
+ *
+ * Implements HttpDataSource by delegation so all the read/seek/range
+ * methods come through unchanged; only `open()` decides whether to
+ * attach headers.
+ */
+@androidx.annotation.OptIn(UnstableApi::class)
+internal class HostScopedHttpDataSource(
+    private val delegate: HttpDataSource,
+    private val authHeaders: Map<String, String>,
+    private val nasHost: String?,
+) : HttpDataSource by delegate {
+
+    override fun open(dataSpec: DataSpec): Long {
+        if (authHeaders.isNotEmpty() && shouldAttachAuth(dataSpec.uri.host)) {
+            authHeaders.forEach { (k, v) -> delegate.setRequestProperty(k, v) }
+        } else {
+            // Make sure no stale headers from a previous open() linger
+            // on the underlying socket (DefaultHttpDataSource reuses
+            // its instance across opens).
+            authHeaders.keys.forEach { delegate.clearRequestProperty(it) }
+        }
+        return delegate.open(dataSpec)
+    }
+
+    private fun shouldAttachAuth(requestHost: String?): Boolean =
+        nasHost != null && requestHost != null && requestHost.equals(nasHost, ignoreCase = true)
 }
