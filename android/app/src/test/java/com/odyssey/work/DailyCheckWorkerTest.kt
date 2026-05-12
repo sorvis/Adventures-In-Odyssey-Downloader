@@ -129,6 +129,114 @@ class DailyCheckWorkerTest {
     }
 
     @Test
+    fun `refresh after May 8 ingests 3 new episodes that aired May 9-12 (user-reported bug)`() = runBlocking {
+        // Reproduces the v0.1.42 user report (screenshot taken 2026-05-12):
+        // The user's Recent list ends at broadcast #265 (May 8). Three
+        // new episodes have aired on oneplace.com since (#266 May 11,
+        // #267 May 12 — plus a May 9 re-air). The user taps Refresh
+        // and sees "Refresh complete — no new episodes".
+        //
+        // Pre-seed the DB with the user's existing AIO rows (#261–#265,
+        // externalIds = broadcast numbers since the catalog matches AIO
+        // titles), set lastSeenEpisodeId=265, then drive the worker
+        // against the live-captured /listen + /api responses for May 12.
+        for (n in 261..265) {
+            episodes.upsert(
+                com.odyssey.data.local.LocalEpisodeEntity(
+                    providerId = "aio",
+                    externalId = n.toString(),
+                    title = "episode $n",
+                    airDate = "May ${n - 261 + 4}, 2026",
+                    description = null,
+                    sourceUrl = "https://oneplace.com/$n",
+                    downloadUrl = "https://zcast/$n.mp3",
+                    filePath = null,
+                    fileSize = 0L,
+                    durationMs = 25 * 60_000L,
+                    downloadedAt = null,
+                    archivedAt = null,
+                ),
+            )
+        }
+        settings.setLastSeen(265L)
+        val startCount = episodes.observeAll().first().size
+        assertEquals(5, startCount)
+
+        // Live captures from oneplace.com on 2026-05-12: latest CMS id
+        // 1278386; API returns 7 most-recent episodes incl. 3 newer
+        // than what's in the DB.
+        server.enqueue(html(loadFixture("/oneplace/listen_may12.html")))
+        server.enqueue(json(loadFixture("/oneplace/api_may12_post_265.json")))
+        server.enqueue(json("[]"))   // pagination terminator
+
+        val worker = buildWorker()
+        val result = worker.doWork()
+        assertEquals(ListenableWorker.Result.success(), result)
+
+        val rows = episodes.observeAll().first()
+        val newRowCount = rows.size - startCount
+        assertTrue(
+            "expected at least 2 new rows (the May 11 + May 12 broadcasts); " +
+                "got $newRowCount new (total ${rows.size}). " +
+                "User-reported bug: refresh says 'no new episodes' even though oneplace has shipped new ones.",
+            newRowCount >= 2,
+        )
+    }
+
+    @Test
+    fun `legacy install with lastSeen=CMS_id still finds new episodes via catalog match`() = runBlocking {
+        // Variant of the May-8 bug for users on installs OLDER than the
+        // catalog-match feature (broadcast # resolution). Those installs
+        // stored `lastSeenEpisodeId` as the oneplace CMS id (e.g.
+        // 1278383 for War of the Words) rather than the broadcast
+        // number (265). After upgrading, the OneplaceClient walks the
+        // recent API page → finds CMS id 1278383 → early-returns with
+        // anything newer. Should still produce 3 new rows.
+        // Pre-seed the DB with externalIds=CMS ids (legacy migration
+        // shape) — mirrors what v3→v4 → v5 would have produced on an
+        // older install.
+        for ((cmsId, broadcast) in listOf(
+            1278383L to 265, 1278382L to 264, 1278381L to 263, 1278380L to 262, 1278379L to 261,
+        )) {
+            episodes.upsert(
+                com.odyssey.data.local.LocalEpisodeEntity(
+                    providerId = "aio",
+                    externalId = cmsId.toString(),
+                    title = "episode $broadcast",
+                    airDate = "May ${broadcast - 261 + 4}, 2026",
+                    description = null,
+                    sourceUrl = "https://oneplace.com/$cmsId",
+                    downloadUrl = "https://zcast/$cmsId.mp3",
+                    filePath = null,
+                    fileSize = 0L,
+                    durationMs = 25 * 60_000L,
+                    downloadedAt = null,
+                    archivedAt = null,
+                ),
+            )
+        }
+        // Legacy install — lastSeen was the CMS id, not the broadcast #.
+        settings.setLastSeen(1278383L)
+        val startCount = episodes.observeAll().first().size
+
+        server.enqueue(html(loadFixture("/oneplace/listen_may12.html")))
+        server.enqueue(json(loadFixture("/oneplace/api_may12_post_265.json")))
+        server.enqueue(json("[]"))
+
+        buildWorker().doWork()
+
+        val rows = episodes.observeAll().first()
+        val newRowCount = rows.size - startCount
+        // OneplaceClient.newSince should walk from latest=1278386 down
+        // until it hits ep.episodeId == 1278383 → returns the 3 newer
+        // ones (1278386, 1278385, 1278295).
+        assertEquals(
+            "expected 3 new rows for the legacy-CMS-id lastSeen path; got $newRowCount",
+            3, newRowCount,
+        )
+    }
+
+    @Test
     fun `subsequent run with no new episodes still updates lastRunAt`() = runBlocking {
         server.enqueue(html("<html>no bootstrap here</html>"))   // → newSince returns []
 

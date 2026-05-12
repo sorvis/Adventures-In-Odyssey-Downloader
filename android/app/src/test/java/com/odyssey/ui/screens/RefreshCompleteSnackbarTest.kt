@@ -37,47 +37,51 @@ class RefreshCompleteSnackbarTest {
 
     @Test
     fun message_no_new_episodes() {
-        assertEquals("Refresh complete — no new episodes", refreshCompleteMessage(before = 7, after = 7))
-        // Should also handle the degenerate "row count went DOWN" case
-        // (could happen if a retention pass pruned between snapshots).
-        // Treat as "no new" rather than negative.
-        assertEquals("Refresh complete — no new episodes", refreshCompleteMessage(before = 10, after = 4))
+        assertEquals("Refresh complete — no new episodes", refreshCompleteMessage(0))
+        // Should also handle a negative input defensively (worker
+        // should never produce one, but coerceAtLeast(0) is cheap).
+        assertEquals("Refresh complete — no new episodes", refreshCompleteMessage(-3))
     }
 
     @Test
     fun message_one_new_episode_uses_singular() {
-        assertEquals("Refresh complete — 1 new episode", refreshCompleteMessage(before = 7, after = 8))
+        assertEquals("Refresh complete — 1 new episode", refreshCompleteMessage(1))
     }
 
     @Test
     fun message_multiple_new_episodes_uses_plural() {
-        assertEquals("Refresh complete — 3 new episodes", refreshCompleteMessage(before = 7, after = 10))
+        assertEquals("Refresh complete — 3 new episodes", refreshCompleteMessage(3))
     }
 
     // ---------- Compose effect ----------
 
     @Test
-    fun snackbar_fires_on_true_to_false_transition() {
+    fun snackbar_fires_on_true_to_false_transition_using_worker_published_count() {
+        // The fix for the "no new episodes" bug: the effect reads the
+        // count directly from SettingsRepo.lastCheckNewCount (passed
+        // in as `newCount`), not from items.size delta. The worker
+        // publishes the count BEFORE its Result.success(), which
+        // happens BEFORE WorkInfo flips to SUCCEEDED, so there's no
+        // race with Room's Flow.
         val state = SnackbarHostState()
         var isRefreshing by mutableStateOf(false)
-        var itemCount by mutableIntStateOf(7)
+        var newCount by mutableIntStateOf(0)
 
         composeRule.setContent {
             RefreshCompleteSnackbarEffect(
                 isRefreshing = isRefreshing,
-                itemCount = itemCount,
+                newCount = newCount,
                 snackbarHostState = state,
             )
         }
         composeRule.waitForIdle()
-        // Nothing has happened yet — no refresh in progress, no snackbar.
         assertNull(state.currentSnackbarData)
 
-        // Simulate the refresh: flip to refreshing, increment items,
-        // then flip back to not-refreshing.
+        // Worker starts: isRefreshing true. Worker publishes 3 new
+        // (it inserted 3 rows). Worker completes: isRefreshing false.
         isRefreshing = true
         composeRule.waitForIdle()
-        itemCount = 10
+        newCount = 3   // worker calls settings.setLastCheckNewCount(3)
         composeRule.waitForIdle()
         isRefreshing = false
         composeRule.waitForIdle()
@@ -88,15 +92,14 @@ class RefreshCompleteSnackbarTest {
     }
 
     @Test
-    fun snackbar_reports_no_new_episodes_when_count_unchanged() {
+    fun snackbar_reports_no_new_episodes_when_worker_published_zero() {
         val state = SnackbarHostState()
         var isRefreshing by mutableStateOf(false)
-        val itemCount = mutableIntStateOf(7)
 
         composeRule.setContent {
             RefreshCompleteSnackbarEffect(
                 isRefreshing = isRefreshing,
-                itemCount = itemCount.intValue,
+                newCount = 0,
                 snackbarHostState = state,
             )
         }
@@ -104,8 +107,6 @@ class RefreshCompleteSnackbarTest {
 
         isRefreshing = true
         composeRule.waitForIdle()
-        // No item-count change — simulates a daily check that found
-        // nothing new (which is the common case post-cellular refresh).
         isRefreshing = false
         composeRule.waitForIdle()
 
@@ -123,12 +124,47 @@ class RefreshCompleteSnackbarTest {
         composeRule.setContent {
             RefreshCompleteSnackbarEffect(
                 isRefreshing = false,
-                itemCount = 7,
+                newCount = 0,
                 snackbarHostState = state,
             )
         }
         composeRule.waitForIdle()
         assertNull("no snackbar should appear without a refresh having fired",
                    state.currentSnackbarData)
+    }
+
+    @Test
+    fun snackbar_does_NOT_lose_the_count_if_newCount_arrives_BEFORE_isRefreshing_flips_false() {
+        // Reproduces the v0.1.42 race symptom: the worker publishes
+        // its count just before completing. There's no ordering
+        // guarantee that `newCount` propagates to Compose AFTER
+        // `isRefreshing` flips false. But since the snackbar effect
+        // reads `newCount` directly from SettingsRepo (not via items
+        // delta), it picks up whichever value is current — and the
+        // worker writes the count BEFORE returning, so by the time
+        // isRefreshing observes the completion the count is correct.
+        val state = SnackbarHostState()
+        var isRefreshing by mutableStateOf(false)
+        var newCount by mutableIntStateOf(0)
+
+        composeRule.setContent {
+            RefreshCompleteSnackbarEffect(
+                isRefreshing = isRefreshing,
+                newCount = newCount,
+                snackbarHostState = state,
+            )
+        }
+        isRefreshing = true
+        composeRule.waitForIdle()
+        // Worker writes newCount BEFORE its Result.success() — by
+        // the time isRefreshing observes the completion, newCount
+        // is already 3.
+        newCount = 3
+        isRefreshing = false
+        composeRule.waitForIdle()
+
+        val data = state.currentSnackbarData
+        assertNotNull(data)
+        assertEquals("Refresh complete — 3 new episodes", data!!.visuals.message)
     }
 }

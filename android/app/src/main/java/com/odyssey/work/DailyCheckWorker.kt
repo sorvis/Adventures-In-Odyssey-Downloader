@@ -55,6 +55,7 @@ class DailyCheckWorker @AssistedInject constructor(
         }
 
         if (fetched.isEmpty()) {
+            settings.setLastCheckNewCount(0)
             settings.setLastRun(System.currentTimeMillis())
             return@runCatching Result.success()
         }
@@ -73,6 +74,7 @@ class DailyCheckWorker @AssistedInject constructor(
             }
         }
 
+        var newCount = 0
         for ((provider, ep) in fetched) {
             if ((provider.id to ep.externalId) in existing) continue
             episodes.upsert(
@@ -95,7 +97,14 @@ class DailyCheckWorker @AssistedInject constructor(
             // DownloadEnqueuer is now provider-aware — every newly
             // ingested row queues a download regardless of provider.
             scheduler.enqueueDownload(provider.id, ep.externalId, allowMetered = s.allowMeteredDownloads)
+            newCount++
         }
+        // Tell the UI exactly how many new rows landed, so the
+        // "Refresh complete — N new" snackbar doesn't have to race
+        // Room's Flow against WorkManager's state transition. Stored
+        // before the worker finishes so it's visible the moment
+        // isRefreshing flips false.
+        settings.setLastCheckNewCount(newCount)
 
         // lastSeen is AIO-only until per-provider state lands. The first
         // AIO row in `fetched` is newest because OneplaceClient returns

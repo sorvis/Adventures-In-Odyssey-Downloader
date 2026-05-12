@@ -146,6 +146,15 @@ class RecentVm @Inject constructor(
     val isRefreshing = scheduler.dailyCheckActive
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
+    /**
+     * Worker-published count of new rows from the most recent daily
+     * check. Drives the "Refresh complete — N new" snackbar; sourced
+     * from settings (not items.size delta) so the count survives the
+     * Room-vs-WorkManager Flow race.
+     */
+    val lastCheckNewCount = settings.lastCheckNewCount
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
+
     fun play(ep: LocalEpisodeEntity) {
         // Tap on the row's button while THIS episode is already playing
         // → pause instead of re-issuing playLocal/playStream. Otherwise
@@ -250,9 +259,10 @@ fun RecentScreen(
     // broken. RefreshCompleteSnackbarEffect fires on every isRefreshing
     // true→false transition.
     val snackbarHostState = remember { SnackbarHostState() }
+    val lastCheckNewCount by vm.lastCheckNewCount.collectAsState()
     RefreshCompleteSnackbarEffect(
         isRefreshing = isRefreshing,
-        itemCount = items.size,
+        newCount = lastCheckNewCount,
         snackbarHostState = snackbarHostState,
     )
     // Same SnackbarHost surfaces pin-tap feedback — "Download started"
@@ -628,40 +638,41 @@ internal fun EpisodeRow(
 
 /**
  * Snackbar effect that fires "Refresh complete — N new episodes"
- * every time `isRefreshing` transitions true → false. Captures the
- * row count at the start of a refresh and reports the delta on
- * completion. Visible for tests so we can verify the user-facing
- * copy without spinning up the full RecentVm + WorkManager stack.
+ * every time `isRefreshing` transitions true → false. Uses the
+ * worker-published `newCount` (from SettingsRepo.lastCheckNewCount)
+ * rather than diffing `items.size` from start to end — the old
+ * delta approach lost a race between Room's Flow emission and
+ * WorkManager's state transition, causing the snackbar to claim
+ * "no new episodes" when 3 had actually landed.
+ *
+ * Visible for tests so plural/empty cases can be locked without a
+ * Compose harness.
  */
 @Composable
 internal fun RefreshCompleteSnackbarEffect(
     isRefreshing: Boolean,
-    itemCount: Int,
+    newCount: Int,
     snackbarHostState: SnackbarHostState,
 ) {
-    val beforeCount = remember { mutableStateOf<Int?>(null) }
+    val sawRefreshing = remember { mutableStateOf(false) }
     LaunchedEffect(isRefreshing) {
         if (isRefreshing) {
-            beforeCount.value = itemCount
-        } else if (beforeCount.value != null) {
-            val before = beforeCount.value!!
-            val msg = refreshCompleteMessage(before = before, after = itemCount)
-            beforeCount.value = null
-            snackbarHostState.showSnackbar(msg)
+            sawRefreshing.value = true
+        } else if (sawRefreshing.value) {
+            sawRefreshing.value = false
+            snackbarHostState.showSnackbar(refreshCompleteMessage(newCount))
         }
     }
 }
 
 /**
- * Pure helper: format the "Refresh complete" snackbar text from
- * row-count deltas. Visible for tests so plural/empty cases are
- * locked without a Compose harness.
+ * Pure helper: format the "Refresh complete" snackbar text from the
+ * worker-published count of newly ingested rows. Visible for tests
+ * so plural/empty cases are locked without a Compose harness.
  */
-internal fun refreshCompleteMessage(before: Int, after: Int): String {
-    val newCount = (after - before).coerceAtLeast(0)
-    return when (newCount) {
+internal fun refreshCompleteMessage(newCount: Int): String =
+    when (newCount.coerceAtLeast(0)) {
         0 -> "Refresh complete — no new episodes"
         1 -> "Refresh complete — 1 new episode"
         else -> "Refresh complete — $newCount new episodes"
     }
-}

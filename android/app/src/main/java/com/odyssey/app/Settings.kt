@@ -16,6 +16,15 @@ private object Keys {
     val NAS_TOKEN = stringPreferencesKey("nas_token")
     val RETENTION = intPreferencesKey("retention_count")
     /**
+     * How many new rows DailyCheckWorker inserted on its most recent
+     * run. Stored by the worker, read by the UI's "Refresh complete"
+     * snackbar so the count is race-free (was previously computed via
+     * `items.size` delta in the Composable, which raced Room's Flow
+     * emission against WorkManager's state transition — gave wrong
+     * "no new episodes" when in-flight work won the race).
+     */
+    val LAST_CHECK_NEW_COUNT = intPreferencesKey("last_check_new_count")
+    /**
      * Legacy AIO-only lastSeen cursor. Kept readable so existing
      * installs don't lose their cursor on upgrade; new code reads via
      * `SettingsRepo.lastSeenFor("aio")` which falls back to this when
@@ -109,6 +118,8 @@ class SettingsRepo @Inject constructor(@ApplicationContext private val ctx: Cont
     suspend fun setRetention(n: Int) = ctx.dataStore.edit { it[Keys.RETENTION] = n.coerceIn(1, 100) }
     suspend fun setLastSeen(id: Long) = ctx.dataStore.edit { it[Keys.LAST_SEEN_EID] = id }
     suspend fun setLastRun(ms: Long) = ctx.dataStore.edit { it[Keys.LAST_RUN_AT] = ms }
+    suspend fun setLastCheckNewCount(n: Int) = ctx.dataStore.edit { it[Keys.LAST_CHECK_NEW_COUNT] = n }
+    val lastCheckNewCount: Flow<Int> = ctx.dataStore.data.map { p -> p[Keys.LAST_CHECK_NEW_COUNT] ?: 0 }
     suspend fun setAllowMeteredDownloads(allow: Boolean) =
         ctx.dataStore.edit { it[Keys.ALLOW_METERED] = allow }
 
