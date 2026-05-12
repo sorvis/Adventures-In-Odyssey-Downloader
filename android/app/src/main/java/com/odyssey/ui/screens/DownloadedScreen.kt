@@ -112,11 +112,13 @@ class DownloadedVm @Inject constructor(
      */
     fun download(ep: LocalEpisodeEntity) {
         if (ep.filePath != null) return
-        DebugLogger.i("DownloadedVm", "download(${ep.episodeId}) — enqueueing")
+        DebugLogger.i("DownloadedVm", "download(${ep.providerId}:${ep.externalId}) — enqueueing")
         viewModelScope.launch {
-            // No SettingsRepo dep here — Library tab keeps a slim VM.
-            // Default to allowMetered=false; user can flip it in Recent.
-            scheduler.enqueueDownload(ep.episodeId, allowMetered = false)
+            // Provider-aware enqueue so YSH rows route correctly.
+            // Library tab keeps a slim VM (no SettingsRepo); default
+            // to allowMetered=false for the same reason — user can
+            // flip it in Recent.
+            scheduler.enqueueDownload(ep.providerId, ep.externalId, allowMetered = false)
         }
     }
 

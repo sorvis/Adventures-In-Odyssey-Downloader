@@ -182,10 +182,14 @@ class RecentVm @Inject constructor(
      */
     fun download(ep: LocalEpisodeEntity) {
         if (ep.filePath != null) return
-        DebugLogger.i("RecentVm", "download(${ep.episodeId}) — enqueueing")
+        DebugLogger.i("RecentVm", "download(${ep.providerId}:${ep.externalId}) — enqueueing")
         viewModelScope.launch {
             val allowMetered = settings.flow.first().allowMeteredDownloads
-            scheduler.enqueueDownload(ep.episodeId, allowMetered = allowMetered)
+            // Use the provider-aware enqueue so YSH rows route correctly.
+            // The legacy `enqueueDownload(Long)` shim defaults to AIO,
+            // which made the worker look up by (aio, <ysh-row-hashCode>)
+            // and silently fail when YSH rows tapped the pin.
+            scheduler.enqueueDownload(ep.providerId, ep.externalId, allowMetered = allowMetered)
         }
     }
 
@@ -222,6 +226,32 @@ fun RecentScreen(
     val isRefreshing by vm.isRefreshing.collectAsState()
     var expandedIds by remember { mutableStateOf(setOf<Long>()) }
 
+    // Visible confirmation that Refresh fired AND completed. The
+    // PullToRefreshBox spinner above shows while the worker is running,
+    // but daily-check passes often finish in <1s (especially when no
+    // new episodes landed since the last run) — without an explicit
+    // "done" snackbar the user sees nothing and assumes the button is
+    // broken. The snackbar fires on every isRefreshing true→false
+    // transition.
+    val snackbarHostState = remember { SnackbarHostState() }
+    val itemCountBefore = remember { mutableStateOf<Int?>(null) }
+    LaunchedEffect(isRefreshing) {
+        if (isRefreshing) {
+            // Snapshot the row count at the start of a refresh so we
+            // can report new-vs-existing on completion.
+            itemCountBefore.value = items.size
+        } else if (itemCountBefore.value != null) {
+            val before = itemCountBefore.value!!
+            val after = items.size
+            val msg = when {
+                after > before -> "Refresh complete — ${after - before} new episode${if (after - before == 1) "" else "s"}"
+                else -> "Refresh complete — no new episodes"
+            }
+            itemCountBefore.value = null
+            snackbarHostState.showSnackbar(msg)
+        }
+    }
+
     if (showWarning) {
         AlertDialog(
             onDismissRequest = vm::dismissWarning,
@@ -248,6 +278,7 @@ fun RecentScreen(
     }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text("Recent") },

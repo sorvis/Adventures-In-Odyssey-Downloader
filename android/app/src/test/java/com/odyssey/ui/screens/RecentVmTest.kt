@@ -134,6 +134,51 @@ class RecentVmTest {
     }
 
     @Test
+    fun `download(YSH row) enqueues via provider-aware unique work name`() = kotlinx.coroutines.runBlocking {
+        // Regression for the v0.1.40 user-reported bug: tapping the
+        // pin button on a YSH episode did nothing. RecentVm.download
+        // used to call the legacy `enqueueDownload(Long)` shim, which
+        // hardcodes provider="aio". For YSH rows the resulting
+        // (aio, <ysh-row-hashCode>) lookup found no row in the
+        // DownloadEpisodeWorker, so the worker returned failure() and
+        // the pin had no observable effect.
+        val fakePlayer = FakePlayer()
+        val vm = makeVm(fakePlayer)
+        val ysh = LocalEpisodeEntity(
+            providerId = "ysh",
+            externalId = "ysh-sku-1958",
+            title = "Madeleine's Courage",
+            airDate = null,
+            description = null,
+            sourceUrl = "https://yourstoryhour.org/x",
+            downloadUrl = "https://s3/EE-11-02.mp3",
+            filePath = null,
+            fileSize = 0L,
+            durationMs = 0L,
+            downloadedAt = null,
+            archivedAt = null,
+        )
+
+        vm.download(ysh)
+
+        // The launched viewModelScope coroutine reads settings.flow
+        // off the IO dispatcher before enqueuing — poll briefly so
+        // the test isn't tied to a specific dispatcher implementation.
+        // The unique-work name is "download-<providerId>-<externalId>".
+        // Pre-fix: "download-aio-<hashCode>" (broken).
+        // Post-fix: "download-ysh-ysh-sku-1958".
+        val ctx = ApplicationProvider.getApplicationContext<Application>()
+        val wm = androidx.work.WorkManager.getInstance(ctx)
+        val target = "download-ysh-ysh-sku-1958"
+        repeat(40) {  // ~2s budget
+            val info = wm.getWorkInfosForUniqueWork(target).get()
+            if (info.isNotEmpty()) return@runBlocking
+            kotlinx.coroutines.delay(50)
+        }
+        org.junit.Assert.fail("expected YSH-keyed download enqueue ($target) within 2s")
+    }
+
+    @Test
     fun `play swallows exceptions thrown by Player and logs them`() = runTest {
         val fakePlayer = FakePlayer(throwOnLocal = true)
         val vm = makeVm(fakePlayer)
