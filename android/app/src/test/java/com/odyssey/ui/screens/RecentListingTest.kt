@@ -1,6 +1,5 @@
 package com.odyssey.ui.screens
 
-import com.odyssey.data.local.LocalEpisodeEntity
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -8,6 +7,33 @@ import org.junit.Test
 class RecentListingTest {
 
     private data class Ep(val episodeId: Long, val title: String)
+
+    /**
+     * Mirrors the LocalEpisodeEntity fields recentItemsFor() reads, but
+     * keeps this test Android-free so it runs in the JVM-only fast lane.
+     */
+    private data class RecentEp(
+        val externalId: String,
+        val airDate: String?,
+        val providerId: String = "aio",
+        val filePath: String? = null,
+        val sourceUrl: String = "https://oneplace.com/$externalId",
+    )
+
+    /**
+     * Adapter that wires RecentEp accessors into the generic helper —
+     * keeps every test case below as a one-line `recentItemsFor(list, "aio")`.
+     */
+    private fun recentItemsFor(list: List<RecentEp>, activeShow: String): List<RecentEp> =
+        recentItemsFor(
+            eps = list,
+            activeShow = activeShow,
+            providerId = RecentEp::providerId,
+            filePath = RecentEp::filePath,
+            sourceUrl = RecentEp::sourceUrl,
+            airDate = RecentEp::airDate,
+            externalId = RecentEp::externalId,
+        )
 
     // ---- dedupResume ---------------------------------------------------
 
@@ -89,8 +115,8 @@ class RecentListingTest {
     // ---- recentItemsFor (filter + sort) -------------------------------
 
     /**
-     * Build a LocalEpisodeEntity with the fields the filter+sort cares
-     * about. Other fields get cheap defaults so the test reads cleanly.
+     * Build a RecentEp with the fields the filter+sort cares about.
+     * Other fields get cheap defaults so the test reads cleanly.
      */
     private fun ep(
         externalId: String,
@@ -98,20 +124,12 @@ class RecentListingTest {
         providerId: String = "aio",
         filePath: String? = null,
         sourceUrl: String = "https://oneplace.com/$externalId",
-        title: String = "ep-$externalId",
-    ) = LocalEpisodeEntity(
-        providerId = providerId,
+    ) = RecentEp(
         externalId = externalId,
-        title = title,
         airDate = airDate,
-        description = null,
-        sourceUrl = sourceUrl,
-        downloadUrl = sourceUrl,
+        providerId = providerId,
         filePath = filePath,
-        fileSize = 0L,
-        durationMs = 0L,
-        downloadedAt = null,
-        archivedAt = null,
+        sourceUrl = sourceUrl,
     )
 
     @Test

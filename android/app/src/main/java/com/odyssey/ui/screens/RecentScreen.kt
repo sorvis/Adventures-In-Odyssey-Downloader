@@ -98,7 +98,15 @@ class RecentVm @Inject constructor(
     // browsing the full server catalog stays on the Sync tab where it
     // belongs.
     val items = combine(episodes.observeAll(), settings.activeShow) { eps, active ->
-        recentItemsFor(eps, active)
+        recentItemsFor(
+            eps,
+            activeShow = active,
+            providerId = LocalEpisodeEntity::providerId,
+            filePath = LocalEpisodeEntity::filePath,
+            sourceUrl = LocalEpisodeEntity::sourceUrl,
+            airDate = LocalEpisodeEntity::airDate,
+            externalId = LocalEpisodeEntity::externalId,
+        )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val resume = playback.observeMostRecent().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 

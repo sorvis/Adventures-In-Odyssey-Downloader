@@ -1,6 +1,5 @@
 package com.odyssey.ui.screens
 
-import com.odyssey.data.local.LocalEpisodeEntity
 import java.text.SimpleDateFormat
 import java.util.Locale
 
@@ -39,8 +38,8 @@ fun parseAirDateMillis(airDate: String?): Long {
 }
 
 /**
- * Recent-screen visibility rule + chronological sort, as a pure function
- * so it can be tested without Compose / Room.
+ * Recent-screen visibility rule + chronological sort, kept Android-free
+ * (generic over T) so it can be tested in the JVM-only fast lane.
  *
  * Two layers of filtering:
  *
@@ -60,15 +59,20 @@ fun parseAirDateMillis(airDate: String?): Long {
  *
  * Sort: parsed air-date DESC, then externalId DESC as tiebreaker.
  */
-internal fun recentItemsFor(
-    eps: List<LocalEpisodeEntity>,
+fun <T> recentItemsFor(
+    eps: List<T>,
     activeShow: String,
-): List<LocalEpisodeEntity> =
+    providerId: (T) -> String,
+    filePath: (T) -> String?,
+    sourceUrl: (T) -> String,
+    airDate: (T) -> String?,
+    externalId: (T) -> String,
+): List<T> =
     eps.asSequence()
-        .filter { it.providerId == activeShow }
-        .filterNot { it.filePath == null && it.sourceUrl.startsWith("backup://") }
+        .filter { providerId(it) == activeShow }
+        .filterNot { filePath(it) == null && sourceUrl(it).startsWith("backup://") }
         .sortedWith(
-            compareByDescending<LocalEpisodeEntity> { parseAirDateMillis(it.airDate) }
-                .thenByDescending { it.externalId },
+            compareByDescending<T> { parseAirDateMillis(airDate(it)) }
+                .thenByDescending(externalId),
         )
         .toList()
