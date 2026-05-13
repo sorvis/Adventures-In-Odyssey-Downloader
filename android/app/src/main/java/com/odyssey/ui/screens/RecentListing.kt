@@ -1,5 +1,6 @@
 package com.odyssey.ui.screens
 
+import com.odyssey.data.local.LocalEpisodeEntity
 import java.text.SimpleDateFormat
 import java.util.Locale
 
@@ -36,3 +37,38 @@ fun parseAirDateMillis(airDate: String?): Long {
         SimpleDateFormat("MMMM d, yyyy", Locale.US).parse(airDate)?.time ?: 0L
     }.getOrDefault(0L)
 }
+
+/**
+ * Recent-screen visibility rule + chronological sort, as a pure function
+ * so it can be tested without Compose / Room.
+ *
+ * Two layers of filtering:
+ *
+ *   1. Provider filter — only rows from the currently-active show
+ *      (AIO/YSH) survive. The two providers' externalIds never overlap
+ *      (different prefixes) so this is a clean cut.
+ *
+ *   2. Backup-mirror ghost filter — drop rows that BrowseNasScreen's
+ *      `mirrorServerEpisodes()` inserted purely to power the Albums
+ *      tab's "☁ on backup" badge. Those carry `sourceUrl="backup://<id>"`
+ *      with `filePath=null`, no on-phone audio, and a year-only airDate
+ *      ("2011") that fails to parse — without this filter they pile up
+ *      under "Recent" looking like noise to the user (reported via
+ *      screenshot 2026-05-13). Backup rows that have BEEN downloaded
+ *      (filePath != null after a Restore) stay visible — they're real
+ *      on-phone audio now.
+ *
+ * Sort: parsed air-date DESC, then externalId DESC as tiebreaker.
+ */
+internal fun recentItemsFor(
+    eps: List<LocalEpisodeEntity>,
+    activeShow: String,
+): List<LocalEpisodeEntity> =
+    eps.asSequence()
+        .filter { it.providerId == activeShow }
+        .filterNot { it.filePath == null && it.sourceUrl.startsWith("backup://") }
+        .sortedWith(
+            compareByDescending<LocalEpisodeEntity> { parseAirDateMillis(it.airDate) }
+                .thenByDescending { it.externalId },
+        )
+        .toList()

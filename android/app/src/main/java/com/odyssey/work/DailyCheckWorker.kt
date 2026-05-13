@@ -62,7 +62,13 @@ class DailyCheckWorker @AssistedInject constructor(
             DebugLogger.i(
                 "DailyCheckWorker",
                 "provider '${provider.id}' newSince(lastSeen=$lastSeen) returned ${list.size} episodes" +
-                    if (list.isNotEmpty()) " (newest='${list.first().externalId}:${list.first().title}')" else "",
+                    if (list.isNotEmpty()) {
+                        " (newest='${list.first().externalId}:${list.first().title}' " +
+                            "airDate='${list.first().airDate}'); " +
+                            "summary=[" +
+                            list.joinToString(", ") { "${it.externalId}@${it.airDate ?: "null"}" } +
+                            "]"
+                    } else "",
             )
             list.map { provider to it }
         }

@@ -87,12 +87,18 @@ class RecentVm @Inject constructor(
     // Filtered by activeShow so flipping to YSH in the dropdown
     // immediately shows YSH episodes here too. AIO/YSH externalIds
     // never overlap (different prefixes) so the filter is a clean cut.
+    //
+    // ALSO filtered to drop "backup-mirror ghosts" — rows inserted by
+    // BrowseNasScreen.mirrorServerEpisodes() that exist purely to light
+    // up the Albums tab's "☁ on backup" badge. They carry
+    // sourceUrl="backup://<id>" + filePath=null, no on-phone audio,
+    // and a year-only airDate ("2011") that doesn't parse — so they
+    // used to pile up at the bottom of Recent looking like junk. Recent
+    // is now "freshly aired ingests + episodes actually on this phone";
+    // browsing the full server catalog stays on the Sync tab where it
+    // belongs.
     val items = combine(episodes.observeAll(), settings.activeShow) { eps, active ->
-        eps.filter { it.providerId == active }
-            .sortedWith(
-                compareByDescending<LocalEpisodeEntity> { parseAirDateMillis(it.airDate) }
-                    .thenByDescending { it.externalId },
-            )
+        recentItemsFor(eps, active)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val resume = playback.observeMostRecent().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
