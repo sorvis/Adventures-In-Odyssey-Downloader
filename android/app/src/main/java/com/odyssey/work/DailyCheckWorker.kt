@@ -94,8 +94,55 @@ class DailyCheckWorker @AssistedInject constructor(
         }
 
         var newCount = 0
+        var promotedCount = 0
         for ((provider, ep) in fetched) {
-            if ((provider.id to ep.externalId) in existing) continue
+            val isExisting = (provider.id to ep.externalId) in existing
+            if (isExisting) {
+                // Backup-mirror ghost promotion: BrowseNasScreen's
+                // mirrorServerEpisodes() pre-inserts every server-side
+                // episode as a stub row (sourceUrl='backup://<id>',
+                // filePath=null) so the Albums tab can show the "☁ on
+                // backup" badge. When the daily-check worker later
+                // fetches the SAME episode from oneplace.com, the
+                // previous `continue` left the row stuck with the
+                // placeholder sourceUrl + whatever airDate the NAS
+                // server reported (often year-only "2011" which doesn't
+                // parse to a real millis). Recent's v0.1.48 filter
+                // then hid it as a ghost. Result: newly-aired episodes
+                // 266/267/268 invisible to the user even though the
+                // worker correctly fetched them (user report
+                // 2026-05-13).
+                //
+                // Fix: refresh the row's source-of-truth metadata
+                // (sourceUrl, downloadUrl, airDate, title, description,
+                // imageUrl, durationMs) with what the provider just
+                // returned. PRESERVE filePath/fileSize/downloadedAt/
+                // archivedAt so we don't clobber on-phone state. Only
+                // touch rows that look like ghosts (still null filePath
+                // and backup:// sourceUrl) to avoid pointless churn.
+                val current = episodes.byKey(provider.id, ep.externalId)
+                if (current != null && current.filePath == null &&
+                    current.sourceUrl.startsWith("backup://")
+                ) {
+                    episodes.upsert(
+                        current.copy(
+                            title = ep.title,
+                            airDate = ep.airDate,
+                            description = ep.description,
+                            sourceUrl = ep.sourceUrl,
+                            downloadUrl = ep.downloadUrl,
+                            durationMs = ep.durationSeconds * 1000,
+                            imageUrl = ep.imageUrl,
+                            // archivedAt stays — the NAS server still
+                            // has the audio, so the album badge stays.
+                        ),
+                    )
+                    promotedCount++
+                }
+                // NOT a new ingest — don't enqueue download, don't
+                // bump newCount. Promotion is silent.
+                continue
+            }
             episodes.upsert(
                 LocalEpisodeEntity(
                     providerId   = provider.id,
@@ -128,7 +175,9 @@ class DailyCheckWorker @AssistedInject constructor(
         settings.setLastRun(System.currentTimeMillis())
         DebugLogger.i(
             "DailyCheckWorker",
-            "doWork done — fetched=${fetched.size} alreadyExisting=${fetched.size - newCount} " +
+            "doWork done — fetched=${fetched.size} " +
+                "alreadyExisting=${fetched.size - newCount} " +
+                "promotedFromBackupGhost=$promotedCount " +
                 "newRows=$newCount, publishing outputData[$KEY_NEW_COUNT]=$newCount",
         )
         // Publish the new-row count via WorkInfo.outputData. The UI

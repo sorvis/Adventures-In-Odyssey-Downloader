@@ -227,6 +227,13 @@ class RecentVm @Inject constructor(
     fun download(ep: LocalEpisodeEntity) {
         if (ep.filePath != null) return
         DebugLogger.i("RecentVm", "download(${ep.providerId}:${ep.externalId}) — enqueueing")
+        // Seed the progress tracker IMMEDIATELY (before the suspend
+        // boundary below) so the row shows an indeterminate "queued"
+        // bar the instant the user taps pin. The worker overrides the
+        // placeholder with real bytes when it starts, and clears the
+        // entry on success/failure. Reported via user screenshot
+        // 2026-05-13: "pin doesn't show a progress bar on YSH rows."
+        downloadProgress.queue(ep.episodeId)
         viewModelScope.launch {
             val allowMetered = settings.flow.first().allowMeteredDownloads
             // Use the provider-aware enqueue so YSH rows route correctly.

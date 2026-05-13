@@ -18,6 +18,25 @@ class DownloadProgressTracker @Inject constructor() {
     private val _progress = MutableStateFlow<Map<Long, DownloadProgressEntry>>(emptyMap())
     val progress: StateFlow<Map<Long, DownloadProgressEntry>> = _progress
 
+    /**
+     * Insert a placeholder "queued" entry — (bytesRead=0, totalBytes=0)
+     * — so the row shows an indeterminate progress bar IMMEDIATELY after
+     * the user taps the pin button, instead of staring at an unchanged
+     * row while WorkManager waits for the network constraint to clear.
+     *
+     * No-op if there's already an entry (the worker may have started
+     * before this call lands; don't clobber real bytes-in-flight with
+     * zeros).
+     */
+    fun queue(episodeId: Long) {
+        while (true) {
+            val current = _progress.value
+            if (episodeId in current) return    // worker beat us; keep its real data
+            val next = current + (episodeId to DownloadProgressEntry(0L, 0L))
+            if (_progress.compareAndSet(current, next)) return
+        }
+    }
+
     /** Update or insert an entry for [episodeId]. */
     fun update(episodeId: Long, bytesRead: Long, totalBytes: Long) {
         while (true) {

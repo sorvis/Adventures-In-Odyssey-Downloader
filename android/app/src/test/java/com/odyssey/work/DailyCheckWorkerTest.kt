@@ -21,6 +21,7 @@ import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -264,6 +265,147 @@ class DailyCheckWorkerTest {
         // "Check now" actually ran.
         val s = settings.flow.first()
         assertTrue("lastRunAt should have advanced past the seed value", s.lastRunAtMs > 1L)
+    }
+
+    @Test
+    fun `backup-mirror ghost rows get promoted to real ingests when the provider re-fetches them`() = runBlocking {
+        // User report 2026-05-13: newly-aired episodes 266/267/268 were
+        // already in the DB as backup-mirror ghosts (BrowseNasScreen's
+        // mirrorServerEpisodes() pre-inserts every server-side episode
+        // with sourceUrl='backup://<id>' to power the Albums "☁ on
+        // backup" badge). DailyCheckWorker fetched 268 from oneplace
+        // but its `continue` on `(provider, externalId) in existing`
+        // left the row stuck with the backup:// sourceUrl + (often
+        // null/unparseable) airDate. Recent's v0.1.48 backup-ghost
+        // filter then HID the row. Net result: latest episodes
+        // invisible.
+        //
+        // Promotion rule: when an existing row has filePath=null AND
+        // sourceUrl LIKE 'backup://%' (a pure ghost), overwrite
+        // sourceUrl/downloadUrl/airDate/title/description/imageUrl/
+        // durationMs with the provider's data. Preserve filePath/
+        // fileSize/downloadedAt/archivedAt so on-phone state and the
+        // backup badge stay intact. No download enqueue; newCount
+        // stays at 0 — promotion is invisible to the snackbar.
+        episodes.upsert(
+            com.odyssey.data.local.LocalEpisodeEntity(
+                providerId = "aio",
+                externalId = "265",
+                title = "stale-mirror-title",
+                airDate = null,                       // mirror dropped it
+                description = null,
+                sourceUrl = "backup://265",
+                downloadUrl = "backup://265",
+                filePath = null,
+                fileSize = 100L,                      // server-known size
+                durationMs = 0L,
+                downloadedAt = null,
+                archivedAt = 99999L,                  // backup badge active
+            ),
+        )
+
+        // AIO fetches 7 episodes from the canned fixture; one of them
+        // is broadcast 265 ("War of the Words", aired May 8, 2026).
+        server.enqueue(html(loadFixture("/oneplace/listen.html")))
+        server.enqueue(json(loadFixture("/oneplace/api_page1.json")))
+        server.enqueue(json(loadFixture("/oneplace/api_page2.json")))
+
+        val worker = buildWorker()
+        val result = worker.doWork()
+        assertTrue(
+            "worker should still succeed when no NEW rows landed " +
+                "(promotion alone, no ingest)",
+            result is androidx.work.ListenableWorker.Result.Success,
+        )
+
+        // Promotion preserved on-phone + backup state…
+        val promoted = episodes.byKey("aio", "265")!!
+        assertEquals(null, promoted.filePath)
+        assertEquals(99999L, promoted.archivedAt)         // backup badge unchanged
+        // …and refreshed the source-of-truth metadata.
+        assertFalse(
+            "sourceUrl should no longer be a backup:// stub — Recent's " +
+                "ghost filter relies on this to surface the row",
+            promoted.sourceUrl.startsWith("backup://"),
+        )
+        assertEquals(
+            "title should match what the provider returned, not the " +
+                "stale-mirror-title placeholder",
+            "War of the Words",
+            promoted.title,
+        )
+        assertEquals(
+            "airDate must come from the provider so Recent can sort it " +
+                "chronologically — the ghost had null airDate which sank it",
+            "May 8, 2026", promoted.airDate,
+        )
+
+        // The fixture returns 7 episodes; we pre-seeded only 265 as a
+        // ghost, so the other 6 ARE genuine new ingests and WILL be
+        // enqueued. The promoted 265 itself must NOT be among those
+        // enqueues — that's the assertion that locks in the promotion
+        // semantics (refresh metadata, no re-download).
+        val enqueuedExternalIds = enqueuer.calls.map { it.externalId }
+        assertFalse(
+            "promoted ghost row 265 must NOT trigger a download enqueue " +
+                "— the audio is already archived on the NAS, no need to " +
+                "re-pull it from oneplace",
+            "265" in enqueuedExternalIds,
+        )
+        assertEquals(
+            "the OTHER 6 episodes in the fixture (no prior row) ARE " +
+                "genuine new ingests and should enqueue normally",
+            6, enqueuer.calls.size,
+        )
+
+        // Snackbar reports the 6 actually-new rows; promotion is invisible.
+        val publishedCount = (result as androidx.work.ListenableWorker.Result.Success)
+            .outputData.getInt(DailyCheckWorker.KEY_NEW_COUNT, -1)
+        assertEquals(
+            "newCount counts new ingests only — promotion adds 0 to the count",
+            6, publishedCount,
+        )
+    }
+
+    @Test
+    fun `promotion does NOT clobber filePath of an already-downloaded row`() = runBlocking {
+        // Defense in depth: even if the existing row's sourceUrl looks
+        // like 'backup://...' (e.g. user restored it from NAS at some
+        // point — RestoreEpisodeWorker would have set filePath), we
+        // must NOT enter the promotion path. The filePath != null
+        // guard upstream of the promotion block protects against this;
+        // this test pins it.
+        episodes.upsert(
+            com.odyssey.data.local.LocalEpisodeEntity(
+                providerId = "aio",
+                externalId = "265",
+                title = "restored-from-nas",
+                airDate = "May 8, 2026",
+                description = null,
+                sourceUrl = "backup://265",            // came in via Restore
+                downloadUrl = "backup://265",
+                filePath = "/data/odyssey/aio/265.mp3", // ← on phone!
+                fileSize = 18000000L,
+                durationMs = 25 * 60 * 1000L,
+                downloadedAt = 12345L,
+                archivedAt = 67890L,
+            ),
+        )
+
+        server.enqueue(html(loadFixture("/oneplace/listen.html")))
+        server.enqueue(json(loadFixture("/oneplace/api_page1.json")))
+        server.enqueue(json(loadFixture("/oneplace/api_page2.json")))
+
+        buildWorker().doWork()
+
+        val stillOnPhone = episodes.byKey("aio", "265")!!
+        // filePath untouched — the row is still playable offline.
+        assertEquals("/data/odyssey/aio/265.mp3", stillOnPhone.filePath)
+        assertEquals(18000000L, stillOnPhone.fileSize)
+        assertEquals(12345L, stillOnPhone.downloadedAt)
+        // The row's sourceUrl is allowed to stay backup:// here — it's
+        // a restored backup, the "ghost filter" doesn't apply (filePath
+        // is set, so the v0.1.48 Recent filter lets it through).
     }
 
     @Test

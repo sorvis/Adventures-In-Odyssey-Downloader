@@ -23,6 +23,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -179,6 +180,99 @@ class RecentVmTest {
     }
 
     @Test
+    fun `download seeds tracker IMMEDIATELY so the row shows queued progress on pin-tap`() = runTest {
+        // User report (screenshot 2026-05-13): tapping pin on YSH does
+        // not surface a progress bar — the row stayed visually
+        // unchanged until the worker downloaded enough bytes for an
+        // update() call, which can be tens of seconds away on metered
+        // / wifi-only constraints. The fix: RecentVm.download() seeds
+        // the tracker with a (0, 0) placeholder BEFORE the suspend
+        // boundary so EpisodeRow's "totalBytes==0 → indeterminate bar"
+        // path fires right away.
+        val tracker = DownloadProgressTracker()
+        val vm = makeVm(FakePlayer(), tracker = tracker)
+        val ysh = LocalEpisodeEntity(
+            providerId = "ysh",
+            externalId = "ysh-sku-1958",
+            title = "Madeleine's Courage",
+            airDate = null,
+            description = null,
+            sourceUrl = "https://yourstoryhour.org/x",
+            downloadUrl = "https://s3/EE-11-02.mp3",
+            filePath = null,
+            fileSize = 0L,
+            durationMs = 0L,
+            downloadedAt = null,
+            archivedAt = null,
+        )
+
+        // Tracker is empty before the tap.
+        assertTrue(tracker.progress.value.isEmpty())
+
+        vm.download(ysh)
+
+        // Synchronous side-effect of download() — does NOT depend on
+        // viewModelScope's coroutine completing. The entry MUST exist
+        // immediately after download() returns.
+        val key = "ysh-sku-1958".hashCode().toLong()
+        val entry = tracker.progress.value[key]
+        assertNotNull(
+            "RecentVm.download() must seed the progress tracker for the " +
+                "tapped episode's key so the row's indeterminate bar appears " +
+                "without waiting on WorkManager to start the actual transfer",
+            entry,
+        )
+        // Placeholder shape: 0 bytes read, 0 total — drives the
+        // indeterminate (spinning) variant of LinearProgressIndicator.
+        assertEquals(0L, entry!!.bytesRead)
+        assertEquals(0L, entry.totalBytes)
+    }
+
+    @Test
+    fun `tracker key from RecentVm matches the worker's progressKey for YSH (hashCode-of-externalId)`() = runTest {
+        // Regression guard: LocalEpisodeEntity.episodeId AND
+        // DownloadEpisodeWorker.progressKey both fall back to
+        // externalId.hashCode().toLong() when the externalId isn't
+        // numeric. If those two formulas ever diverge, the row's
+        // progress lookup (keyed by episodeId) misses every update the
+        // worker fires (keyed by progressKey) — silent failure.
+        val tracker = DownloadProgressTracker()
+        val vm = makeVm(FakePlayer(), tracker = tracker)
+        val externalId = "ysh-sku-9999"
+        val ysh = LocalEpisodeEntity(
+            providerId = "ysh",
+            externalId = externalId,
+            title = "x",
+            airDate = null,
+            description = null,
+            sourceUrl = "https://yourstoryhour.org/x",
+            downloadUrl = "https://s3/x.mp3",
+            filePath = null,
+            fileSize = 0L,
+            durationMs = 0L,
+            downloadedAt = null,
+            archivedAt = null,
+        )
+
+        vm.download(ysh)
+
+        // The key the row would look up.
+        val rowKey = ysh.episodeId
+        // The key the worker writes under (mirrors line 51 of
+        // DownloadEpisodeWorker.kt — keep these in sync).
+        val workerKey = externalId.toLongOrNull() ?: externalId.hashCode().toLong()
+
+        assertEquals(
+            "row's progress[ep.episodeId] lookup MUST find the worker's " +
+                "writes — if these two derivations of the key drift, the " +
+                "row will silently never show a progress bar for YSH.",
+            rowKey, workerKey,
+        )
+        assertTrue("seeded entry must be findable under the row's key",
+            rowKey in tracker.progress.value)
+    }
+
+    @Test
     fun `play swallows exceptions thrown by Player and logs them`() = runTest {
         val fakePlayer = FakePlayer(throwOnLocal = true)
         val vm = makeVm(fakePlayer)
@@ -193,14 +287,17 @@ class RecentVmTest {
 
     // -- helpers ---------------------------------------------------------
 
-    private fun makeVm(player: EpisodePlayer): RecentVm = RecentVm(
+    private fun makeVm(
+        player: EpisodePlayer,
+        tracker: DownloadProgressTracker = DownloadProgressTracker(),
+    ): RecentVm = RecentVm(
         ctx = ApplicationProvider.getApplicationContext(),
         episodes = NoopEpisodeDao(),
         playback = NoopPlaybackDao(),
         player = player,
         scheduler = WorkScheduler(ApplicationProvider.getApplicationContext()),
         settings = SettingsRepo(ApplicationProvider.getApplicationContext()),
-        downloadProgress = DownloadProgressTracker(),
+        downloadProgress = tracker,
         archiveProgress = com.odyssey.download.ArchiveProgressTracker(),
         catalog = AioCatalogRepo(ApplicationProvider.getApplicationContext()),
     )
