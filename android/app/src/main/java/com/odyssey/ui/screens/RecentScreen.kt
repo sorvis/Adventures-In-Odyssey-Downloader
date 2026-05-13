@@ -51,6 +51,7 @@ import com.odyssey.player.formatRemaining
 import com.odyssey.player.formatResumeSubtitle
 import com.odyssey.player.formatTotalDuration
 import com.odyssey.player.playSourceFor
+import com.odyssey.work.DailyCheckSnapshot
 import com.odyssey.work.WorkScheduler
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -115,12 +116,22 @@ class RecentVm @Inject constructor(
     val showMeteredWarning = MutableStateFlow(false)
 
     fun checkNow() {
+        DebugLogger.i("RecentVm", "checkNow() — refresh tapped")
         viewModelScope.launch {
             val allowMetered = settings.flow.first().allowMeteredDownloads
-            if (!allowMetered && isOnMeteredNetwork()) {
+            val metered = isOnMeteredNetwork()
+            if (!allowMetered && metered) {
+                DebugLogger.i(
+                    "RecentVm",
+                    "checkNow() — short-circuited (on metered, allowMetered=false); showing warning",
+                )
                 showMeteredWarning.value = true
                 return@launch
             }
+            DebugLogger.i(
+                "RecentVm",
+                "checkNow() — enqueueing DailyCheckWorker (metered=$metered, allowMetered=$allowMetered)",
+            )
             scheduler.runDailyCheckNow()
         }
     }
@@ -140,20 +151,20 @@ class RecentVm @Inject constructor(
     val playerState = player.state
 
     /**
-     * `true` while DailyCheckWorker is enqueued or running. Drives the
-     * pull-to-refresh spinner on the Recent screen.
+     * Single source of truth for "what is the Check-now worker doing."
+     * `active` drives the pull-to-refresh spinner; `newCount` drives
+     * the "Refresh complete — N new" snackbar. They MUST come from the
+     * same StateFlow so Compose recomposes once with both fields in
+     * sync — splitting them into two `.stateIn` flows reintroduces the
+     * race the WorkInfo refactor was designed to eliminate.
      */
-    val isRefreshing = scheduler.dailyCheckActive
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
-
-    /**
-     * Worker-published count of new rows from the most recent daily
-     * check. Drives the "Refresh complete — N new" snackbar; sourced
-     * from settings (not items.size delta) so the count survives the
-     * Room-vs-WorkManager Flow race.
-     */
-    val lastCheckNewCount = settings.lastCheckNewCount
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
+    val dailyCheck: kotlinx.coroutines.flow.StateFlow<DailyCheckSnapshot> =
+        scheduler.dailyCheckSnapshot
+            .stateIn(
+                viewModelScope,
+                SharingStarted.WhileSubscribed(5_000),
+                DailyCheckSnapshot(active = false, newCount = 0),
+            )
 
     fun play(ep: LocalEpisodeEntity) {
         // Tap on the row's button while THIS episode is already playing
@@ -248,7 +259,8 @@ fun RecentScreen(
     val progress by vm.progress.collectAsState()
     val archive by vm.archive.collectAsState()
     val playerState by vm.playerState.collectAsState()
-    val isRefreshing by vm.isRefreshing.collectAsState()
+    val dailyCheck by vm.dailyCheck.collectAsState()
+    val isRefreshing = dailyCheck.active
     var expandedIds by remember { mutableStateOf(setOf<Long>()) }
 
     // Visible confirmation that Refresh fired AND completed. The
@@ -259,10 +271,9 @@ fun RecentScreen(
     // broken. RefreshCompleteSnackbarEffect fires on every isRefreshing
     // true→false transition.
     val snackbarHostState = remember { SnackbarHostState() }
-    val lastCheckNewCount by vm.lastCheckNewCount.collectAsState()
     RefreshCompleteSnackbarEffect(
         isRefreshing = isRefreshing,
-        newCount = lastCheckNewCount,
+        newCount = dailyCheck.newCount,
         snackbarHostState = snackbarHostState,
     )
     // Same SnackbarHost surfaces pin-tap feedback — "Download started"
@@ -310,7 +321,13 @@ fun RecentScreen(
                     // Pull-to-refresh is the primary trigger; this icon
                     // is the discoverability fallback for users who
                     // don't think to swipe. Both call vm.checkNow().
-                    IconButton(onClick = vm::checkNow, modifier = Modifier.testTag("check-now")) {
+                    IconButton(
+                        onClick = {
+                            DebugLogger.i("RecentScreen", "Refresh icon clicked")
+                            vm.checkNow()
+                        },
+                        modifier = Modifier.testTag("check-now"),
+                    ) {
                         Icon(Icons.Default.Refresh, contentDescription = "Check for new episodes")
                     }
                 },
@@ -319,7 +336,10 @@ fun RecentScreen(
     ) { padding ->
         PullToRefreshBox(
             isRefreshing = isRefreshing,
-            onRefresh = vm::checkNow,
+            onRefresh = {
+                DebugLogger.i("RecentScreen", "Pull-to-refresh triggered")
+                vm.checkNow()
+            },
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
@@ -639,10 +659,11 @@ internal fun EpisodeRow(
 /**
  * Snackbar effect that fires "Refresh complete — N new episodes"
  * every time `isRefreshing` transitions true → false. Uses the
- * worker-published `newCount` (from SettingsRepo.lastCheckNewCount)
- * rather than diffing `items.size` from start to end — the old
- * delta approach lost a race between Room's Flow emission and
- * WorkManager's state transition, causing the snackbar to claim
+ * worker-published `newCount` (carried in WorkInfo.outputData and
+ * surfaced alongside `active` in the same DailyCheckSnapshot
+ * emission) rather than diffing `items.size` from start to end —
+ * the old delta approach lost a race between Room's Flow emission
+ * and WorkManager's state transition, causing the snackbar to claim
  * "no new episodes" when 3 had actually landed.
  *
  * Visible for tests so plural/empty cases can be locked without a
@@ -656,11 +677,17 @@ internal fun RefreshCompleteSnackbarEffect(
 ) {
     val sawRefreshing = remember { mutableStateOf(false) }
     LaunchedEffect(isRefreshing) {
+        DebugLogger.i(
+            "RefreshSnackbarEffect",
+            "LaunchedEffect fired — isRefreshing=$isRefreshing sawRefreshing=${sawRefreshing.value} newCount=$newCount",
+        )
         if (isRefreshing) {
             sawRefreshing.value = true
         } else if (sawRefreshing.value) {
             sawRefreshing.value = false
-            snackbarHostState.showSnackbar(refreshCompleteMessage(newCount))
+            val msg = refreshCompleteMessage(newCount)
+            DebugLogger.i("RefreshSnackbarEffect", "showing snackbar: \"$msg\"")
+            snackbarHostState.showSnackbar(msg)
         }
     }
 }

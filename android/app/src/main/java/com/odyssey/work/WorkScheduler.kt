@@ -2,9 +2,12 @@ package com.odyssey.work
 
 import android.content.Context
 import androidx.work.*
+import com.odyssey.debug.DebugLogger
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -81,25 +84,76 @@ class WorkScheduler @Inject constructor(@ApplicationContext private val ctx: Con
                     .build()
             )
             .build()
+        DebugLogger.i(
+            "WorkScheduler",
+            "runDailyCheckNow — enqueueUniqueWork($CHECK_NOW_WORK, REPLACE, id=${req.id})",
+        )
         wm.enqueueUniqueWork(CHECK_NOW_WORK, ExistingWorkPolicy.REPLACE, req)
     }
 
     /**
-     * `true` while a Check-now (or daily) check is enqueued or actively
-     * running, `false` once it terminates. Drives the pull-to-refresh
-     * spinner on the Recent screen so the user can SEE the worker is
-     * active without watching adb.
+     * Combined "what is the Check-now worker doing right now" state —
+     * `active` drives the pull-to-refresh spinner, `newCount` drives
+     * the "Refresh complete — N new" snackbar. Both fields are
+     * projected from a SINGLE WorkInfo emission, so the UI cannot
+     * observe one without the other: no race between the spinner
+     * flipping false and the new-row count being readable.
      *
      * Lazy so that constructing WorkScheduler in unit tests doesn't
      * trip WorkManager's "not initialized" check — tests that don't
      * touch this property never hit WorkManager.getInstance().
      */
-    val dailyCheckActive: Flow<Boolean> by lazy {
+    val dailyCheckSnapshot: Flow<DailyCheckSnapshot> by lazy {
         wm.getWorkInfosForUniqueWorkFlow(CHECK_NOW_WORK)
-            .map { infos -> infos.any { !it.state.isFinished } }
+            .onEach { infos ->
+                // v0.1.45 diagnostic: print the raw WorkInfo set the
+                // projection is reasoning over so we can tell whether
+                // the snackbar's "no new episodes" is genuine (worker
+                // really published 0) or a multi-history pick error
+                // (more than one SUCCEEDED entry; firstOrNull picked
+                // an old/empty one). One line per emission.
+                val states = infos.groupingBy { it.state.name }.eachCount()
+                val succeededCounts = infos
+                    .filter { it.state == androidx.work.WorkInfo.State.SUCCEEDED }
+                    .map { it.outputData.getInt(DailyCheckWorker.KEY_NEW_COUNT, -1) }
+                DebugLogger.i(
+                    "WorkScheduler",
+                    "dailyCheckSnapshot emit — total=${infos.size} states=$states " +
+                        "succeededNewCounts=$succeededCounts",
+                )
+            }
+            .map { infos ->
+                val active = infos.any { !it.state.isFinished }
+                // Read the count from the most recent SUCCEEDED entry.
+                // Other states (ENQUEUED, RUNNING) carry no output;
+                // they hold the previous successful count steady so the
+                // UI doesn't flash a zero while a refresh is in flight.
+                //
+                // NOTE: WorkManager keeps SUCCEEDED entries in history
+                // after REPLACE, so `infos` can contain MULTIPLE
+                // succeeded entries with no documented ordering.
+                // firstOrNull here is the suspected v0.1.44 production
+                // bug — v0.1.45 instruments it; the fix lands after
+                // we read live logs.
+                val succeeded = infos.firstOrNull {
+                    it.state == androidx.work.WorkInfo.State.SUCCEEDED
+                }
+                val newCount = succeeded?.outputData
+                    ?.getInt(DailyCheckWorker.KEY_NEW_COUNT, 0) ?: 0
+                DailyCheckSnapshot(active = active, newCount = newCount)
+            }
+            .distinctUntilChanged()
     }
 
-    private companion object {
+    companion object {
+        /**
+         * Unique work name for the manually-triggered "Check now" run.
+         * Exposed (visible-for-testing) so race-invariant tests can
+         * enqueue stub workers under the same name the production code
+         * watches via `dailyCheckSnapshot` — the snapshot binds to this
+         * exact string, so the test's stub correctly drives it.
+         */
+        @androidx.annotation.VisibleForTesting
         const val CHECK_NOW_WORK = "odyssey-check-now"
     }
 
@@ -181,3 +235,15 @@ class WorkScheduler @Inject constructor(@ApplicationContext private val ctx: Con
         wm.enqueueUniqueWork("restore-$episodeId", ExistingWorkPolicy.KEEP, req)
     }
 }
+
+/**
+ * Atomic snapshot of "what is the Check-now worker doing." `active`
+ * drives the pull-to-refresh spinner; `newCount` is the most recent
+ * SUCCEEDED worker's output and survives across the next refresh's
+ * pending/running state (keeps the prior count visible rather than
+ * flashing 0 while the new run buffers).
+ *
+ * The two fields ARRIVE TOGETHER because they're projected from a
+ * single WorkInfo emission — no Compose-state race possible.
+ */
+data class DailyCheckSnapshot(val active: Boolean, val newCount: Int)

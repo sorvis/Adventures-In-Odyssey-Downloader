@@ -58,11 +58,11 @@ class RefreshCompleteSnackbarTest {
     @Test
     fun snackbar_fires_on_true_to_false_transition_using_worker_published_count() {
         // The fix for the "no new episodes" bug: the effect reads the
-        // count directly from SettingsRepo.lastCheckNewCount (passed
-        // in as `newCount`), not from items.size delta. The worker
-        // publishes the count BEFORE its Result.success(), which
-        // happens BEFORE WorkInfo flips to SUCCEEDED, so there's no
-        // race with Room's Flow.
+        // count from WorkInfo.outputData (surfaced via
+        // scheduler.dailyCheckSnapshot, passed in as `newCount`), not
+        // from items.size delta. The worker writes outputData as part
+        // of Result.success(), so the count and the SUCCEEDED state
+        // arrive in the SAME WorkInfo emission — no race with Room.
         val state = SnackbarHostState()
         var isRefreshing by mutableStateOf(false)
         var newCount by mutableIntStateOf(0)
@@ -81,7 +81,7 @@ class RefreshCompleteSnackbarTest {
         // (it inserted 3 rows). Worker completes: isRefreshing false.
         isRefreshing = true
         composeRule.waitForIdle()
-        newCount = 3   // worker calls settings.setLastCheckNewCount(3)
+        newCount = 3   // worker returns Result.success(workDataOf(KEY_NEW_COUNT to 3))
         composeRule.waitForIdle()
         isRefreshing = false
         composeRule.waitForIdle()
@@ -135,14 +135,14 @@ class RefreshCompleteSnackbarTest {
 
     @Test
     fun snackbar_does_NOT_lose_the_count_if_newCount_arrives_BEFORE_isRefreshing_flips_false() {
-        // Reproduces the v0.1.42 race symptom: the worker publishes
-        // its count just before completing. There's no ordering
-        // guarantee that `newCount` propagates to Compose AFTER
-        // `isRefreshing` flips false. But since the snackbar effect
-        // reads `newCount` directly from SettingsRepo (not via items
-        // delta), it picks up whichever value is current — and the
-        // worker writes the count BEFORE returning, so by the time
-        // isRefreshing observes the completion the count is correct.
+        // Reproduces the v0.1.42 race symptom but proves it's
+        // structurally impossible after the WorkInfo.outputData
+        // refactor: `active` and `newCount` are BOTH projected from
+        // a single WorkInfo emission in WorkScheduler.dailyCheckSnapshot,
+        // so the UI cannot observe `active=false` without the
+        // matching `newCount`. RefreshCompleteSnackbarEffect just
+        // reads whatever the StateFlow currently holds; with the
+        // snapshot model the two fields can never drift.
         val state = SnackbarHostState()
         var isRefreshing by mutableStateOf(false)
         var newCount by mutableIntStateOf(0)

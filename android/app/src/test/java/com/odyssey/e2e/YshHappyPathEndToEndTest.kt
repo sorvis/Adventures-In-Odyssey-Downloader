@@ -116,7 +116,20 @@ class YshHappyPathEndToEndTest {
 
         val worker = buildWorker(providers = setOf(aio))
         val result = worker.doWork()
-        assertEquals(androidx.work.ListenableWorker.Result.success(), result)
+        // Worker now publishes the new-row count via WorkInfo.outputData,
+        // so Result.success(workDataOf(...)) is NOT structurally equal
+        // to Result.success(). Assert the type + the published count
+        // — the count is what drives the user-facing snackbar.
+        assertTrue(
+            "expected success result, got $result",
+            result is androidx.work.ListenableWorker.Result.Success,
+        )
+        assertEquals(
+            "7 fresh-install rows must show up in outputData[KEY_NEW_COUNT]",
+            7,
+            (result as androidx.work.ListenableWorker.Result.Success).outputData
+                .getInt(com.odyssey.work.DailyCheckWorker.KEY_NEW_COUNT, -1),
+        )
 
         val rows = episodes.observeAll().first()
         assertEquals(7, rows.size)

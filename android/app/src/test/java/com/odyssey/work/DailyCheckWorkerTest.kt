@@ -104,7 +104,7 @@ class DailyCheckWorkerTest {
 
         val worker = buildWorker()
         val result = worker.doWork()
-        assertEquals(ListenableWorker.Result.success(), result)
+        assertSuccessWithNewCount(result, expected = 7)
 
         // The worker scrapes up to 7 on a fresh install (lastSeen == 0).
         val rows = episodes.observeAll().first()
@@ -171,7 +171,7 @@ class DailyCheckWorkerTest {
 
         val worker = buildWorker()
         val result = worker.doWork()
-        assertEquals(ListenableWorker.Result.success(), result)
+        assertTrue("expected success result, got $result", result is ListenableWorker.Result.Success)
 
         val rows = episodes.observeAll().first()
         val newRowCount = rows.size - startCount
@@ -180,6 +180,17 @@ class DailyCheckWorkerTest {
                 "got $newRowCount new (total ${rows.size}). " +
                 "User-reported bug: refresh says 'no new episodes' even though oneplace has shipped new ones.",
             newRowCount >= 2,
+        )
+        // The published newCount MUST match what actually got ingested —
+        // this is the field the UI uses for the "Refresh complete — N
+        // new episodes" snackbar. If the worker miscounts, the user
+        // sees "no new episodes" even when new rows landed.
+        val publishedCount =
+            (result as ListenableWorker.Result.Success).outputData
+                .getInt(DailyCheckWorker.KEY_NEW_COUNT, -1)
+        assertEquals(
+            "published newCount in WorkInfo.outputData must equal the actual new-row delta",
+            newRowCount, publishedCount,
         )
     }
 
@@ -245,7 +256,7 @@ class DailyCheckWorkerTest {
 
         val worker = buildWorker()
         val result = worker.doWork()
-        assertEquals(ListenableWorker.Result.success(), result)
+        assertSuccessWithNewCount(result, expected = 0)
 
         assertEquals("no new episodes should be ingested", 0, episodes.observeAll().first().size)
         assertEquals("no enqueues for empty result", 0, enqueuer.calls.size)
@@ -315,7 +326,7 @@ class DailyCheckWorkerTest {
 
         val worker = buildWorker()
         val result = worker.doWork()
-        assertEquals(ListenableWorker.Result.success(), result)
+        assertSuccessWithNewCount(result, expected = 9)
 
         val rows = episodes.observeAll().first()
         // 7 AIO + 2 fake = 9 total rows.
@@ -379,10 +390,12 @@ class DailyCheckWorkerTest {
         val result = worker.doWork()
         // Either Success (newSince returned empty) or Retry — both are
         // acceptable; what we DON'T want is a propagated exception that
-        // crashes the worker.
+        // crashes the worker. Compare by type, NOT by structural equality:
+        // Result.success(workDataOf(...)) is not equal to Result.success()
+        // because Data equality is content-based.
         assertTrue(
-            "expected Result.success or Result.retry, got $result",
-            result == ListenableWorker.Result.success() || result == ListenableWorker.Result.retry(),
+            "expected Result.Success or Result.Retry, got $result",
+            result is ListenableWorker.Result.Success || result is ListenableWorker.Result.Retry,
         )
     }
 
@@ -422,6 +435,28 @@ class DailyCheckWorkerTest {
     private fun json(body: String) = MockResponse()
         .setHeader("Content-Type", "application/json; charset=utf-8")
         .setBody(body)
+
+    /**
+     * The worker now embeds the new-row count in WorkInfo.outputData
+     * (the canonical worker→UI channel for the "Refresh complete — N
+     * new episodes" snackbar). Result.success(workDataOf(...)) is
+     * NOT structurally equal to Result.success() because Data
+     * equality is content-based, so equality assertions need to look
+     * at the type + payload directly.
+     */
+    private fun assertSuccessWithNewCount(
+        result: ListenableWorker.Result,
+        expected: Int,
+    ) {
+        assertTrue("expected success result, got $result", result is ListenableWorker.Result.Success)
+        val actual = (result as ListenableWorker.Result.Success).outputData
+            .getInt(DailyCheckWorker.KEY_NEW_COUNT, -1)
+        assertEquals(
+            "WorkInfo.outputData[${DailyCheckWorker.KEY_NEW_COUNT}] should publish $expected; " +
+                "the UI reads this directly for the 'Refresh complete' snackbar",
+            expected, actual,
+        )
+    }
 
     /** Records every enqueueDownload call so the test can assert what got scheduled. */
     private class RecordingEnqueuer : DownloadEnqueuer {

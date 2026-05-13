@@ -4,9 +4,11 @@ import android.content.Context
 import androidx.hilt.work.HiltWorker
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
+import androidx.work.workDataOf
 import com.odyssey.app.SettingsRepo
 import com.odyssey.data.local.EpisodeDao
 import com.odyssey.data.local.LocalEpisodeEntity
+import com.odyssey.debug.DebugLogger
 import com.odyssey.show.AioOneplaceProvider
 import com.odyssey.show.ShowProvider
 import dagger.assisted.Assisted
@@ -46,18 +48,29 @@ class DailyCheckWorker @AssistedInject constructor(
         // to enabled for everyone.
         val enabled = settings.enabledProviders.first()
         val activeProviders = providers.filter { it.id in enabled }
+        DebugLogger.i(
+            "DailyCheckWorker",
+            "doWork start — lastSeen=${s.lastSeenEpisodeId} maxFetch=$maxFetch " +
+                "enabled=$enabled activeProviders=${activeProviders.map { it.id }}",
+        )
 
         val fetched = activeProviders.flatMap { provider ->
             val lastSeen = if (provider.id == AioOneplaceProvider.ID) {
                 s.lastSeenEpisodeId.takeIf { it != 0L }?.toString()
             } else null
-            provider.newSince(lastSeen, maxFetch).map { provider to it }
+            val list = provider.newSince(lastSeen, maxFetch)
+            DebugLogger.i(
+                "DailyCheckWorker",
+                "provider '${provider.id}' newSince(lastSeen=$lastSeen) returned ${list.size} episodes" +
+                    if (list.isNotEmpty()) " (newest='${list.first().externalId}:${list.first().title}')" else "",
+            )
+            list.map { provider to it }
         }
 
         if (fetched.isEmpty()) {
-            settings.setLastCheckNewCount(0)
             settings.setLastRun(System.currentTimeMillis())
-            return@runCatching Result.success()
+            DebugLogger.i("DailyCheckWorker", "doWork done — fetched=0, publishing newCount=0")
+            return@runCatching Result.success(workDataOf(KEY_NEW_COUNT to 0))
         }
 
         // Per-provider dedup by (providerId, externalId). Critically,
@@ -99,12 +112,6 @@ class DailyCheckWorker @AssistedInject constructor(
             scheduler.enqueueDownload(provider.id, ep.externalId, allowMetered = s.allowMeteredDownloads)
             newCount++
         }
-        // Tell the UI exactly how many new rows landed, so the
-        // "Refresh complete — N new" snackbar doesn't have to race
-        // Room's Flow against WorkManager's state transition. Stored
-        // before the worker finishes so it's visible the moment
-        // isRefreshing flips false.
-        settings.setLastCheckNewCount(newCount)
 
         // lastSeen is AIO-only until per-provider state lands. The first
         // AIO row in `fetched` is newest because OneplaceClient returns
@@ -113,6 +120,22 @@ class DailyCheckWorker @AssistedInject constructor(
             settings.setLastSeen(ep.externalId.toLong())
         }
         settings.setLastRun(System.currentTimeMillis())
-        Result.success()
-    }.getOrElse { Result.retry() }
+        DebugLogger.i(
+            "DailyCheckWorker",
+            "doWork done — fetched=${fetched.size} alreadyExisting=${fetched.size - newCount} " +
+                "newRows=$newCount, publishing outputData[$KEY_NEW_COUNT]=$newCount",
+        )
+        // Publish the new-row count via WorkInfo.outputData. The UI
+        // collects from the SAME WorkInfo flow it already uses for the
+        // refresh spinner, so the count and the SUCCEEDED state arrive
+        // in one atomic emission — no Room-vs-WorkManager race.
+        Result.success(workDataOf(KEY_NEW_COUNT to newCount))
+    }.getOrElse { t ->
+        DebugLogger.e("DailyCheckWorker", "doWork threw — returning Result.retry", t)
+        Result.retry()
+    }
+
+    companion object {
+        const val KEY_NEW_COUNT = "newCount"
+    }
 }
