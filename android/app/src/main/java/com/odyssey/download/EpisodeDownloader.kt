@@ -86,6 +86,34 @@ class EpisodeDownloader @Inject constructor(
             .build()
         DebugLogger.d(TAG, "GET $url${if (partial > 0) " (resume from $partial)" else ""}")
         http.newCall(req).execute().use { resp ->
+            // HTTP 416 Range Not Satisfiable — happens when we ask for
+            // bytes at or past the resource's end. The way the worker
+            // gets stuck here is: a prior attempt downloaded ALL bytes
+            // successfully, then was killed (or threw post-download)
+            // before `episodes.upsert(filePath=...)` persisted. Row's
+            // filePath stays null → next attempt sees out.length() ==
+            // content-length → Range:bytes=N- → 416 → silent retry →
+            // infinite loop. Observed live for YSH downloads
+            // 2026-05-15 — see EpisodeDownloaderTest's 416-recovery
+            // tests for the contract.
+            //
+            // Recovery: HEAD the URL, compare local size to the
+            // canonical content-length. Match → trust the local file
+            // and report success so the worker's upsert sets filePath
+            // and breaks the loop. Mismatch → local file is corrupt
+            // (oversized); truncate and throw so the next retry starts
+            // clean.
+            if (resp.code == 416 && partial > 0) {
+                val serverSize = headContentLength(url, authHeader)
+                if (serverSize != null && partial == serverSize) {
+                    DebugLogger.i(TAG, "416 recovery: local file at $partial bytes matches server — treating as complete (no re-download)")
+                    onProgress(partial, partial)
+                    return partial
+                }
+                DebugLogger.w(TAG, "416 for $url with local=$partial vs server=$serverSize — truncating local file for clean retry")
+                out.delete()
+                error("HTTP 416 for $url (local $partial vs server $serverSize, truncated)")
+            }
             if (resp.code != 200 && resp.code != 206) {
                 // Log a slim header summary alongside the code so CDN
                 // rejections (Cloudflare 403, S3 SignatureDoesNotMatch,
@@ -133,6 +161,34 @@ class EpisodeDownloader @Inject constructor(
             }
         }
         return out.length()
+    }
+
+    /**
+     * Sidecar HEAD to read the canonical Content-Length for [url].
+     * Used by the 416-recovery path to decide whether a fully-populated
+     * local file matches the server. Returns null if the HEAD fails or
+     * the server doesn't expose Content-Length — in which case the
+     * caller MUST refuse to mark the download complete (we have no
+     * evidence the local bytes are sound).
+     */
+    private fun headContentLength(url: String, authHeader: String?): Long? {
+        val req = Request.Builder()
+            .url(url)
+            .head()
+            .apply { authHeader?.let { header("Authorization", it) } }
+            .build()
+        return runCatching {
+            http.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) {
+                    DebugLogger.w(TAG, "HEAD $url returned ${resp.code} — can't verify completeness")
+                    return@use null
+                }
+                resp.header("Content-Length")?.toLongOrNull()
+            }
+        }.getOrElse { t ->
+            DebugLogger.w(TAG, "HEAD $url threw — can't verify completeness", t)
+            null
+        }
     }
 
     private companion object {

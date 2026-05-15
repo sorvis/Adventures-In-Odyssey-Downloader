@@ -9,6 +9,8 @@ import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -106,5 +108,94 @@ class EpisodeDownloaderTest {
 
         downloader.download(server.url("/").toString(), tmpFile)
         assertArrayEquals("file content equals 200-response body (no append)", full, tmpFile.readBytes())
+    }
+
+    /**
+     * Regression test for the v0.1.50-era YSH retry loop:
+     *
+     *   - A previous download attempt successfully wrote ALL N bytes to disk
+     *     but was killed by the OS (or threw in upsert) before
+     *     `episodes.upsert(filePath=...)` persisted. The DB row's `filePath`
+     *     is still null.
+     *   - On the next worker run, EpisodeDownloader sees `out.length() == N`
+     *     and sends `Range: bytes=N-`. Servers MUST respond 416 to a range
+     *     starting at or beyond the resource length (RFC 7233 §4.4).
+     *   - Pre-fix behavior: the 416 threw, runCatching wrapped it as
+     *     Result.retry(), and the loop ran forever — exactly the YSH
+     *     "stuck at 0%" symptom from device logs.
+     *
+     * Fix: on 416 with partial > 0, HEAD the URL and compare. If local file
+     * matches server content-length, treat as already-downloaded.
+     */
+    @Test
+    fun `416 on full-size resume verifies via HEAD and returns success without re-downloading`() {
+        val body = byteArrayOf(0x49, 0x44, 0x33, 0x04, 0x00, 0x01, 0x02, 0x03)  // 8 bytes
+        tmpFile.writeBytes(body)  // file already complete on disk
+
+        // Worker sees out.length() == 8 and sends Range: bytes=8-. Server's
+        // correct behavior per RFC 7233 is 416 with optional Content-Range.
+        server.enqueue(MockResponse().setResponseCode(416))
+        // Fix path: a HEAD follow-up to confirm the canonical resource size.
+        server.enqueue(MockResponse().setResponseCode(200).setHeader("Content-Length", body.size.toString()))
+
+        val len = downloader.download(server.url("/foo.mp3").toString(), tmpFile)
+
+        assertEquals("returned length equals existing on-disk size", body.size.toLong(), len)
+        assertArrayEquals("on-disk bytes are untouched (no wasteful re-download)", body, tmpFile.readBytes())
+        // Two requests: the Range GET, then the verification HEAD.
+        assertEquals(2, server.requestCount)
+        val rangeReq = server.takeRequest()
+        assertEquals("GET", rangeReq.method)
+        assertEquals("bytes=${body.size}-", rangeReq.getHeader("Range"))
+        val headReq = server.takeRequest()
+        assertEquals("HEAD", headReq.method)
+    }
+
+    /**
+     * Corruption case: local file is LARGER than the canonical resource
+     * (e.g. a previous over-eager fsync wrote extra bytes, or the resource
+     * was truncated server-side after our first download). Trusting the
+     * local bytes would leave a permanently-broken MP3 in the library.
+     * Behavior contract: truncate the local file and propagate the error
+     * so WorkManager retries; the next retry starts fresh at partial=0.
+     */
+    @Test
+    fun `416 with local size larger than server content-length truncates local file and throws`() {
+        // Pre-existing file is 12 bytes; server says canonical size is 8.
+        val oversized = ByteArray(12) { 0xCC.toByte() }
+        tmpFile.writeBytes(oversized)
+
+        server.enqueue(MockResponse().setResponseCode(416))
+        server.enqueue(MockResponse().setResponseCode(200).setHeader("Content-Length", "8"))
+
+        val thrown = assertThrows(IllegalStateException::class.java) {
+            downloader.download(server.url("/foo.mp3").toString(), tmpFile)
+        }
+        assertTrue(
+            "error message mentions 416 and the size mismatch",
+            thrown.message!!.contains("416"),
+        )
+        assertEquals(
+            "local file is truncated (size 0 or deleted) so the next retry starts fresh",
+            0L, tmpFile.length(),
+        )
+    }
+
+    /**
+     * Edge case: HEAD doesn't return Content-Length (server doesn't support
+     * HEAD, or returns an error). We can't verify completeness, so the
+     * safest move is to throw — the worker retries, exponential backoff
+     * eventually gives up. We do NOT silently trust the local file in this
+     * case because we have no evidence of completeness.
+     */
+    @Test
+    fun `416 with no Content-Length from HEAD throws so we never falsely mark incomplete files as done`() {
+        tmpFile.writeBytes(byteArrayOf(0x49, 0x44, 0x33))   // 3 bytes locally
+        server.enqueue(MockResponse().setResponseCode(416))
+        server.enqueue(MockResponse().setResponseCode(500))  // HEAD fails
+
+        assertThrows(IllegalStateException::class.java) {
+            downloader.download(server.url("/foo.mp3").toString(), tmpFile)
+        }
     }
 }
