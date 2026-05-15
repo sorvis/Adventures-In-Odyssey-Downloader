@@ -115,6 +115,16 @@ interface EpisodeDao {
     fun observeDownloaded(): Flow<List<LocalEpisodeEntity>>
 
     /**
+     * Snapshot of every row that still wants a file on disk. Used by
+     * DownloadReconciler at app launch to detect "file is fully present
+     * on disk but filePath stayed null" stuck states from pre-v0.1.51
+     * 416-loop failures. NOT a Flow — the reconciler runs once and
+     * doesn't want to react to ongoing DB churn.
+     */
+    @Query("SELECT * FROM local_episodes WHERE filePath IS NULL")
+    suspend fun allUndownloaded(): List<LocalEpisodeEntity>
+
+    /**
      * AIO-only legacy lookup. Existing callers pass the oneplace CMS
      * id (or broadcast number) as Long — this back-compat method
      * stringifies it and filters on providerId='aio' so AIO row

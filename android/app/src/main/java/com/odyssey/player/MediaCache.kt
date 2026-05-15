@@ -101,9 +101,15 @@ class MediaCache @Inject constructor(
     private fun authAwareHttpFactory(): HttpDataSource.Factory {
         return object : HttpDataSource.Factory {
             override fun createDataSource(): HttpDataSource {
-                val current = runCatching { runBlocking { settings.flow.first() } }.getOrNull()
+                val current = runCatching { runBlocking { settings.flow.first() } }
+                    .onFailure { t -> com.odyssey.debug.DebugLogger.w("MediaCache", "settings.flow lookup failed — playback will run unauthenticated", t) }
+                    .getOrNull()
                 val nasHost = current?.nasUrl?.takeIf { it.isNotBlank() }
-                    ?.let { runCatching { java.net.URI(it).host }.getOrNull() }
+                    ?.let { url ->
+                        runCatching { java.net.URI(url).host }
+                            .onFailure { t -> com.odyssey.debug.DebugLogger.w("MediaCache", "nasUrl '$url' is not a valid URI — host-scoped auth disabled", t) }
+                            .getOrNull()
+                    }
                 val headers = buildMap<String, String> {
                     current?.nasToken?.takeIf { it.isNotBlank() }
                         ?.let { put("Authorization", "Bearer $it") }

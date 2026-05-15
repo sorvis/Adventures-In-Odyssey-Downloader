@@ -4,12 +4,14 @@ import android.app.Application
 import androidx.hilt.work.HiltWorkerFactory
 import androidx.work.Configuration
 import com.odyssey.download.DiskLayoutMigrator
+import com.odyssey.download.DownloadReconciler
 import com.odyssey.show.YshCatalog
 import com.odyssey.work.WorkScheduler
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -19,6 +21,8 @@ class OdysseyApp : Application(), Configuration.Provider {
     @Inject lateinit var workScheduler: WorkScheduler
     @Inject lateinit var diskLayoutMigrator: DiskLayoutMigrator
     @Inject lateinit var yshCatalog: YshCatalog
+    @Inject lateinit var downloadReconciler: DownloadReconciler
+    @Inject lateinit var settings: SettingsRepo
 
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder().setWorkerFactory(workerFactory).build()
@@ -43,6 +47,15 @@ class OdysseyApp : Application(), Configuration.Provider {
             if (yshCatalog.state.value == null) {
                 workScheduler.runYshCatalogRefreshNow()
             }
+            // Recover from "file is fully on disk but filePath is null
+            // in DB" stuck states left by pre-v0.1.51 download workers
+            // that died mid-flight. Re-enqueues with cancellation to
+            // break WorkManager's exponential backoff so the new
+            // 416-recovery path runs immediately instead of waiting
+            // hours for the next backoff tick. Idempotent — does
+            // nothing when there are no orphans.
+            val allowMetered = settings.flow.first().allowMeteredDownloads
+            downloadReconciler.reconcile(allowMetered)
         }
     }
 }

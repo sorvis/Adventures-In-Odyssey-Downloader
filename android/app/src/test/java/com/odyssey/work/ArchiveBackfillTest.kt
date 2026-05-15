@@ -152,6 +152,7 @@ class ArchiveBackfillTest {
         }
         override fun observeAll(): Flow<List<LocalEpisodeEntity>> = flowOf(rows)
         override fun observeDownloaded(): Flow<List<LocalEpisodeEntity>> = flowOf(rows)
+        override suspend fun allUndownloaded(): List<LocalEpisodeEntity> = rows.filter { it.filePath == null }
         override suspend fun byId(id: Long): LocalEpisodeEntity? =
             rows.firstOrNull { it.providerId == "aio" && it.externalId == id.toString() }
         override suspend fun byKey(providerId: String, externalId: String): LocalEpisodeEntity? =

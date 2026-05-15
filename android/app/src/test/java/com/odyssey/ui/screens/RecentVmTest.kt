@@ -355,6 +355,7 @@ class RecentVmTest {
     private class NoopEpisodeDao : EpisodeDao {
         override fun observeAll(): Flow<List<LocalEpisodeEntity>> = flowOf(emptyList())
         override fun observeDownloaded(): Flow<List<LocalEpisodeEntity>> = flowOf(emptyList())
+        override suspend fun allUndownloaded(): List<LocalEpisodeEntity> = emptyList()
         override suspend fun byId(id: Long): LocalEpisodeEntity? = null
         override suspend fun byKey(providerId: String, externalId: String): LocalEpisodeEntity? = null
         override suspend fun existingIds(ids: List<Long>): List<Long> = emptyList()

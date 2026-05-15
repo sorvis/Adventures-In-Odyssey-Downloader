@@ -158,7 +158,32 @@ class WorkScheduler @Inject constructor(@ApplicationContext private val ctx: Con
     }
 
     override fun enqueueDownload(providerId: String, externalId: String, allowMetered: Boolean) {
-        val req = OneTimeWorkRequestBuilder<DownloadEpisodeWorker>()
+        wm.enqueueUniqueWork(
+            downloadWorkName(providerId, externalId),
+            ExistingWorkPolicy.KEEP,
+            buildDownloadRequest(providerId, externalId, allowMetered),
+        )
+    }
+
+    override fun kickDownload(providerId: String, externalId: String, allowMetered: Boolean) {
+        // Cancel first so the subsequent enqueue isn't no-op'd by the
+        // unique-name + KEEP policy. cancelUniqueWork is idempotent
+        // and a no-op if nothing's enqueued.
+        val name = downloadWorkName(providerId, externalId)
+        wm.cancelUniqueWork(name)
+        wm.enqueueUniqueWork(
+            name,
+            ExistingWorkPolicy.KEEP,
+            buildDownloadRequest(providerId, externalId, allowMetered),
+        )
+    }
+
+    private fun buildDownloadRequest(
+        providerId: String,
+        externalId: String,
+        allowMetered: Boolean,
+    ): OneTimeWorkRequest =
+        OneTimeWorkRequestBuilder<DownloadEpisodeWorker>()
             .setInputData(
                 workDataOf(
                     DownloadEpisodeWorker.KEY_PROVIDER_ID to providerId,
@@ -178,8 +203,9 @@ class WorkScheduler @Inject constructor(@ApplicationContext private val ctx: Con
             )
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 5, TimeUnit.MINUTES)
             .build()
-        wm.enqueueUniqueWork("download-$providerId-$externalId", ExistingWorkPolicy.KEEP, req)
-    }
+
+    private fun downloadWorkName(providerId: String, externalId: String): String =
+        "download-$providerId-$externalId"
 
     override fun enqueueArchive(episodeId: Long, allowMetered: Boolean) {
         val req = OneTimeWorkRequestBuilder<ArchiveEpisodeWorker>()

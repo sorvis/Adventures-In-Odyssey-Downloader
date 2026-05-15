@@ -45,6 +45,16 @@ class OneplaceClient @Inject constructor(
     suspend fun latestEpisodeId(listenUrl: String): Long? = runCatching {
         val body = get(listenUrl)
         bootstrapRe.find(body)?.groupValues?.get(1)?.toLong()
+    }.onFailure { t ->
+        // Silent null on this path used to hide a class of "DailyCheckWorker
+        // returns 0 episodes for no apparent reason" mysteries: HTML schema
+        // change, network blip, regex miss. We can't use DebugLogger here
+        // because this file is in the pure-JVM compile set (scripts/
+        // run-jvm-tests.sh) and DebugLogger pulls in android.util.Log.
+        // stderr is routed to logcat on Android (tag "System.err") and
+        // shows up in `adb logcat`; not as nice as the in-app debug screen
+        // but a strict improvement over the silent null.
+        System.err.println("[OneplaceClient] latestEpisodeId($listenUrl) failed: ${t.message}")
     }.getOrNull()
 
     /** Episodes immediately preceding `cursor`, newest-first; up to `pageSize`. */

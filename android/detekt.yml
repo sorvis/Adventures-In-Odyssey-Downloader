@@ -9,20 +9,55 @@ build:
 exceptions:
   active: true
   SwallowedException:
+    # Strict mode (no ignoredExceptionTypes, no allowedExceptionNameRegex
+    # escape hatch) so every `catch` that drops its throwable gets
+    # surfaced. Reason: the YSH download retry loop bug was a swallow,
+    # and any future swallow has the same risk of hiding a live
+    # production failure. Genuine no-op catches (e.g. closing a stream
+    # that's already closed) must reference the throwable somewhere —
+    # even just `_ = e` — to make the intent explicit.
     active: true
-    # Don't penalize catches that explicitly assign exception.message or
-    # convert to a domain-specific exception type.
-    ignoredExceptionTypes:
-      - InterruptedException
-      - NumberFormatException
-      - ParseException
-      - MalformedURLException
-    allowedExceptionNameRegex: '_|(ignore|expected).*'
   TooGenericExceptionCaught:
     active: false
   ThrowingExceptionsWithoutMessageOrCause:
     active: false
   InstanceOfCheckForException:
+    active: false
+  RethrowCaughtException:
+    active: true
+
+empty-blocks:
+  active: true
+  EmptyCatchBlock:
+    active: true
+  # The rest of empty-blocks fires on legitimate test stubs (no-op
+  # `() -> Unit` lambdas, fake function objects). Leave them off so
+  # the ruleset stays focused on the catch-eats-exception pattern.
+  EmptyFunctionBlock:
+    active: false
+  EmptyClassBlock:
+    active: false
+  EmptyDefaultConstructor:
+    active: false
+  EmptyDoWhileBlock:
+    active: false
+  EmptyElseBlock:
+    active: false
+  EmptyFinallyBlock:
+    active: false
+  EmptyForBlock:
+    active: false
+  EmptyIfBlock:
+    active: false
+  EmptyInitBlock:
+    active: false
+  EmptyKtFile:
+    active: false
+  EmptySecondaryConstructor:
+    active: false
+  EmptyTryBlock:
+    active: false
+  EmptyWhenBlock:
     active: false
 
 # Everything else off — we can opt rules back in deliberately.
@@ -35,8 +70,6 @@ naming:
 performance:
   active: false
 potential-bugs:
-  active: false
-empty-blocks:
   active: false
 comments:
   active: false

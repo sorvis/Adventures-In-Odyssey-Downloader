@@ -25,6 +25,24 @@ interface DownloadEnqueuer {
      *  through right now. */
     fun enqueueDownload(episodeId: Long, allowMetered: Boolean) =
         enqueueDownload("aio", episodeId.toString(), allowMetered)
+
+    /**
+     * Force a fresh enqueue for a row whose previous download work is
+     * stuck — typically in WorkManager's exponential backoff after a
+     * stream of retry()s. Cancels any existing unique-work entry with
+     * the same name FIRST so the regular `KEEP` policy in
+     * [enqueueDownload] doesn't no-op, then enqueues. The backoff
+     * timer resets and the new code path runs at the next opportunity.
+     * Used by DownloadReconciler on app launch to unstick rows where
+     * the bytes are already on disk but filePath stayed null.
+     *
+     * Default implementation just calls [enqueueDownload] — fine for
+     * test recorders that don't model WorkManager state, since they
+     * have no backoff to break. Production [com.odyssey.work.WorkScheduler]
+     * overrides with cancel-then-enqueue semantics.
+     */
+    fun kickDownload(providerId: String, externalId: String, allowMetered: Boolean) =
+        enqueueDownload(providerId, externalId, allowMetered)
 }
 
 /**
