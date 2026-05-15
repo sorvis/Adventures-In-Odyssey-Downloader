@@ -13,6 +13,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
@@ -24,25 +25,43 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import coil.compose.AsyncImage
 import com.odyssey.data.local.EpisodeDao
-import com.odyssey.data.local.YshAlbumSummary
+import com.odyssey.show.YshAlbumCatalogRow
+import com.odyssey.show.YshCatalog
+import com.odyssey.show.joinYshAlbumOwnership
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import javax.inject.Inject
 
 @HiltViewModel
 class YshAlbumListVm @Inject constructor(
     episodes: EpisodeDao,
+    catalog: YshCatalog,
 ) : ViewModel() {
     /**
-     * One row per YSH album the user has at least one track of. YSH
-     * library grows over time as the rotating pools surface new
-     * stories — empty albums (with no ingested tracks) are not shown
-     * here. A "Browse full catalog" subscreen could land later if the
-     * user wants to wishlist by album.
+     * One row per YSH catalog album. Catalog drives the universe of
+     * albums (so the user can see all ~88 even before any tracks have
+     * downloaded); the DB-side summary contributes per-album
+     * downloadedTracks for the badge + fade. Emits empty until the
+     * catalog has loaded (fresh install before YshCatalogRefreshWorker
+     * fires) — the screen renders a "loading the catalog" message in
+     * that case rather than the old "no episodes yet" empty state.
      */
-    val albums = episodes.observeYshAlbumSummaries()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val albums = combine(
+        catalog.state,
+        episodes.observeYshAlbumSummaries(),
+    ) { idx, summaries ->
+        if (idx == null) emptyList()
+        else joinYshAlbumOwnership(idx, summaries)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /**
+     * Distinguishes "catalog hasn't loaded yet" from "catalog loaded
+     * but turned up zero albums" so the empty state can be specific.
+     */
+    val catalogLoaded = catalog.state
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalComposeUiApi::class)
@@ -53,6 +72,7 @@ fun YshAlbumListScreen(
     vm: YshAlbumListVm = hiltViewModel(),
 ) {
     val albums by vm.albums.collectAsState()
+    val catalogLoaded by vm.catalogLoaded.collectAsState()
 
     Scaffold(
         topBar = {
@@ -63,7 +83,10 @@ fun YshAlbumListScreen(
         },
     ) { padding ->
         if (albums.isEmpty()) {
-            YshAlbumsEmptyState(modifier = Modifier.padding(padding).padding(24.dp))
+            YshAlbumsEmptyState(
+                catalogLoaded = catalogLoaded != null,
+                modifier = Modifier.padding(padding).padding(24.dp),
+            )
             return@Scaffold
         }
         LazyColumn(
@@ -75,7 +98,7 @@ fun YshAlbumListScreen(
             contentPadding = PaddingValues(12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            items(albums, key = { it.albumName }) { album ->
+            items(albums, key = { it.albumId }) { album ->
                 YshAlbumRow(album, onClick = { onOpenAlbum(album.albumName) })
             }
         }
@@ -84,13 +107,18 @@ fun YshAlbumListScreen(
 
 @Composable
 internal fun YshAlbumRow(
-    album: YshAlbumSummary,
+    album: YshAlbumCatalogRow,
     onClick: () -> Unit,
 ) {
+    // Match the AIO Albums tab: rows with zero downloaded tracks are
+    // faded so the eye lands on albums the user is actively collecting.
+    // Tap is still enabled — the detail screen handles the empty case.
+    val faded = album.downloadedTracks == 0
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
+            .alpha(if (faded) 0.45f else 1f)
             .testTag("ysh-album-row-${album.albumName}"),
     ) {
         Row(
@@ -130,7 +158,10 @@ internal fun YshAlbumRow(
 }
 
 @Composable
-private fun YshAlbumsEmptyState(modifier: Modifier = Modifier) {
+private fun YshAlbumsEmptyState(
+    catalogLoaded: Boolean,
+    modifier: Modifier = Modifier,
+) {
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -138,30 +169,33 @@ private fun YshAlbumsEmptyState(modifier: Modifier = Modifier) {
         verticalArrangement = Arrangement.spacedBy(12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text(
-            "No Your Story Hour episodes yet.",
-            style = MaterialTheme.typography.titleMedium,
-        )
-        Text(
-            "The next daily check will pick up the currently-free " +
-                "samples from yourstoryhour.org plus today's broadcast " +
-                "from oneplace.com. Your library grows over time as " +
-                "they rotate new stories in.",
-            style = MaterialTheme.typography.bodySmall,
-        )
+        if (!catalogLoaded) {
+            Text("Loading Your Story Hour album catalog…", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "First launch fetches the album list from yourstoryhour.org. " +
+                    "This usually takes a few seconds.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+        } else {
+            Text("No Your Story Hour albums.", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "The catalog loaded but reported zero albums — try " +
+                    "Refresh in Settings, or check the debug log.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
     }
 }
 
 /**
- * Pure helper — produces the row subtitle. Visible for tests so we
+ * Pure helper -- produces the row subtitle. Visible for tests so we
  * don't have to drive a Compose preview to verify pluralization.
  */
-internal fun trackCountLabel(album: YshAlbumSummary): String {
-    val trackWord = if (album.trackCount == 1) "track" else "tracks"
-    return if (album.downloadedCount == album.trackCount) {
-        "${album.trackCount} $trackWord · all downloaded"
+internal fun trackCountLabel(album: YshAlbumCatalogRow): String {
+    val trackWord = if (album.totalTracks == 1) "track" else "tracks"
+    return if (album.downloadedTracks == album.totalTracks && album.totalTracks > 0) {
+        "${album.totalTracks} $trackWord · all downloaded"
     } else {
-        "${album.downloadedCount} of ${album.trackCount} $trackWord downloaded"
+        "${album.downloadedTracks} of ${album.totalTracks} $trackWord downloaded"
     }
 }
-

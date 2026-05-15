@@ -7,7 +7,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import com.odyssey.data.local.LocalEpisodeEntity
-import com.odyssey.data.local.YshAlbumSummary
+import com.odyssey.show.YshAlbumCatalogRow
 import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
@@ -34,19 +34,19 @@ class YshAlbumScreensTest {
     fun trackCountLabel_pluralization_and_all_downloaded_marker() {
         assertEquals(
             "1 track · all downloaded",
-            trackCountLabel(YshAlbumSummary("A", null, 1, 1)),
+            trackCountLabel(catalogRow(totalTracks = 1, downloadedTracks = 1)),
         )
         assertEquals(
             "6 tracks · all downloaded",
-            trackCountLabel(YshAlbumSummary("A", null, 6, 6)),
+            trackCountLabel(catalogRow(totalTracks = 6, downloadedTracks = 6)),
         )
         assertEquals(
             "2 of 6 tracks downloaded",
-            trackCountLabel(YshAlbumSummary("A", null, 6, 2)),
+            trackCountLabel(catalogRow(totalTracks = 6, downloadedTracks = 2)),
         )
         assertEquals(
             "0 of 12 tracks downloaded",
-            trackCountLabel(YshAlbumSummary("A", null, 12, 0)),
+            trackCountLabel(catalogRow(totalTracks = 12, downloadedTracks = 0)),
         )
     }
 
@@ -77,7 +77,11 @@ class YshAlbumScreensTest {
         var clicks = 0
         composeRule.setContent {
             YshAlbumRow(
-                album = YshAlbumSummary("Bible Comes Alive - Album 4", null, 6, 2),
+                album = catalogRow(
+                    albumName = "Bible Comes Alive - Album 4",
+                    totalTracks = 6,
+                    downloadedTracks = 2,
+                ),
                 onClick = { clicks++ },
             )
         }
@@ -103,6 +107,20 @@ class YshAlbumScreensTest {
     }
 
     // ----- helpers --------------------------------------------------------
+
+    private fun catalogRow(
+        albumName: String = "Some Album",
+        albumId: Long = 1L,
+        coverUrl: String? = null,
+        totalTracks: Int,
+        downloadedTracks: Int,
+    ) = YshAlbumCatalogRow(
+        albumId = albumId,
+        albumName = albumName,
+        coverUrl = coverUrl,
+        totalTracks = totalTracks,
+        downloadedTracks = downloadedTracks,
+    )
 
     private fun track(
         externalId: String = "ysh-sku-1",
