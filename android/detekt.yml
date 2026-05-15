@@ -1,0 +1,44 @@
+# detekt config — kept minimal. We enable the `exceptions` ruleset
+# (catches silent retry / swallowed-throwable patterns like the one
+# that hid the YSH download failure in DownloadEpisodeWorker), and
+# disable every other ruleset by default. As issues come up in code
+# review the relevant rules can be re-enabled here.
+build:
+  maxIssues: 0
+
+exceptions:
+  active: true
+  SwallowedException:
+    active: true
+    # Don't penalize catches that explicitly assign exception.message or
+    # convert to a domain-specific exception type.
+    ignoredExceptionTypes:
+      - InterruptedException
+      - NumberFormatException
+      - ParseException
+      - MalformedURLException
+    allowedExceptionNameRegex: '_|(ignore|expected).*'
+  TooGenericExceptionCaught:
+    active: false
+  ThrowingExceptionsWithoutMessageOrCause:
+    active: false
+  InstanceOfCheckForException:
+    active: false
+
+# Everything else off — we can opt rules back in deliberately.
+complexity:
+  active: false
+style:
+  active: false
+naming:
+  active: false
+performance:
+  active: false
+potential-bugs:
+  active: false
+empty-blocks:
+  active: false
+comments:
+  active: false
+coroutines:
+  active: false

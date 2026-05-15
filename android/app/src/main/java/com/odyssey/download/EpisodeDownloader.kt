@@ -1,6 +1,7 @@
 package com.odyssey.download
 
 import android.content.Context
+import com.odyssey.debug.DebugLogger
 import dagger.hilt.android.qualifiers.ApplicationContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -83,8 +84,18 @@ class EpisodeDownloader @Inject constructor(
                 authHeader?.let { header("Authorization", it) }
             }
             .build()
+        DebugLogger.d(TAG, "GET $url${if (partial > 0) " (resume from $partial)" else ""}")
         http.newCall(req).execute().use { resp ->
             if (resp.code != 200 && resp.code != 206) {
+                // Log a slim header summary alongside the code so CDN
+                // rejections (Cloudflare 403, S3 SignatureDoesNotMatch,
+                // etc.) are diagnosable from the in-app debug log
+                // (Settings → Open debug logs) without round-tripping
+                // back to a curl repro.
+                val server = resp.header("server").orEmpty()
+                val cfRay = resp.header("cf-ray").orEmpty()
+                val contentType = resp.header("content-type").orEmpty()
+                DebugLogger.w(TAG, "HTTP ${resp.code} for $url [server=$server cf-ray=$cfRay content-type=$contentType]")
                 error("HTTP ${resp.code} for $url")
             }
             // append=true when the server honored our Range request (206).
@@ -125,6 +136,7 @@ class EpisodeDownloader @Inject constructor(
     }
 
     private companion object {
+        const val TAG = "EpisodeDownloader"
         const val CHUNK_BYTES = 64L * 1024            // 64 KB per read
         const val MIN_EMIT_INTERVAL_MS = 100L          // throttle to ~10 Hz
     }

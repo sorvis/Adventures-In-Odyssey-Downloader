@@ -6,6 +6,7 @@ import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.odyssey.app.SettingsRepo
 import com.odyssey.data.local.EpisodeDao
+import com.odyssey.debug.DebugLogger
 import com.odyssey.download.DownloadProgressTracker
 import com.odyssey.download.EpisodeDownloader
 import dagger.assisted.Assisted
@@ -41,6 +42,7 @@ class DownloadEpisodeWorker @AssistedInject constructor(
         } ?: return Result.failure()
         if (ep.filePath != null) return Result.success()
 
+        DebugLogger.i(TAG, "download start: ${ep.providerId}/${ep.externalId} \"${ep.title}\" url=${ep.downloadUrl}")
         return runCatching {
             val out = downloader.fileFor(ep.providerId, ep.externalId, ep.title)
             // The progress tracker is still Long-keyed. AIO externalIds
@@ -73,8 +75,14 @@ class DownloadEpisodeWorker @AssistedInject constructor(
                 // Archive upload for non-AIO is deferred — server route
                 // rewrite for /providers/{provider}/... is step 11b.
             }
+            DebugLogger.i(TAG, "download success: ${ep.providerId}/${ep.externalId} bytes=$size")
             Result.success()
-        }.getOrElse {
+        }.getOrElse { t ->
+            // Surface the cause. The retry loop is correct for transient
+            // failures (5xx, network drop), but without this log a hard
+            // failure (403 with bad UA, missing downloadUrl, etc.) was
+            // invisible from the device — see the YSH download bug.
+            DebugLogger.w(TAG, "download failed (will retry): ${ep.providerId}/${ep.externalId} url=${ep.downloadUrl}", t)
             val progressKey = ep.externalId.toLongOrNull() ?: ep.externalId.hashCode().toLong()
             progressTracker.clear(progressKey)
             Result.retry()
@@ -82,6 +90,7 @@ class DownloadEpisodeWorker @AssistedInject constructor(
     }
 
     companion object {
+        private const val TAG = "DownloadEpisodeWorker"
         const val KEY_EPISODE_ID = "episodeId"     // legacy AIO-only
         const val KEY_PROVIDER_ID = "providerId"
         const val KEY_EXTERNAL_ID = "externalId"
