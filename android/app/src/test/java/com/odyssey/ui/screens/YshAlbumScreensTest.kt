@@ -1,13 +1,17 @@
 package com.odyssey.ui.screens
 
 import android.app.Application
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import com.odyssey.data.local.LocalEpisodeEntity
 import com.odyssey.show.YshAlbumCatalogRow
+import com.odyssey.show.YshAlbumDetailRow
+import com.odyssey.show.YshTrackOwnership
 import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
@@ -51,22 +55,23 @@ class YshAlbumScreensTest {
     }
 
     @Test
-    fun yshTrackSubtitle_includesOrderAndState() {
-        // Downloaded track with a track order.
+    fun yshTrackSubtitle_includesOrderAndOwnershipState() {
+        // Downloaded.
         assertEquals(
             "#3 · downloaded",
-            yshTrackSubtitle(track(filePath = "/x.mp3", trackOrder = 2)),
+            yshTrackSubtitle(detailRow(orderIndex = 2, ownership = YshTrackOwnership.DOWNLOADED)),
         )
-        // Streaming (no file) without a known order falls back to just
-        // the "stream" label.
-        assertEquals(
-            "stream",
-            yshTrackSubtitle(track(filePath = null, trackOrder = null)),
-        )
-        // Streaming WITH a known order keeps both parts.
+        // Streamable (DB row, no file).
         assertEquals(
             "#5 · stream",
-            yshTrackSubtitle(track(filePath = null, trackOrder = 4)),
+            yshTrackSubtitle(detailRow(orderIndex = 4, ownership = YshTrackOwnership.STREAMABLE)),
+        )
+        // Catalog-only: no DB row, no stream URL -- track exists in
+        // the album but isn't in the rotating free pool. Distinct
+        // copy so the user can tell which tracks are reachable.
+        assertEquals(
+            "#1 · not in free pool",
+            yshTrackSubtitle(detailRow(orderIndex = 0, ownership = YshTrackOwnership.UNAVAILABLE)),
         )
     }
 
@@ -96,7 +101,12 @@ class YshAlbumScreensTest {
         var plays = 0
         composeRule.setContent {
             YshTrackRow(
-                track = track(filePath = "/x.mp3", trackOrder = 1, externalId = "ysh-sku-1958", title = "Madeleine's Courage"),
+                row = detailRow(
+                    skuId = 1958,
+                    title = "Madeleine's Courage",
+                    orderIndex = 1,
+                    ownership = YshTrackOwnership.DOWNLOADED,
+                ),
                 onPlay = { plays++ },
             )
         }
@@ -104,6 +114,28 @@ class YshAlbumScreensTest {
         composeRule.onNodeWithText("#2 · downloaded").assertIsDisplayed()
         composeRule.onNodeWithTag("ysh-track-play-ysh-sku-1958").performClick()
         assertEquals(1, plays)
+    }
+
+    @Test
+    fun yshTrackRow_hides_play_button_for_UNAVAILABLE_tracks() {
+        var plays = 0
+        composeRule.setContent {
+            YshTrackRow(
+                row = detailRow(
+                    skuId = 7777,
+                    title = "Paid Track",
+                    orderIndex = 0,
+                    ownership = YshTrackOwnership.UNAVAILABLE,
+                ),
+                onPlay = { plays++ },
+            )
+        }
+        composeRule.onNodeWithText("Paid Track").assertIsDisplayed()
+        composeRule.onNodeWithText("#1 · not in free pool").assertIsDisplayed()
+        // Play button is intentionally absent for UNAVAILABLE rows --
+        // no DB row means no stream URL.
+        composeRule.onAllNodesWithTag("ysh-track-play-ysh-sku-7777").assertCountEquals(0)
+        assertEquals(0, plays)
     }
 
     // ----- helpers --------------------------------------------------------
@@ -120,6 +152,23 @@ class YshAlbumScreensTest {
         coverUrl = coverUrl,
         totalTracks = totalTracks,
         downloadedTracks = downloadedTracks,
+    )
+
+    private fun detailRow(
+        skuId: Long = 1L,
+        title: String = "Some YSH Story",
+        orderIndex: Int = 0,
+        albumImageUrl: String? = null,
+        ownership: YshTrackOwnership,
+        local: LocalEpisodeEntity? = if (ownership == YshTrackOwnership.UNAVAILABLE) null
+                                     else track(externalId = "ysh-sku-$skuId", filePath = if (ownership == YshTrackOwnership.DOWNLOADED) "/x.mp3" else null),
+    ) = YshAlbumDetailRow(
+        skuId = skuId,
+        title = title,
+        orderIndex = orderIndex,
+        albumImageUrl = albumImageUrl,
+        ownership = ownership,
+        localRow = local,
     )
 
     private fun track(

@@ -15,6 +15,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
@@ -27,10 +28,14 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import coil.compose.AsyncImage
 import com.odyssey.data.local.EpisodeDao
-import com.odyssey.data.local.LocalEpisodeEntity
 import com.odyssey.player.EpisodePlayer
+import com.odyssey.show.YshAlbumDetailRow
+import com.odyssey.show.YshCatalog
+import com.odyssey.show.YshTrackOwnership
+import com.odyssey.show.joinYshAlbumDetail
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -39,7 +44,8 @@ const val YSH_ALBUM_DETAIL_ARG = "albumName"
 
 @HiltViewModel
 class YshAlbumDetailVm @Inject constructor(
-    private val episodes: EpisodeDao,
+    episodes: EpisodeDao,
+    catalog: YshCatalog,
     private val player: EpisodePlayer,
     savedState: SavedStateHandle,
 ) : ViewModel() {
@@ -47,17 +53,33 @@ class YshAlbumDetailVm @Inject constructor(
 
     val title: String get() = albumName
 
-    val tracks = episodes.observeYshAlbumTracks(albumName)
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    /**
+     * One row per CATALOG track for this album — ALL of them, with
+     * per-track ownership overlay from the DB. Tracks the user has
+     * pinned or has streamable via the rotating free pool come back
+     * as DOWNLOADED/STREAMABLE; the rest as UNAVAILABLE (faded card,
+     * play disabled). Mirrors AIO's album-detail UX.
+     *
+     * Pre-v0.1.55 the screen only listed DB-ingested tracks, so
+     * tapping a faded album opened a near-empty list.
+     */
+    val rows = combine(
+        catalog.state,
+        episodes.observeYshAlbumTracks(albumName),
+    ) { idx, dbRows ->
+        if (idx == null) emptyList()
+        else joinYshAlbumDetail(idx, albumName, dbRows)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    fun play(track: LocalEpisodeEntity) {
+    fun play(row: YshAlbumDetailRow) {
+        val local = row.localRow ?: return  // UNAVAILABLE — UI disables tap, but defensive here too
         viewModelScope.launch {
             // YSH playback paths today: prefer the local file if we have
             // it; otherwise stream from the original (yourstoryhour S3 or
             // oneplace) downloadUrl. NAS pin-from-backup for YSH lands in
             // a later step alongside the archive-service rewrite.
-            if (track.filePath != null) {
-                player.playLocal(track, artworkUrl = track.albumImageUrl)
+            if (local.filePath != null) {
+                player.playLocal(local, artworkUrl = row.albumImageUrl ?: local.albumImageUrl)
             } else {
                 // We don't have a Long episodeId for YSH (externalId is
                 // a string like "ysh-sku-1958"); for now we pass 0L as
@@ -67,9 +89,9 @@ class YshAlbumDetailVm @Inject constructor(
                 // provider-aware in a later cleanup.
                 player.playStream(
                     episodeId = 0L,
-                    streamUrl = track.downloadUrl,
-                    title = track.title,
-                    artworkUrl = track.albumImageUrl,
+                    streamUrl = local.downloadUrl,
+                    title = local.title,
+                    artworkUrl = row.albumImageUrl ?: local.albumImageUrl,
                     providerId = "ysh",
                 )
             }
@@ -83,8 +105,8 @@ fun YshAlbumDetailScreen(
     onBack: () -> Unit = {},
     vm: YshAlbumDetailVm = hiltViewModel(),
 ) {
-    val tracks by vm.tracks.collectAsState()
-    val coverUrl = tracks.firstOrNull()?.albumImageUrl
+    val rows by vm.rows.collectAsState()
+    val coverUrl = rows.firstOrNull { !it.albumImageUrl.isNullOrBlank() }?.albumImageUrl
 
     Scaffold(
         topBar = {
@@ -123,8 +145,8 @@ fun YshAlbumDetailScreen(
                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                items(tracks, key = { it.externalId }) { t ->
-                    YshTrackRow(t, onPlay = { vm.play(t) })
+                items(rows, key = { it.skuId }) { row ->
+                    YshTrackRow(row, onPlay = { vm.play(row) })
                 }
             }
         }
@@ -132,12 +154,19 @@ fun YshAlbumDetailScreen(
 }
 
 @Composable
-internal fun YshTrackRow(track: LocalEpisodeEntity, onPlay: () -> Unit) {
+internal fun YshTrackRow(row: YshAlbumDetailRow, onPlay: () -> Unit) {
+    // UNAVAILABLE tracks: catalog knows the title but we have no DB
+    // row, so streaming/playing would have no URL. Render faded, no
+    // tap target, no play button. Matches AIO's catalog-only episode
+    // treatment.
+    val available = row.ownership != YshTrackOwnership.UNAVAILABLE
+    val tagId = "ysh-sku-${row.skuId}"
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onPlay)
-            .testTag("ysh-track-row-${track.externalId}"),
+            .alpha(if (available) 1f else 0.45f)
+            .let { if (available) it.clickable(onClick = onPlay) else it }
+            .testTag("ysh-track-row-$tagId"),
     ) {
         Row(
             modifier = Modifier.padding(12.dp),
@@ -145,14 +174,16 @@ internal fun YshTrackRow(track: LocalEpisodeEntity, onPlay: () -> Unit) {
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Column(Modifier.weight(1f)) {
-                Text(track.title, style = MaterialTheme.typography.bodyLarge)
+                Text(row.title, style = MaterialTheme.typography.bodyLarge)
                 Text(
-                    text = yshTrackSubtitle(track),
+                    text = yshTrackSubtitle(row),
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
-            IconButton(onClick = onPlay, modifier = Modifier.testTag("ysh-track-play-${track.externalId}")) {
-                Icon(Icons.Default.PlayArrow, contentDescription = "Play ${track.title}")
+            if (available) {
+                IconButton(onClick = onPlay, modifier = Modifier.testTag("ysh-track-play-$tagId")) {
+                    Icon(Icons.Default.PlayArrow, contentDescription = "Play ${row.title}")
+                }
             }
         }
     }
@@ -160,10 +191,15 @@ internal fun YshTrackRow(track: LocalEpisodeEntity, onPlay: () -> Unit) {
 
 /**
  * Subtitle for a YSH track row. Visible for tests so we lock the
- * "downloaded" / "stream" copy without rendering Compose.
+ * "downloaded" / "stream" / "not in free pool" copy without rendering
+ * Compose.
  */
-internal fun yshTrackSubtitle(track: LocalEpisodeEntity): String {
-    val orderPart = track.albumTrackOrder?.let { "#${it + 1}" }
-    val statePart = if (track.filePath != null) "downloaded" else "stream"
-    return listOfNotNull(orderPart, statePart).joinToString(" · ")
+internal fun yshTrackSubtitle(row: YshAlbumDetailRow): String {
+    val orderPart = "#${row.orderIndex + 1}"
+    val statePart = when (row.ownership) {
+        YshTrackOwnership.DOWNLOADED -> "downloaded"
+        YshTrackOwnership.STREAMABLE -> "stream"
+        YshTrackOwnership.UNAVAILABLE -> "not in free pool"
+    }
+    return "$orderPart · $statePart"
 }
