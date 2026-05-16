@@ -5,10 +5,6 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.FilterList
-import androidx.compose.material.icons.filled.Sort
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.collectAsState
@@ -84,9 +80,7 @@ fun AlbumListScreen(
     // rememberSaveable so the choice survives tab-switches; tied to
     // the screen, not persisted across launches.
     var sortMode by rememberSaveable { mutableStateOf(AlbumSort.Default) }
-    var sortMenuOpen by remember { mutableStateOf(false) }
     var filterMode by rememberSaveable { mutableStateOf(AlbumFilter.All) }
-    var filterMenuOpen by remember { mutableStateOf(false) }
     val sorted = remember(albums, sortMode, filterMode) {
         sortAlbums(filterAlbums(albums, filterMode), sortMode)
     }
@@ -97,58 +91,12 @@ fun AlbumListScreen(
                 title = { Text("Albums") },
                 actions = {
                     ShowSwitcher(onOpenSettings = onOpenSettings)
-                    Box {
-                        IconButton(
-                            onClick = { filterMenuOpen = true },
-                            modifier = Modifier.testTag("album-filter-menu"),
-                        ) {
-                            Icon(Icons.Default.FilterList, contentDescription = "Filter albums")
-                        }
-                        DropdownMenu(
-                            expanded = filterMenuOpen,
-                            onDismissRequest = { filterMenuOpen = false },
-                        ) {
-                            for (f in AlbumFilter.values()) {
-                                DropdownMenuItem(
-                                    text = { Text(f.label()) },
-                                    trailingIcon = if (f == filterMode) {
-                                        { Icon(Icons.Default.Check, contentDescription = null) }
-                                    } else null,
-                                    onClick = {
-                                        filterMode = f
-                                        filterMenuOpen = false
-                                    },
-                                    modifier = Modifier.testTag("album-filter-${f.name}"),
-                                )
-                            }
-                        }
-                    }
-                    Box {
-                        IconButton(
-                            onClick = { sortMenuOpen = true },
-                            modifier = Modifier.testTag("album-sort-menu"),
-                        ) {
-                            Icon(Icons.Default.Sort, contentDescription = "Sort albums")
-                        }
-                        DropdownMenu(
-                            expanded = sortMenuOpen,
-                            onDismissRequest = { sortMenuOpen = false },
-                        ) {
-                            for (mode in AlbumSort.values()) {
-                                DropdownMenuItem(
-                                    text = { Text(mode.label()) },
-                                    trailingIcon = if (mode == sortMode) {
-                                        { Icon(Icons.Default.Check, contentDescription = null) }
-                                    } else null,
-                                    onClick = {
-                                        sortMode = mode
-                                        sortMenuOpen = false
-                                    },
-                                    modifier = Modifier.testTag("album-sort-${mode.name}"),
-                                )
-                            }
-                        }
-                    }
+                    AlbumSortFilterActions(
+                        sortMode = sortMode,
+                        onSortChange = { sortMode = it },
+                        filterMode = filterMode,
+                        onFilterChange = { filterMode = it },
+                    )
                 },
             )
         },
@@ -195,18 +143,6 @@ fun AlbumListScreen(
             }
         }
     }
-}
-
-private fun AlbumSort.label() = when (this) {
-    AlbumSort.Default -> "Default"
-    AlbumSort.Chronological -> "Chronological"
-    AlbumSort.MostDownloaded -> "Most downloaded"
-}
-
-private fun AlbumFilter.label() = when (this) {
-    AlbumFilter.All -> "All albums"
-    AlbumFilter.HasOnPhone -> "On phone"
-    AlbumFilter.HasOnBackup -> "On backup"
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

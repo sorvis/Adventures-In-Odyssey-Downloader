@@ -10,6 +10,10 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
@@ -24,10 +28,14 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import coil.compose.AsyncImage
+import com.odyssey.catalog.AlbumFilter
+import com.odyssey.catalog.AlbumSort
 import com.odyssey.data.local.EpisodeDao
 import com.odyssey.show.YshAlbumCatalogRow
 import com.odyssey.show.YshCatalog
+import com.odyssey.show.filterYshAlbums
 import com.odyssey.show.joinYshAlbumOwnership
+import com.odyssey.show.sortYshAlbums
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.combine
@@ -73,20 +81,55 @@ fun YshAlbumListScreen(
 ) {
     val albums by vm.albums.collectAsState()
     val catalogLoaded by vm.catalogLoaded.collectAsState()
+    // rememberSaveable so the choice survives tab-switches; tied to
+    // the screen, not persisted across launches. Matches AIO's pattern.
+    var sortMode by rememberSaveable { mutableStateOf(AlbumSort.Default) }
+    var filterMode by rememberSaveable { mutableStateOf(AlbumFilter.All) }
+    val sorted = remember(albums, sortMode, filterMode) {
+        sortYshAlbums(filterYshAlbums(albums, filterMode), sortMode)
+    }
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("Your Story Hour") },
-                actions = { ShowSwitcher(onOpenSettings = onOpenSettings) },
+                actions = {
+                    ShowSwitcher(onOpenSettings = onOpenSettings)
+                    // YSH hides HasOnBackup -- no backup upload path
+                    // for YSH today (archive-service is AIO-only).
+                    AlbumSortFilterActions(
+                        sortMode = sortMode,
+                        onSortChange = { sortMode = it },
+                        filterMode = filterMode,
+                        onFilterChange = { filterMode = it },
+                        availableFilters = listOf(AlbumFilter.All, AlbumFilter.HasOnPhone),
+                    )
+                },
             )
         },
     ) { padding ->
-        if (albums.isEmpty()) {
-            YshAlbumsEmptyState(
-                catalogLoaded = catalogLoaded != null,
-                modifier = Modifier.padding(padding).padding(24.dp),
-            )
+        if (sorted.isEmpty()) {
+            // Bifurcate empty-state copy: catalog still loading vs
+            // filter excluded everything vs catalog truly empty.
+            val msg = when {
+                catalogLoaded == null -> null   // shows the "loading" state
+                albums.isEmpty() -> null        // catalog loaded but no rows
+                filterMode == AlbumFilter.HasOnPhone -> "No albums with episodes on phone yet."
+                else -> "Nothing to show."
+            }
+            if (msg != null) {
+                Box(
+                    modifier = Modifier.fillMaxSize().padding(padding),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(msg, modifier = Modifier.padding(32.dp))
+                }
+            } else {
+                YshAlbumsEmptyState(
+                    catalogLoaded = catalogLoaded != null,
+                    modifier = Modifier.padding(padding).padding(24.dp),
+                )
+            }
             return@Scaffold
         }
         LazyColumn(
@@ -98,7 +141,7 @@ fun YshAlbumListScreen(
             contentPadding = PaddingValues(12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            items(albums, key = { it.albumId }) { album ->
+            items(sorted, key = { it.albumId }) { album ->
                 YshAlbumRow(album, onClick = { onOpenAlbum(album.albumName) })
             }
         }

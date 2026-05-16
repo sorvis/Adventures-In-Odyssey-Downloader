@@ -1,5 +1,7 @@
 package com.odyssey.show
 
+import com.odyssey.catalog.AlbumFilter
+import com.odyssey.catalog.AlbumSort
 import com.odyssey.data.local.YshAlbumSummary
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -125,7 +127,96 @@ class YshAlbumOwnershipTest {
         assertEquals(null, rows.single().coverUrl)
     }
 
+    // ----- filterYshAlbums -----------------------------------------------
+
+    @Test
+    fun `filter All returns every row`() {
+        val rows = listOf(row(albumId = 1, downloaded = 0), row(albumId = 2, downloaded = 3))
+        assertEquals(rows, filterYshAlbums(rows, AlbumFilter.All))
+    }
+
+    @Test
+    fun `filter HasOnPhone keeps only rows with at least one downloaded track`() {
+        val rows = listOf(
+            row(albumId = 1, name = "A", downloaded = 0),
+            row(albumId = 2, name = "B", downloaded = 1),
+            row(albumId = 3, name = "C", downloaded = 12),
+        )
+        val out = filterYshAlbums(rows, AlbumFilter.HasOnPhone)
+        assertEquals(listOf(2L, 3L), out.map { it.albumId })
+    }
+
+    @Test
+    fun `filter HasOnBackup is defensively empty for YSH -- no backup path yet`() {
+        val rows = listOf(row(albumId = 1, downloaded = 5))
+        assertEquals(emptyList<YshAlbumCatalogRow>(), filterYshAlbums(rows, AlbumFilter.HasOnBackup))
+    }
+
+    // ----- sortYshAlbums -------------------------------------------------
+
+    @Test
+    fun `sort Default is case-insensitive alphabetical`() {
+        val rows = listOf(
+            row(albumId = 30, name = "zebra"),
+            row(albumId = 20, name = "Apple"),
+            row(albumId = 10, name = "MIDDLE"),
+        )
+        val out = sortYshAlbums(rows, AlbumSort.Default)
+        assertEquals(listOf("Apple", "MIDDLE", "zebra"), out.map { it.albumName })
+    }
+
+    @Test
+    fun `sort Chronological is by albumId ascending`() {
+        val rows = listOf(
+            row(albumId = 30, name = "zebra"),
+            row(albumId = 10, name = "Apple"),
+            row(albumId = 20, name = "MIDDLE"),
+        )
+        val out = sortYshAlbums(rows, AlbumSort.Chronological)
+        assertEquals(listOf(10L, 20L, 30L), out.map { it.albumId })
+    }
+
+    @Test
+    fun `sort MostDownloaded floats highest ratio first with stable alpha tiebreak`() {
+        val rows = listOf(
+            row(albumId = 1, name = "Zebra Zoo", total = 10, downloaded = 0),    // 0%
+            row(albumId = 2, name = "Apple Acres", total = 4, downloaded = 4),   // 100%
+            row(albumId = 3, name = "Middle Mile", total = 10, downloaded = 5),  // 50%
+            row(albumId = 4, name = "Allenburg", total = 8, downloaded = 8),     // 100% — alpha-first on tie
+        )
+        val out = sortYshAlbums(rows, AlbumSort.MostDownloaded)
+        assertEquals(
+            "100% albums first (alpha tiebreak), 50% next, 0% last",
+            listOf("Allenburg", "Apple Acres", "Middle Mile", "Zebra Zoo"),
+            out.map { it.albumName },
+        )
+    }
+
+    @Test
+    fun `sort MostDownloaded treats totalTracks=0 as zero ratio (no div by zero)`() {
+        val rows = listOf(
+            row(albumId = 1, name = "Empty Album", total = 0, downloaded = 0),
+            row(albumId = 2, name = "Has Tracks", total = 6, downloaded = 3),
+        )
+        val out = sortYshAlbums(rows, AlbumSort.MostDownloaded)
+        assertEquals(listOf("Has Tracks", "Empty Album"), out.map { it.albumName })
+    }
+
     // ----- helpers --------------------------------------------------------
+
+    private fun row(
+        albumId: Long,
+        name: String = "Album $albumId",
+        coverUrl: String? = null,
+        total: Int = 6,
+        downloaded: Int = 0,
+    ) = YshAlbumCatalogRow(
+        albumId = albumId,
+        albumName = name,
+        coverUrl = coverUrl,
+        totalTracks = total,
+        downloadedTracks = downloaded,
+    )
 
     private fun catalog(vararg tracks: YshCatalogTrack) = YshCatalogIndex(
         scrapedAtMs = 1_700_000_000_000L,
