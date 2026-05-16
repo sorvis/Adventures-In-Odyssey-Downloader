@@ -60,6 +60,17 @@ jobs:
             /tmp/gradle/gradle-8.10/bin/gradle wrapper --gradle-version 8.10
           fi
 
+      - name: Detekt (lint gate)
+        # Detekt is configured at the root with `tasks.named("check") {
+        # dependsOn("detekt") }` on :app, but CI doesn't run check — it
+        # runs testDebugUnitTest. So the gate has to fire explicitly
+        # here, otherwise lint violations slip through unnoticed (the
+        # SwallowedException rule that prevents another infinite-retry
+        # loop bug from re-shipping is in this ruleset). Runs before
+        # tests so a failing lint surfaces fast.
+        working-directory: android
+        run: ./gradlew detekt --no-daemon --stacktrace
+
       - name: Unit tests
         # Debug variant only. The release variant's merged manifest doesn't
         # include androidx.compose.ui:ui-test-manifest (it's debugImplementation

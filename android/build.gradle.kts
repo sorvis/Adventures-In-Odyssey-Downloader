@@ -24,9 +24,15 @@ detekt {
 }
 
 // The `check` lifecycle task lives on subprojects (added by the Java
-// plugin), not on the root. Wire :app:check → :detekt so a normal
-// `./gradlew :app:check` (which release.sh implicitly runs through
-// `:app:test` etc.) also runs the linter.
+// plugin), not on the root. Wire :app:check → :detekt so anyone
+// running the full check task (CI on PRs, or `./gradlew check` by
+// hand) also runs the linter.
+//
+// HEADS UP: the tag-build CI workflow does NOT run :app:check — it
+// runs :app:testDebugUnitTest, which would skip detekt without the
+// explicit `./gradlew detekt` step in .github/workflows/android.yml.
+// If you wire a new automation entry point, invoke detekt explicitly
+// — don't assume `check` is in the chain.
 project(":app").afterEvaluate {
     tasks.named("check") {
         dependsOn(rootProject.tasks.named("detekt"))

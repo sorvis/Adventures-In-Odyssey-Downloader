@@ -20,6 +20,13 @@ step "Android JVM tests + coverage gate"
 "$REPO_ROOT/scripts/run-jvm-tests.sh"
 "$REPO_ROOT/scripts/check-coverage.sh"
 
+step "Detekt (lint gate)"
+# Belt-and-suspenders catch for SwallowedException + friends before
+# the push lands. Tag-build CI runs detekt too (see
+# .github/workflows/android.yml), so a fail-here means a fail-there;
+# this just shaves the ~5min CI cycle off the feedback loop.
+"$REPO_ROOT/scripts/run-detekt.sh"
+
 step "archive-service pytest + coverage gate"
 "$REPO_ROOT/archive-service/scripts/run-tests.sh"
 "$REPO_ROOT/scripts/check-server-coverage.sh"
