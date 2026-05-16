@@ -75,7 +75,18 @@ class RecentVm @Inject constructor(
     private val downloadProgress: DownloadProgressTracker,
     private val archiveProgress: com.odyssey.download.ArchiveProgressTracker,
     val catalog: AioCatalogRepo,
+    private val yshCatalog: com.odyssey.show.YshCatalog,
 ) : ViewModel() {
+
+    /**
+     * Fallback artwork URL for YSH rows whose [LocalEpisodeEntity.imageUrl]
+     * came back null from the provider (the free-streaming response's
+     * `primary_image` is null surprisingly often). The catalog has the
+     * album cover reliably; this picks it up by skuId. Returns null for
+     * AIO rows and for YSH rows when the catalog hasn't loaded yet.
+     */
+    fun yshAlbumArtworkFor(ep: LocalEpisodeEntity): String? =
+        com.odyssey.show.yshAlbumImageUrlForRow(ep, yshCatalog.state.value)
 
     val progress = downloadProgress.progress
     val archive = archiveProgress.progress
@@ -191,7 +202,9 @@ class RecentVm @Inject constructor(
             return
         }
         val src = playSourceFor(ep.filePath, ep.downloadUrl)
-        val artwork = catalog.match(ep.title)?.thumbnailUrl ?: ep.imageUrl
+        val artwork = catalog.match(ep.title)?.thumbnailUrl
+            ?: ep.imageUrl
+            ?: yshAlbumArtworkFor(ep)
         DebugLogger.i(
             "RecentVm",
             "play(${ep.episodeId}) — ${if (src is PlaySource.Local) "local" else "stream"}",
@@ -417,6 +430,7 @@ fun RecentScreen(
                         playback = positions[ep.episodeId],
                         isCurrentlyPlaying = playerState.currentEpisodeId == ep.episodeId &&
                                 playerState.isPlaying,
+                        fallbackArtwork = vm.yshAlbumArtworkFor(ep),
                         onToggleExpand = {
                             expandedIds = if (ep.episodeId in expandedIds) expandedIds - ep.episodeId
                                           else expandedIds + ep.episodeId
@@ -453,14 +467,22 @@ internal fun EpisodeRow(
      * continuous between row + mini-player + full player.
      */
     isCurrentlyPlaying: Boolean = false,
+    /**
+     * Last-resort artwork URL when neither the AIO catalog match nor
+     * the row's own imageUrl produced one. Used for YSH free-stream
+     * rows whose imageUrl is null but whose catalog album has a cover;
+     * the caller resolves this via `vm.yshAlbumArtworkFor(ep)`.
+     */
+    fallbackArtwork: String? = null,
 ) {
     // Catalog enrichment overrides oneplace's data when we have a match:
     //   - Title becomes the canonical "#NNN: Title" (e.g. "#657: Clutter")
     //   - Thumbnail comes from the per-episode catalog art (real episode-
     //     specific image), not the generic show logo.
-    // Falls back to the unenriched values when no match.
+    // Falls back to the unenriched values when no match, then to the
+    // YSH-catalog fallback when the row's own imageUrl is null.
     val displayTitle = match?.displayName ?: ep.title
-    val thumbnailUrl = match?.thumbnailUrl ?: ep.imageUrl
+    val thumbnailUrl = match?.thumbnailUrl ?: ep.imageUrl ?: fallbackArtwork
     // "Lighter gray haze" for streamable-only rows so downloaded vs
     // not-downloaded reads at a glance, the same pattern used on the
     // Albums tab for empty albums. Click + tap-to-expand still work

@@ -18,6 +18,15 @@ data class TransferRow(
      * showing them keeps the two screens in sync.
      */
     val state: TransferState = TransferState.ACTIVE,
+    /**
+     * Air-date string from the source row (oneplace `subTitle` for AIO,
+     * yourstoryhour `created_at` for YSH). Shown as a subtitle on the
+     * row so daily shows whose title is just the show name ("Sekulow",
+     * "Sekulow Weekend") read as distinct episodes instead of looking
+     * like duplicate state. Nullable because some rows (e.g. early
+     * restore-from-backup) don't carry a date.
+     */
+    val airDate: String? = null,
 ) {
     val percent: Int
         get() = if (totalBytes <= 0L) 0
@@ -42,6 +51,7 @@ fun mergeTransfers(
     titlesById: Map<Long, String>,
     queuedUploadIds: Set<Long> = emptySet(),
     restores: Map<Long, DownloadProgressEntry> = emptyMap(),
+    airDatesById: Map<Long, String?> = emptyMap(),
 ): List<TransferRow> {
     val rows = mutableListOf<TransferRow>()
     for ((id, p) in downloads) {
@@ -52,6 +62,7 @@ fun mergeTransfers(
             bytesTransferred = p.bytesRead,
             totalBytes = p.totalBytes,
             state = TransferState.ACTIVE,
+            airDate = airDatesById[id],
         )
     }
     for ((id, p) in uploads) {
@@ -62,6 +73,7 @@ fun mergeTransfers(
             bytesTransferred = p.bytesRead,
             totalBytes = p.totalBytes,
             state = TransferState.ACTIVE,
+            airDate = airDatesById[id],
         )
     }
     for ((id, p) in restores) {
@@ -72,6 +84,7 @@ fun mergeTransfers(
             bytesTransferred = p.bytesRead,
             totalBytes = p.totalBytes,
             state = TransferState.ACTIVE,
+            airDate = airDatesById[id],
         )
     }
     // QUEUED uploads — but only for episodes NOT already actively
@@ -87,6 +100,7 @@ fun mergeTransfers(
             bytesTransferred = 0L,
             totalBytes = 0L,
             state = TransferState.QUEUED,
+            airDate = airDatesById[id],
         )
     }
     return rows.sortedWith(

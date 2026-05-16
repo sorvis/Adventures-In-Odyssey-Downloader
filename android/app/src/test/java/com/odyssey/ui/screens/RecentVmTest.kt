@@ -300,6 +300,10 @@ class RecentVmTest {
         downloadProgress = tracker,
         archiveProgress = com.odyssey.download.ArchiveProgressTracker(),
         catalog = AioCatalogRepo(ApplicationProvider.getApplicationContext()),
+        yshCatalog = com.odyssey.show.YshCatalog(
+            ApplicationProvider.getApplicationContext(),
+            okhttp3.OkHttpClient(),
+        ),
     )
 
     private fun makeEp(

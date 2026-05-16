@@ -266,9 +266,73 @@ class DownloadEpisodeWorkerTest {
         val sawAbsenceForDocs = sawAbsence
     }
 
+    @Test
+    fun `early failures retry -- worker returns Result_retry while under the max-attempts cap`() = runBlocking {
+        // Server returns 500 on every attempt. With runAttemptCount < cap,
+        // the worker must return retry() so WorkManager keeps trying.
+        // Without this contract a single transient 5xx would permanently
+        // give up.
+        server.enqueue(MockResponse().setResponseCode(500))
+        val externalId = "ysh-sku-1234"
+        episodes.upsert(stubYshRow(externalId, server.url("/audio.mp3").toString()))
+
+        val worker = buildWorker("ysh", externalId, runAttempt = 0)
+        val result = worker.doWork()
+
+        assertEquals(
+            "transient 500 on first attempt must retry, not fail",
+            ListenableWorker.Result.retry(),
+            result,
+        )
+    }
+
+    @Test
+    fun `hard failures eventually give up -- worker returns Result_failure once runAttemptCount hits the cap`() = runBlocking {
+        // Same 500 response, but this run is the Nth attempt. After
+        // MAX_RETRY_ATTEMPTS the failure clearly isn't transient — quit
+        // so the row stops wedging the Transfers list. Regression test
+        // for the stuck "Inasmuch / Prayer Planks" YSH 403 that looped
+        // forever on a typo'd S3 URL in YSH's catalog (v0.1.55 device
+        // logs).
+        server.enqueue(MockResponse().setResponseCode(500))
+        val externalId = "ysh-sku-5678"
+        episodes.upsert(stubYshRow(externalId, server.url("/audio.mp3").toString()))
+
+        val worker = buildWorker(
+            "ysh", externalId,
+            runAttempt = DownloadEpisodeWorker.MAX_RETRY_ATTEMPTS,
+        )
+        val result = worker.doWork()
+
+        assertEquals(
+            "exhausted retries must fail, not retry forever",
+            ListenableWorker.Result.failure(),
+            result,
+        )
+    }
+
     // ---- helpers -------------------------------------------------------
 
-    private fun buildWorker(providerId: String, externalId: String): DownloadEpisodeWorker =
+    private fun stubYshRow(externalId: String, downloadUrl: String) = LocalEpisodeEntity(
+        providerId = "ysh",
+        externalId = externalId,
+        title = "Some YSH Story",
+        airDate = null,
+        description = null,
+        sourceUrl = "https://yourstoryhour.org/x",
+        downloadUrl = downloadUrl,
+        filePath = null,
+        fileSize = 0L,
+        durationMs = 0L,
+        downloadedAt = null,
+        archivedAt = null,
+    )
+
+    private fun buildWorker(
+        providerId: String,
+        externalId: String,
+        runAttempt: Int = 0,
+    ): DownloadEpisodeWorker =
         TestListenableWorkerBuilder.from(ctx, DownloadEpisodeWorker::class.java)
             .setInputData(
                 workDataOf(
@@ -276,6 +340,7 @@ class DownloadEpisodeWorkerTest {
                     DownloadEpisodeWorker.KEY_EXTERNAL_ID to externalId,
                 ),
             )
+            .setRunAttemptCount(runAttempt)
             .setWorkerFactory(testWorkerFactory())
             .build() as DownloadEpisodeWorker
 

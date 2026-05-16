@@ -82,10 +82,33 @@ class DownloadEpisodeWorker @AssistedInject constructor(
             // failures (5xx, network drop), but without this log a hard
             // failure (403 with bad UA, missing downloadUrl, etc.) was
             // invisible from the device — see the YSH download bug.
-            DebugLogger.w(TAG, "download failed (will retry): ${ep.providerId}/${ep.externalId} url=${ep.downloadUrl}", t)
             val progressKey = ep.externalId.toLongOrNull() ?: ep.externalId.hashCode().toLong()
             progressTracker.clear(progressKey)
-            Result.retry()
+            // Give up after MAX_RETRY_ATTEMPTS — runAttemptCount is
+            // 0-indexed (first run = 0, first retry = 1, ...), so the
+            // check fires AFTER N retries plus the initial attempt.
+            // With 5-min exponential backoff capped by WorkManager,
+            // 8 attempts spans roughly the first ~10h of trying. After
+            // that a hard error (404, 403 on a typo'd S3 URL, etc.)
+            // has clearly not become transient — quit so the row stops
+            // wedging the Transfers list.
+            if (runAttemptCount >= MAX_RETRY_ATTEMPTS) {
+                DebugLogger.e(
+                    TAG,
+                    "download abandoned after $runAttemptCount attempts: " +
+                        "${ep.providerId}/${ep.externalId} url=${ep.downloadUrl}",
+                    t,
+                )
+                Result.failure()
+            } else {
+                DebugLogger.w(
+                    TAG,
+                    "download failed (will retry, attempt=$runAttemptCount): " +
+                        "${ep.providerId}/${ep.externalId} url=${ep.downloadUrl}",
+                    t,
+                )
+                Result.retry()
+            }
         }
     }
 
@@ -94,5 +117,8 @@ class DownloadEpisodeWorker @AssistedInject constructor(
         const val KEY_EPISODE_ID = "episodeId"     // legacy AIO-only
         const val KEY_PROVIDER_ID = "providerId"
         const val KEY_EXTERNAL_ID = "externalId"
+        // After 8 attempts (initial + 7 retries) with 5-min exponential
+        // backoff, give up. A hard error after that span is durable.
+        internal const val MAX_RETRY_ATTEMPTS = 8
     }
 }

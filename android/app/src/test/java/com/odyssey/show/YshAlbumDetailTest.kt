@@ -140,6 +140,38 @@ class YshAlbumDetailTest {
     }
 
     @Test
+    fun `yshAlbumImageUrlForRow returns the catalog cover for a YSH row missing imageUrl`() {
+        val catalog = catalog(
+            track(skuId = 1958, albumTitle = "A", title = "T", orderIndex = 0,
+                albumImageUrl = "https://catalog/cover.jpg"),
+        )
+        val row = localRow(skuId = 1958, imageUrl = null)
+        assertEquals("https://catalog/cover.jpg", yshAlbumImageUrlForRow(row, catalog))
+    }
+
+    @Test
+    fun `yshAlbumImageUrlForRow returns null when row is not YSH`() {
+        val catalog = catalog(
+            track(skuId = 1, albumTitle = "A", title = "T", orderIndex = 0),
+        )
+        val aioRow = localRow(skuId = 1).copy(providerId = "aio")
+        assertNull(yshAlbumImageUrlForRow(aioRow, catalog))
+    }
+
+    @Test
+    fun `yshAlbumImageUrlForRow returns null when catalog not yet loaded`() {
+        assertNull(yshAlbumImageUrlForRow(localRow(skuId = 1), catalog = null))
+    }
+
+    @Test
+    fun `yshAlbumImageUrlForRow returns null when skuId is not in the catalog`() {
+        val catalog = catalog(
+            track(skuId = 100, albumTitle = "A", title = "T", orderIndex = 0),
+        )
+        assertNull(yshAlbumImageUrlForRow(localRow(skuId = 999), catalog))
+    }
+
+    @Test
     fun `DB row whose externalId doesn't parse as ysh-sku-N is ignored defensively`() {
         val rows = joinYshAlbumDetail(
             catalog = catalog(

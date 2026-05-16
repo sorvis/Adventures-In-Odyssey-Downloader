@@ -64,12 +64,14 @@ class TransfersVm @Inject constructor(
         episodes.observeUnarchivedDownloaded(),
     ) { dl, up, rs, eps, unarchived ->
         val titles = eps.associate { it.episodeId to it.title }
+        val airDates = eps.associate { it.episodeId to it.airDate }
         mergeTransfers(
             downloads = dl,
             uploads = up,
             titlesById = titles,
             queuedUploadIds = unarchived.map { it.episodeId }.toSet(),
             restores = rs,
+            airDatesById = airDates,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 }
@@ -172,6 +174,16 @@ internal fun TransferRowCard(row: TransferRow) {
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
+            // Air-date subtitle — disambiguates daily shows whose
+            // title is just the show name (e.g. multiple "Sekulow"
+            // rows would otherwise look like duplicate state).
+            if (!row.airDate.isNullOrBlank()) {
+                Text(
+                    text = row.airDate,
+                    style = MaterialTheme.typography.labelSmall,
+                    modifier = Modifier.testTag("transfer-row-air-date"),
+                )
+            }
             Spacer(Modifier.height(6.dp))
             // ACTIVE rows show a real progress bar (or indeterminate
             // when total bytes unknown). QUEUED rows show no bar —

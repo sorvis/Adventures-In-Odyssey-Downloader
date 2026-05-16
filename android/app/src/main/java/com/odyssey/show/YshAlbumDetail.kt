@@ -83,3 +83,26 @@ fun joinYshAlbumDetail(
         }
         .sortedWith(compareBy({ it.orderIndex }, { it.title }))
 }
+
+/**
+ * Resolve an artwork URL for a YSH row by looking up its skuId in the
+ * catalog. Used as a fallback when [LocalEpisodeEntity.imageUrl] is
+ * null — which happens for free-streaming-pool rows whose
+ * `/crud/free-streaming` response came back with a null
+ * `primary_image`, even though the same album in `/crud/product/skus`
+ * (the catalog) reliably has a cover.
+ *
+ * Returns null for non-YSH rows, for YSH rows with a malformed
+ * externalId, or when the catalog hasn't loaded yet. Callers chain
+ * `row.imageUrl ?: yshAlbumImageUrlForRow(row, catalog)` to keep the
+ * preferred per-episode imageUrl when it exists.
+ */
+fun yshAlbumImageUrlForRow(
+    row: LocalEpisodeEntity,
+    catalog: YshCatalogIndex?,
+): String? {
+    if (row.providerId != "ysh") return null
+    if (catalog == null) return null
+    val skuId = row.externalId.removePrefix("ysh-sku-").toLongOrNull() ?: return null
+    return catalog.tracks.firstOrNull { it.skuId == skuId }?.albumImageUrl
+}
