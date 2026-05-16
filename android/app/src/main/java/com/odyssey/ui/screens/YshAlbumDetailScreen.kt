@@ -65,9 +65,15 @@ class YshAlbumDetailVm @Inject constructor(
      */
     val rows = combine(
         catalog.state,
-        episodes.observeYshAlbumTracks(albumName),
+        episodes.observeAll(),
     ) { idx, dbRows ->
         if (idx == null) emptyList()
+        // Pass ALL rows (filter by providerId happens inside the
+        // helper via skuId join). Pre-v0.1.58 used
+        // `observeYshAlbumTracks(albumName)` which is `WHERE
+        // albumName = :albumName` — but DailyCheckWorker never sets
+        // albumName on YSH rows, so the query returned zero and
+        // every track rendered as UNAVAILABLE.
         else joinYshAlbumDetail(idx, albumName, dbRows)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 

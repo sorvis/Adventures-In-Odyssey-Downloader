@@ -2,7 +2,7 @@ package com.odyssey.show
 
 import com.odyssey.catalog.AlbumFilter
 import com.odyssey.catalog.AlbumSort
-import com.odyssey.data.local.YshAlbumSummary
+import com.odyssey.data.local.LocalEpisodeEntity
 
 /**
  * Pure helper that turns the full YshCatalog into one row per album,
@@ -13,16 +13,17 @@ import com.odyssey.data.local.YshAlbumSummary
  * user has already ingested.
  *
  * Catalog is the source of truth for the album list and total track
- * count; the DB only contributes the per-album `downloadedTracks`
- * overlay. Albums present in [dbSummaries] but absent from [catalog]
- * are dropped — that situation only arises if the catalog refresh
- * fell behind a brand-new album going live, and the row will
- * reappear on the next catalog refresh.
+ * count; the DB only contributes `downloadedTracks` by counting how
+ * many local rows' skuIds appear in the album's catalog tracks.
  *
- * Joins by exact [YshCatalogTrack.albumTitle] == [YshAlbumSummary.albumName].
- * Both sides populate that field from the same API response field
- * (`product`/`album_title`), so case/whitespace match by construction —
- * no normalization needed.
+ * **Important:** join key is `skuId` (parsed from the row's
+ * `externalId` of shape `ysh-sku-<n>`), NOT `albumName`. Pre-v0.1.58
+ * builds had no `albumName` on YSH rows at all (DailyCheckWorker
+ * never populated it), so any join through that field missed every
+ * downloaded YSH episode — every album showed "0 downloaded" and
+ * every track in album-detail showed UNAVAILABLE even right after
+ * the file landed on disk. skuId is stable and present on every row
+ * by construction.
  */
 data class YshAlbumCatalogRow(
     val albumId: Long,
@@ -34,10 +35,13 @@ data class YshAlbumCatalogRow(
 
 fun joinYshAlbumOwnership(
     catalog: YshCatalogIndex,
-    dbSummaries: List<YshAlbumSummary>,
+    dbRows: List<LocalEpisodeEntity>,
 ): List<YshAlbumCatalogRow> {
-    val downloadedByAlbum: Map<String, Int> =
-        dbSummaries.associate { it.albumName to it.downloadedCount }
+    val downloadedSkuIds: Set<Long> = dbRows
+        .asSequence()
+        .filter { it.providerId == "ysh" && it.filePath != null }
+        .mapNotNull { it.externalId.removePrefix("ysh-sku-").toLongOrNull() }
+        .toSet()
 
     return catalog.tracks
         .groupBy { it.albumId }
@@ -48,7 +52,7 @@ fun joinYshAlbumOwnership(
                 albumName = first.albumTitle,
                 coverUrl = first.albumImageUrl,
                 totalTracks = tracks.size,
-                downloadedTracks = downloadedByAlbum[first.albumTitle] ?: 0,
+                downloadedTracks = tracks.count { it.skuId in downloadedSkuIds },
             )
         }
         .sortedBy { it.albumName.lowercase() }

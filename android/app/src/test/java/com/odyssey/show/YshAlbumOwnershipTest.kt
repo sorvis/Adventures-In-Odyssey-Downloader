@@ -2,7 +2,7 @@ package com.odyssey.show
 
 import com.odyssey.catalog.AlbumFilter
 import com.odyssey.catalog.AlbumSort
-import com.odyssey.data.local.YshAlbumSummary
+import com.odyssey.data.local.LocalEpisodeEntity
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -11,16 +11,16 @@ import org.junit.Test
  *
  * Locks in:
  *   - The YSH Albums tab shows EVERY catalog album, even ones with zero
- *     local tracks (the previous behavior — empty list until ingestion
- *     happens — is the bug this helper fixes).
- *   - Per-album `downloadedTracks` is overlaid from the DB summary;
- *     albums with no DB match get 0.
- *   - Albums in the DB but not in the catalog are dropped (catalog is
- *     the source of truth, so a stale-DB row for a discontinued album
- *     doesn't pollute the list).
- *   - Sort is case-insensitive ascending so "Beyond the Hidden Door"
- *     and "beyond the hidden door" don't reorder if YSH ever changes
- *     casing on us.
+ *     local tracks.
+ *   - Per-album `downloadedTracks` comes from counting DB rows whose
+ *     skuId-from-externalId appears in the album's catalog tracks.
+ *     CRITICAL: this is keyed off skuId, NOT the DB row's `albumName`
+ *     field (which DailyCheckWorker leaves null on every YSH row).
+ *     A pre-v0.1.58 albumName-keyed join missed every downloaded YSH
+ *     episode in the user's library — see the
+ *     "albumName-is-null regression" test below.
+ *   - Catalog drives the list; DB rows for unknown albums are ignored.
+ *   - Sort is case-insensitive ascending.
  */
 class YshAlbumOwnershipTest {
 
@@ -28,7 +28,7 @@ class YshAlbumOwnershipTest {
     fun `empty catalog returns empty list even with DB rows present`() {
         val rows = joinYshAlbumOwnership(
             catalog = catalog(),  // no tracks
-            dbSummaries = listOf(summary("Phantom Album", trackCount = 3, downloadedCount = 2)),
+            dbRows = listOf(downloadedRow(skuId = 100, albumName = null)),
         )
         assertEquals(emptyList<YshAlbumCatalogRow>(), rows)
     }
@@ -41,7 +41,7 @@ class YshAlbumOwnershipTest {
                 track(skuId = 101, albumId = 1, albumTitle = "Adventures of Asia", title = "Track B"),
                 track(skuId = 200, albumId = 2, albumTitle = "Bible Comes Alive", title = "Genesis 1"),
             ),
-            dbSummaries = emptyList(),
+            dbRows = emptyList(),
         )
         assertEquals(2, rows.size)
         assertEquals("Adventures of Asia", rows[0].albumName)
@@ -52,55 +52,64 @@ class YshAlbumOwnershipTest {
         assertEquals(0, rows[1].downloadedTracks)
     }
 
+    /**
+     * **Regression test for the v0.1.58 fix.** Pre-fix, the join keyed
+     * off `dbSummary.albumName` aggregated from a SQL GROUP BY on
+     * `local_episodes.albumName`. But DailyCheckWorker never populated
+     * `albumName` on YSH rows (defaults to null), so the SQL aggregation
+     * returned zero rows, and every album in the UI showed "0/N
+     * downloaded" even when the user had files on disk.
+     *
+     * Post-fix: the join keys off skuId parsed from `externalId`. The
+     * DB row's `albumName` is now irrelevant to the count.
+     */
     @Test
-    fun `DB downloadedCount overlays on the matching catalog row`() {
+    fun `downloadedTracks counts rows by skuId even when DB row has albumName=null`() {
         val rows = joinYshAlbumOwnership(
             catalog = catalog(
                 track(skuId = 100, albumId = 1, albumTitle = "Adventures of Asia", title = "T1"),
                 track(skuId = 101, albumId = 1, albumTitle = "Adventures of Asia", title = "T2"),
                 track(skuId = 102, albumId = 1, albumTitle = "Adventures of Asia", title = "T3"),
-                track(skuId = 200, albumId = 2, albumTitle = "Bible Comes Alive", title = "B1"),
             ),
-            dbSummaries = listOf(
-                summary("Adventures of Asia", trackCount = 2, downloadedCount = 2),
+            dbRows = listOf(
+                downloadedRow(skuId = 100, albumName = null),
+                downloadedRow(skuId = 102, albumName = null),
             ),
         )
-        val adventures = rows.single { it.albumId == 1L }
-        assertEquals("totalTracks comes from catalog (3), not the DB summary (2)", 3, adventures.totalTracks)
-        assertEquals("downloadedTracks comes from the DB summary", 2, adventures.downloadedTracks)
-        val bible = rows.single { it.albumId == 2L }
-        assertEquals(1, bible.totalTracks)
-        assertEquals("no DB summary -> zero downloads", 0, bible.downloadedTracks)
+        val adventures = rows.single()
+        assertEquals("totalTracks comes from catalog", 3, adventures.totalTracks)
+        assertEquals(
+            "downloadedTracks must equal the number of DB rows whose skuId is in the album — albumName=null in DB is irrelevant",
+            2, adventures.downloadedTracks,
+        )
     }
 
     @Test
-    fun `DB-only album not in catalog is dropped from the listing`() {
+    fun `DB rows from other albums or providers do not pollute the count`() {
         val rows = joinYshAlbumOwnership(
             catalog = catalog(
-                track(skuId = 100, albumId = 1, albumTitle = "In Catalog", title = "T1"),
+                track(skuId = 100, albumId = 1, albumTitle = "Target Album", title = "T1"),
             ),
-            dbSummaries = listOf(
-                summary("Stale Album From Old DB", trackCount = 5, downloadedCount = 1),
+            dbRows = listOf(
+                downloadedRow(skuId = 100, albumName = null),                       // matches
+                downloadedRow(skuId = 999, albumName = null),                       // sku not in catalog
+                downloadedRow(skuId = 100, providerId = "aio", albumName = null),  // AIO row, ignored
             ),
         )
-        assertEquals(listOf("In Catalog"), rows.map { it.albumName })
+        assertEquals(1, rows.single().downloadedTracks)
     }
 
     @Test
-    fun `cover URL flows from the catalog -- not from the DB summary`() {
+    fun `rows without a file are not counted as downloaded`() {
         val rows = joinYshAlbumOwnership(
             catalog = catalog(
-                track(
-                    skuId = 100, albumId = 1, albumTitle = "Adventures of Asia",
-                    title = "T1", albumImageUrl = "https://catalog.example/cover.png",
-                ),
+                track(skuId = 100, albumId = 1, albumTitle = "A", title = "T1"),
             ),
-            dbSummaries = listOf(
-                summary("Adventures of Asia", trackCount = 0, downloadedCount = 0,
-                    coverUrl = "https://db.example/different.png"),
+            dbRows = listOf(
+                streamableRow(skuId = 100, albumName = null),  // ingested but no file -> streamable
             ),
         )
-        assertEquals("https://catalog.example/cover.png", rows.single().coverUrl)
+        assertEquals("STREAMABLE rows are not on phone", 0, rows.single().downloadedTracks)
     }
 
     @Test
@@ -111,7 +120,7 @@ class YshAlbumOwnershipTest {
                 track(skuId = 2, albumId = 20, albumTitle = "Apple", title = "x"),
                 track(skuId = 3, albumId = 10, albumTitle = "MIDDLE", title = "x"),
             ),
-            dbSummaries = emptyList(),
+            dbRows = emptyList(),
         )
         assertEquals(listOf("Apple", "MIDDLE", "zebra"), rows.map { it.albumName })
     }
@@ -122,7 +131,7 @@ class YshAlbumOwnershipTest {
             catalog = catalog(
                 track(skuId = 1, albumId = 1, albumTitle = "Coverless", title = "x", albumImageUrl = null),
             ),
-            dbSummaries = emptyList(),
+            dbRows = emptyList(),
         )
         assertEquals(null, rows.single().coverUrl)
     }
@@ -240,15 +249,49 @@ class YshAlbumOwnershipTest {
         orderIndex = orderIndex,
     )
 
-    private fun summary(
-        albumName: String,
-        trackCount: Int,
-        downloadedCount: Int,
-        coverUrl: String? = null,
-    ) = YshAlbumSummary(
+    private fun downloadedRow(
+        skuId: Long,
+        providerId: String = "ysh",
+        albumName: String? = null,
+    ) = baseRow(
+        skuId = skuId,
+        providerId = providerId,
         albumName = albumName,
-        coverUrl = coverUrl,
-        trackCount = trackCount,
-        downloadedCount = downloadedCount,
+        filePath = "/data/local/ysh-sku-$skuId.mp3",
+    )
+
+    private fun streamableRow(
+        skuId: Long,
+        providerId: String = "ysh",
+        albumName: String? = null,
+    ) = baseRow(
+        skuId = skuId,
+        providerId = providerId,
+        albumName = albumName,
+        filePath = null,
+    )
+
+    private fun baseRow(
+        skuId: Long,
+        providerId: String,
+        albumName: String?,
+        filePath: String?,
+    ) = LocalEpisodeEntity(
+        providerId = providerId,
+        externalId = if (providerId == "ysh") "ysh-sku-$skuId" else skuId.toString(),
+        title = "T$skuId",
+        airDate = "2021-01-01",
+        description = "stub",
+        sourceUrl = "https://source/$skuId",
+        downloadUrl = "https://zcast/$skuId.mp3",
+        filePath = filePath,
+        fileSize = if (filePath != null) 1024L else 0L,
+        durationMs = 30 * 60_000L,
+        downloadedAt = if (filePath != null) 1_700_000_000_000L else null,
+        archivedAt = null,
+        imageUrl = null,
+        albumName = albumName,
+        albumImageUrl = null,
+        albumTrackOrder = null,
     )
 }

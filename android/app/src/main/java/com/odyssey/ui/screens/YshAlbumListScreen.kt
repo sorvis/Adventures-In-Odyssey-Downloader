@@ -58,10 +58,15 @@ class YshAlbumListVm @Inject constructor(
      */
     val albums = combine(
         catalog.state,
-        episodes.observeYshAlbumSummaries(),
-    ) { idx, summaries ->
+        episodes.observeAll(),
+    ) { idx, rows ->
         if (idx == null) emptyList()
-        else joinYshAlbumOwnership(idx, summaries)
+        // Pass the raw row list (not a pre-aggregated summary): the
+        // join keys off skuId in the externalId, NOT the row's
+        // `albumName` field — which DailyCheckWorker leaves null on
+        // every YSH row, so any albumName-based aggregation in the
+        // DAO would yield zero downloaded for everything.
+        else joinYshAlbumOwnership(idx, rows)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     /**
