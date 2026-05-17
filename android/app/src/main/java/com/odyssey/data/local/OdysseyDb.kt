@@ -197,12 +197,26 @@ interface EpisodeDao {
     @Query("""SELECT * FROM local_episodes
               WHERE filePath IS NOT NULL
                 AND archivedAt IS NULL
+                AND providerId = 'aio'
               ORDER BY airDate ASC, externalId ASC""")
     fun observeUnarchivedDownloaded(): Flow<List<LocalEpisodeEntity>>
 
+    /**
+     * Snapshot of every downloaded-but-not-yet-archived AIO episode.
+     * **AIO-only** — the archive-service is AIO-only today (per
+     * design step 11b), and YSH rows have non-numeric externalIds
+     * whose `episodeId` getter falls back to `String.hashCode()`,
+     * which doesn't round-trip through `byId(Long)` (filters on
+     * providerId='aio'). Without this filter, YSH rows would loop
+     * forever through ArchiveBackfill → enqueueArchive(hash) →
+     * ArchiveWorker.byId(hash) miss → Result.failure(), with the
+     * row still unarchived so the next snapshot re-yields it. See
+     * the v0.1.62 fix and the user device logs that surfaced it.
+     */
     @Query("""SELECT * FROM local_episodes
               WHERE filePath IS NOT NULL
-                AND archivedAt IS NULL""")
+                AND archivedAt IS NULL
+                AND providerId = 'aio'""")
     suspend fun unarchivedDownloaded(): List<LocalEpisodeEntity>
 
     /**
