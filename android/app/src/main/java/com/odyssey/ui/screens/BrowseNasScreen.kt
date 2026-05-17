@@ -5,7 +5,9 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
+import kotlinx.coroutines.delay
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
@@ -20,11 +22,14 @@ import androidx.lifecycle.viewModelScope
 import com.odyssey.app.SettingsRepo
 import com.odyssey.data.local.EpisodeDao
 import com.odyssey.data.local.LocalEpisodeEntity
+import com.odyssey.debug.DebugLogger
 import com.odyssey.download.ArchiveProgressTracker
 import com.odyssey.download.DownloadProgressTracker
 import com.odyssey.download.RestoreProgressTracker
+import com.odyssey.download.TransferKind
 import com.odyssey.download.TransferRow
 import com.odyssey.download.mergeTransfers
+import com.odyssey.download.queuedTransferKicks
 import com.odyssey.nas.NasAlbum
 import com.odyssey.nas.NasClient
 import com.odyssey.nas.NasEpisode
@@ -163,6 +168,33 @@ class BrowseVm @Inject constructor(
     }
 
     /**
+     * Force every QUEUED transfer (uploads waiting on WorkManager's
+     * exponential backoff after the NAS went unreachable, etc.) to
+     * retry NOW. Driven by the Sync screen's pull-to-refresh — the
+     * user has reconnected to the home LAN and wants the queue to
+     * drain immediately instead of waiting up to an hour for the
+     * next backoff tick. Mirrors DownloadReconciler's kick pattern.
+     *
+     * Today only uploads can be in TransferState.QUEUED (mergeTransfers
+     * doesn't emit QUEUED for downloads/restores), so this only
+     * routes through `kickArchive`. If future kinds gain queued
+     * states, extend the when-branch accordingly.
+     */
+    fun kickAllQueuedTransfers() = viewModelScope.launch {
+        val allowMetered = settings.flow.first().allowMeteredDownloads
+        val kicks = queuedTransferKicks(transferRows.value)
+        if (kicks.isEmpty()) return@launch
+        DebugLogger.i("BrowseVm", "pull-to-refresh: kicking ${kicks.size} queued transfer(s)")
+        for (row in kicks) {
+            when (row.kind) {
+                TransferKind.UPLOAD -> scheduler.kickArchive(row.episodeId, allowMetered)
+                // No queued state for these today; defensive no-op.
+                TransferKind.DOWNLOAD, TransferKind.RESTORE -> Unit
+            }
+        }
+    }
+
+    /**
      * "Pin offline" — schedule a RestoreEpisodeWorker to pull this
      * server episode onto the phone for offline playback. Tracker
      * surfaces the in-flight bytes on the Transfers screen.
@@ -189,13 +221,33 @@ fun BrowseNasScreen(
     val configured by vm.configured.collectAsState()
     val transfers by vm.transferRows.collectAsState()
 
+    // Pull-to-refresh: refresh NAS album list AND force-retry every
+    // QUEUED upload, so the user reconnecting to the home LAN can
+    // drain the backup queue on-demand instead of waiting for
+    // WorkManager's exponential backoff. A short artificial spin
+    // gives the user visible feedback even when both ops finish
+    // instantly (typical case when there's nothing queued).
+    var refreshing by remember { mutableStateOf(false) }
+    LaunchedEffect(refreshing) {
+        if (refreshing) {
+            delay(600)
+            refreshing = false
+        }
+    }
     Scaffold(
         topBar = { TopAppBar(title = { Text("Sync") }) },
     ) { padding ->
+      PullToRefreshBox(
+        isRefreshing = refreshing,
+        onRefresh = {
+            refreshing = true
+            vm.refresh()
+            vm.kickAllQueuedTransfers()
+        },
+        modifier = Modifier.padding(padding).fillMaxSize().testTag("sync-pull-refresh"),
+      ) {
         Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding),
+            modifier = Modifier.fillMaxSize(),
         ) {
             // Active transfers strip — auto-shows when something's
             // running, hidden when idle. Lives above the browse
@@ -226,6 +278,7 @@ fun BrowseNasScreen(
                 }
             }
         }
+      }
     }
 }
 

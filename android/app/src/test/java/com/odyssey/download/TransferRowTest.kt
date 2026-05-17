@@ -137,4 +137,46 @@ class TransferRowTest {
             out.map { it.kind },
         )
     }
+
+    // ----- queuedTransferKicks -------------------------------------------
+
+    @Test
+    fun `queuedTransferKicks returns only QUEUED rows -- ACTIVE rows are already running`() {
+        val rows = listOf(
+            row(episodeId = 100L, kind = TransferKind.UPLOAD, state = TransferState.QUEUED),
+            row(episodeId = 200L, kind = TransferKind.UPLOAD, state = TransferState.ACTIVE),
+            row(episodeId = 300L, kind = TransferKind.DOWNLOAD, state = TransferState.ACTIVE),
+            row(episodeId = 400L, kind = TransferKind.UPLOAD, state = TransferState.QUEUED),
+        )
+        val kicks = queuedTransferKicks(rows)
+        assertEquals(2, kicks.size)
+        assertEquals(setOf(100L, 400L), kicks.map { it.episodeId }.toSet())
+    }
+
+    @Test
+    fun `queuedTransferKicks returns empty list when nothing is queued`() {
+        val rows = listOf(
+            row(episodeId = 100L, kind = TransferKind.UPLOAD, state = TransferState.ACTIVE),
+            row(episodeId = 200L, kind = TransferKind.DOWNLOAD, state = TransferState.ACTIVE),
+        )
+        assertTrue(queuedTransferKicks(rows).isEmpty())
+    }
+
+    @Test
+    fun `queuedTransferKicks preserves the row's kind so the caller can route to the right scheduler method`() {
+        val rows = listOf(
+            row(episodeId = 100L, kind = TransferKind.UPLOAD, state = TransferState.QUEUED),
+        )
+        val kick = queuedTransferKicks(rows).single()
+        assertEquals(TransferKind.UPLOAD, kick.kind)
+    }
+
+    private fun row(episodeId: Long, kind: TransferKind, state: TransferState) = TransferRow(
+        episodeId = episodeId,
+        title = "ep $episodeId",
+        kind = kind,
+        bytesTransferred = 0L,
+        totalBytes = 0L,
+        state = state,
+    )
 }

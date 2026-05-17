@@ -208,7 +208,28 @@ class WorkScheduler @Inject constructor(@ApplicationContext private val ctx: Con
         "download-$providerId-$externalId"
 
     override fun enqueueArchive(episodeId: Long, allowMetered: Boolean) {
-        val req = OneTimeWorkRequestBuilder<ArchiveEpisodeWorker>()
+        wm.enqueueUniqueWork(
+            archiveWorkName(episodeId),
+            ExistingWorkPolicy.KEEP,
+            buildArchiveRequest(episodeId, allowMetered),
+        )
+    }
+
+    override fun kickArchive(episodeId: Long, allowMetered: Boolean) {
+        // Cancel first so the subsequent enqueue isn't no-op'd by the
+        // unique-name + KEEP policy. cancelUniqueWork is idempotent
+        // and a no-op if nothing's enqueued. Mirrors kickDownload.
+        val name = archiveWorkName(episodeId)
+        wm.cancelUniqueWork(name)
+        wm.enqueueUniqueWork(
+            name,
+            ExistingWorkPolicy.KEEP,
+            buildArchiveRequest(episodeId, allowMetered),
+        )
+    }
+
+    private fun buildArchiveRequest(episodeId: Long, allowMetered: Boolean): OneTimeWorkRequest =
+        OneTimeWorkRequestBuilder<ArchiveEpisodeWorker>()
             .setInputData(workDataOf(DownloadEpisodeWorker.KEY_EPISODE_ID to episodeId))
             .setConstraints(
                 Constraints.Builder()
@@ -217,8 +238,8 @@ class WorkScheduler @Inject constructor(@ApplicationContext private val ctx: Con
             )
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 15, TimeUnit.MINUTES)
             .build()
-        wm.enqueueUniqueWork("archive-$episodeId", ExistingWorkPolicy.KEEP, req)
-    }
+
+    private fun archiveWorkName(episodeId: Long): String = "archive-$episodeId"
 
     fun enqueueRetention() {
         val req = OneTimeWorkRequestBuilder<RetentionWorker>().build()

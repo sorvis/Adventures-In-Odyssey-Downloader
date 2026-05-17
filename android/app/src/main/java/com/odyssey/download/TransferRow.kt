@@ -37,6 +37,24 @@ enum class TransferKind { DOWNLOAD, UPLOAD, RESTORE }
 enum class TransferState { ACTIVE, QUEUED }
 
 /**
+ * Pure helper for Sync's pull-to-refresh: pick out the rows the user
+ * wants force-retried right now (the QUEUED ones, not the ACTIVE
+ * ones — those are already running). The caller iterates and routes
+ * each to the right kick-method on its scheduler:
+ *
+ *   UPLOAD  → ArchiveEnqueuer.kickArchive(episodeId, ...)
+ *   DOWNLOAD/RESTORE → today these don't appear as QUEUED in
+ *                      mergeTransfers's output (only uploads do), so
+ *                      the helper returns them too but production
+ *                      callers can ignore them or wire kickers later.
+ *
+ * JVM-testable so the "which rows count as kickable" semantic is
+ * locked down without standing up a WorkManager.
+ */
+fun queuedTransferKicks(rows: List<TransferRow>): List<TransferRow> =
+    rows.filter { it.state == TransferState.QUEUED }
+
+/**
  * Combine the in-flight progress maps + the queued-uploads list into
  * a single sorted list for the Transfers screen. Sort: state (ACTIVE
  * first), then kind, then episodeId. ACTIVE uploads suppress the

@@ -52,4 +52,20 @@ interface DownloadEnqueuer {
  */
 interface ArchiveEnqueuer {
     fun enqueueArchive(episodeId: Long, allowMetered: Boolean)
+
+    /**
+     * Force a fresh enqueue for an upload whose previous work is stuck
+     * in WorkManager's exponential backoff (typically the case after
+     * the NAS was unreachable for a while). Cancels the existing
+     * unique-work entry FIRST so the KEEP policy in [enqueueArchive]
+     * doesn't no-op, then enqueues. Used by the Sync screen's
+     * pull-to-refresh to drain the queue on-demand when the user
+     * reconnects to the home LAN.
+     *
+     * Default implementation just calls [enqueueArchive] — fine for
+     * test recorders that don't model WorkManager backoff. Production
+     * WorkScheduler overrides with cancel-then-enqueue semantics.
+     */
+    fun kickArchive(episodeId: Long, allowMetered: Boolean) =
+        enqueueArchive(episodeId, allowMetered)
 }
