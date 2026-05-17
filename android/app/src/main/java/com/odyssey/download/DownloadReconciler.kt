@@ -2,6 +2,7 @@ package com.odyssey.download
 
 import com.odyssey.data.local.EpisodeDao
 import com.odyssey.debug.DebugLogger
+import com.odyssey.work.ArchiveEnqueuer
 import com.odyssey.work.DownloadEnqueuer
 import kotlinx.coroutines.flow.first
 import java.io.File
@@ -39,6 +40,7 @@ class DownloadReconciler @Inject constructor(
     private val episodes: EpisodeDao,
     private val downloader: EpisodeDownloader,
     private val scheduler: DownloadEnqueuer,
+    private val archiveScheduler: ArchiveEnqueuer,
 ) {
     /**
      * Scan undownloaded rows; kick any whose file already exists on
@@ -95,7 +97,15 @@ class DownloadReconciler @Inject constructor(
             // AIO externalIds parse to Long by construction (oneplace
             // CMS ids or broadcast numbers). The leaked rows are AIO-
             // shaped, so this is safe.
-            row.externalId.toLongOrNull()?.let { episodes.delete(it) }
+            row.externalId.toLongOrNull()?.let { episodeId ->
+                // Cancel any pending archive WorkManager entry for this
+                // episode FIRST. Otherwise ArchiveEpisodeWorker fires
+                // later, finds no DB row, and spams the log with
+                // "no row in DB" warnings — observed in user device
+                // logs after v0.1.59 cleanup ran.
+                archiveScheduler.cancelArchive(episodeId)
+                episodes.delete(episodeId)
+            }
         }
         DebugLogger.i(TAG, "cross-show cleanup done — removed ${contaminated.size} row(s)")
         return contaminated.size

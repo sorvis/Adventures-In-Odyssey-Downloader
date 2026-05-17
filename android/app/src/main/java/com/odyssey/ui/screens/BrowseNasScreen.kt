@@ -22,6 +22,7 @@ import androidx.lifecycle.viewModelScope
 import com.odyssey.app.SettingsRepo
 import com.odyssey.data.local.EpisodeDao
 import com.odyssey.data.local.LocalEpisodeEntity
+import com.odyssey.catalog.AioCatalogRepo
 import com.odyssey.debug.DebugLogger
 import com.odyssey.download.ArchiveProgressTracker
 import com.odyssey.download.DownloadProgressTracker
@@ -52,6 +53,7 @@ class BrowseVm @Inject constructor(
     private val player: PlayerController,
     private val episodes: EpisodeDao,
     private val scheduler: WorkScheduler,
+    private val aioCatalog: AioCatalogRepo,
     downloads: DownloadProgressTracker,
     uploads: ArchiveProgressTracker,
     restores: RestoreProgressTracker,
@@ -128,7 +130,23 @@ class BrowseVm @Inject constructor(
 
     private suspend fun mirrorServerEpisodes(eps: List<NasEpisode>) {
         val now = System.currentTimeMillis()
+        var skipped = 0
         for (ep in eps) {
+            // AIO-only filter: the server may still hold files from
+            // pre-v0.1.59 cross-show leaks (Sekulow etc. that the AIO
+            // provider mistakenly uploaded). Without this filter, every
+            // Sync refresh re-creates `providerId="aio"` rows for them,
+            // which DownloadReconciler then re-cleans on next launch —
+            // an infinite ping-pong. Title catalog-match is the
+            // source-of-truth: a Sekulow title never matches the AIO
+            // catalog, but every real AIO episode does (the bundled
+            // catalog has ~1182 entries; newly-aired episodes also flow
+            // in via DailyCheckWorker → oneplace so the mirror isn't
+            // the only ingest path).
+            if (aioCatalog.match(ep.title) == null) {
+                skipped++
+                continue
+            }
             val existing = episodes.byId(ep.episode_id)
             if (existing != null) {
                 // Don't clobber an existing row's filePath/title — just
@@ -155,6 +173,9 @@ class BrowseVm @Inject constructor(
                     archivedAt = now,
                 ),
             )
+        }
+        if (skipped > 0) {
+            DebugLogger.i("BrowseVm", "mirrorServerEpisodes: skipped $skipped non-AIO server row(s)")
         }
     }
 

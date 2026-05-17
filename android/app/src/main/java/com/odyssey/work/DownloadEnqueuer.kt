@@ -68,4 +68,14 @@ interface ArchiveEnqueuer {
      */
     fun kickArchive(episodeId: Long, allowMetered: Boolean) =
         enqueueArchive(episodeId, allowMetered)
+
+    /**
+     * Cancel any pending archive work for [episodeId]. Called by
+     * DownloadReconciler.cleanupCrossShowContamination when it deletes
+     * a row so the corresponding WorkManager entry doesn't fire later
+     * and spam the log with "no row in DB". No-op if nothing's
+     * enqueued. Default implementation is a no-op — test recorders
+     * don't model WorkManager so they don't need to do anything.
+     */
+    fun cancelArchive(episodeId: Long) = Unit
 }

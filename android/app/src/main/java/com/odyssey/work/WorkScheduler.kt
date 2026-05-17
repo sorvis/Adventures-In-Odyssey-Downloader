@@ -241,6 +241,10 @@ class WorkScheduler @Inject constructor(@ApplicationContext private val ctx: Con
 
     private fun archiveWorkName(episodeId: Long): String = "archive-$episodeId"
 
+    override fun cancelArchive(episodeId: Long) {
+        wm.cancelUniqueWork(archiveWorkName(episodeId))
+    }
+
     fun enqueueRetention() {
         val req = OneTimeWorkRequestBuilder<RetentionWorker>().build()
         wm.enqueueUniqueWork("retention", ExistingWorkPolicy.REPLACE, req)

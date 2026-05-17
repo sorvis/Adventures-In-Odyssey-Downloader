@@ -53,6 +53,7 @@ class DownloadReconcilerTest {
     private lateinit var db: OdysseyDb
     private lateinit var downloader: EpisodeDownloader
     private lateinit var recorder: RecordingEnqueuer
+    private lateinit var archiveRecorder: RecordingArchiveEnqueuer
     private lateinit var reconciler: DownloadReconciler
 
     @Before
@@ -62,7 +63,8 @@ class DownloadReconcilerTest {
             .build()
         downloader = EpisodeDownloader(ctx = ctx, http = OkHttpClient())
         recorder = RecordingEnqueuer()
-        reconciler = DownloadReconciler(db.episodes(), downloader, recorder)
+        archiveRecorder = RecordingArchiveEnqueuer()
+        reconciler = DownloadReconciler(db.episodes(), downloader, recorder, archiveRecorder)
     }
 
     @After
@@ -204,6 +206,12 @@ class DownloadReconcilerTest {
             false,
             java.io.File("/tmp/sekulow-leak.mp3").exists(),
         )
+        assertEquals(
+            "cancelArchive was called for the leaked episode -- so any pending " +
+                "WorkManager archive entry doesn't fire later and spam 'no row in DB'",
+            listOf(1278252L),
+            archiveRecorder.cancels,
+        )
     }
 
     @Test
@@ -307,6 +315,24 @@ class DownloadReconcilerTest {
 
         override fun kickDownload(providerId: String, externalId: String, allowMetered: Boolean) {
             kicks += Call(providerId, externalId, allowMetered)
+        }
+    }
+
+    /**
+     * Fake [com.odyssey.work.ArchiveEnqueuer] for the cleanup tests.
+     * Records cancelArchive calls so we can assert the reconciler
+     * tears down the WorkManager entry alongside the DB row.
+     */
+    private class RecordingArchiveEnqueuer : com.odyssey.work.ArchiveEnqueuer {
+        val enqueues = mutableListOf<Long>()
+        val cancels = mutableListOf<Long>()
+
+        override fun enqueueArchive(episodeId: Long, allowMetered: Boolean) {
+            enqueues += episodeId
+        }
+
+        override fun cancelArchive(episodeId: Long) {
+            cancels += episodeId
         }
     }
 }
