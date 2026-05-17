@@ -138,7 +138,9 @@ fun AlbumListScreen(
             items(sorted, key = { it.album.name ?: it.album.albumNumber ?: "" }) { row ->
                 AlbumListRow(row, onClick = {
                     val key = row.album.name ?: row.album.albumNumber ?: return@AlbumListRow
-                    onOpenAlbum(java.net.URLEncoder.encode(key, "UTF-8"))
+                    // Uri.encode, not URLEncoder.encode: see the OdysseyNav YSH
+                    // navigate comment for the round-trip rationale.
+                    onOpenAlbum(android.net.Uri.encode(key))
                 })
             }
         }

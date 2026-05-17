@@ -48,6 +48,12 @@ class YshOneplaceProvider @Inject constructor(
     override suspend fun newSince(lastSeenExternalId: String?, maxFetch: Int): List<ProviderEpisode> {
         val lastSeen = lastSeenExternalId?.toLongOrNull() ?: 0L
         val episodes = oneplace.newSince(listenUrl, lastSeen, maxFetch)
+            // Belt-and-suspenders showId filter. The catalog title-join
+            // below already drops non-YSH episodes (their titles won't
+            // match anything in YshCatalog), but a Sekulow episode whose
+            // title HAPPENED to collide with a YSH title would still get
+            // through. Filter by showId first to be explicit.
+            .filter { it.showId == YSH_SHOW_ID || it.showId == null }
         val out = mutableListOf<ProviderEpisode>()
         for (ep in episodes) {
             val match = catalog.lookup(ep.title)
@@ -86,5 +92,10 @@ class YshOneplaceProvider @Inject constructor(
 
     companion object {
         const val LISTEN_URL = "https://www.oneplace.com/ministries/your-story-hour/listen/"
+        // oneplace's numeric identity for Your Story Hour. Confirmed
+        // live 2026-05-17 via the API response. Used as a defensive
+        // filter; YSH's main protection against cross-show ingest is
+        // the catalog title-join above.
+        const val YSH_SHOW_ID = 583L
     }
 }

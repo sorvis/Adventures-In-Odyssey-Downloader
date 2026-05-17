@@ -3,6 +3,8 @@ package com.odyssey.download
 import com.odyssey.data.local.EpisodeDao
 import com.odyssey.debug.DebugLogger
 import com.odyssey.work.DownloadEnqueuer
+import kotlinx.coroutines.flow.first
+import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -64,7 +66,43 @@ class DownloadReconciler @Inject constructor(
         return kicked
     }
 
+    /**
+     * One-shot cleanup of AIO rows whose downloadUrl belongs to a
+     * different oneplace show. Pre-v0.1.59 the AioOneplaceProvider
+     * didn't filter the related-episodes API by showId, so Sekulow
+     * / FOTF / etc. episodes leaked into the DB with providerId="aio"
+     * and showed up in the AIO Library. This removes them.
+     *
+     * Identifies contamination by URL path: an AIO episode's
+     * downloadUrl always contains `/adventures-in-odyssey/`; anything
+     * else with providerId="aio" is a leak. Deletes the on-disk file
+     * (if present) then the DB row. Idempotent — no-ops on a clean
+     * DB. Returns the count of rows removed.
+     */
+    suspend fun cleanupCrossShowContamination(): Int {
+        val all = episodes.observeAll().first()
+        val contaminated = all.filter {
+            it.providerId == "aio" && !it.downloadUrl.contains("/$AIO_SLUG/")
+        }
+        if (contaminated.isEmpty()) return 0
+        for (row in contaminated) {
+            DebugLogger.w(
+                TAG,
+                "cross-show contamination: removing ${row.providerId}/${row.externalId} " +
+                    "\"${row.title}\" url=${row.downloadUrl}",
+            )
+            row.filePath?.let { File(it).delete() }
+            // AIO externalIds parse to Long by construction (oneplace
+            // CMS ids or broadcast numbers). The leaked rows are AIO-
+            // shaped, so this is safe.
+            row.externalId.toLongOrNull()?.let { episodes.delete(it) }
+        }
+        DebugLogger.i(TAG, "cross-show cleanup done — removed ${contaminated.size} row(s)")
+        return contaminated.size
+    }
+
     private companion object {
         const val TAG = "DownloadReconciler"
+        const val AIO_SLUG = "adventures-in-odyssey"
     }
 }

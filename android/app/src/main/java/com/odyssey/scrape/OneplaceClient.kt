@@ -119,6 +119,17 @@ data class OneplaceEpisode(
     val url: String,                                 // episode page URL
     val series: String? = null,                      // album/series — usually null
     val durationSeconds: Long = 0L,
+    /**
+     * oneplace's numeric show identity. Reliable across the API
+     * (AIO=777, Jay Sekulow Live=663, Your Story Hour=583, etc.).
+     * Critical for filtering: oneplace's `/api/related-episodes`
+     * endpoint walks BACKWARD by episodeId across ALL shows on
+     * the network — so AIO pagination eventually drifts into
+     * Sekulow / FOTF / etc. as `cursor = page.last().episodeId`
+     * crosses show boundaries. Providers MUST filter results by
+     * showId to stop the leak.
+     */
+    val showId: Long? = null,
     // Episode artwork. AIO currently returns the same generic show logo
     // for every episode (and `imageUrlWebP` is null), but threading it
     // through gives lockscreen/notification/list-row art today and lets

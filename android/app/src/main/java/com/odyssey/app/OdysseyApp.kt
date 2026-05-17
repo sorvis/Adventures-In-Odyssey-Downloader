@@ -56,6 +56,11 @@ class OdysseyApp : Application(), Configuration.Provider {
             // nothing when there are no orphans.
             val allowMetered = settings.flow.first().allowMeteredDownloads
             downloadReconciler.reconcile(allowMetered)
+            // Sweep out any AIO rows whose downloadUrl belongs to a
+            // different oneplace show — leaked from pre-v0.1.59 ingest
+            // before the AioOneplaceProvider showId filter landed.
+            // Idempotent; no-ops on a clean DB.
+            downloadReconciler.cleanupCrossShowContamination()
         }
     }
 }

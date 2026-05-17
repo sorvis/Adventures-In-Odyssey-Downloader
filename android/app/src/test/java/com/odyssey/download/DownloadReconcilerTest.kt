@@ -6,6 +6,7 @@ import androidx.test.core.app.ApplicationProvider
 import com.odyssey.data.local.LocalEpisodeEntity
 import com.odyssey.data.local.OdysseyDb
 import com.odyssey.work.DownloadEnqueuer
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 import org.junit.After
@@ -163,6 +164,90 @@ class DownloadReconcilerTest {
         assertEquals("metered flag propagates", true, recorder.kicks.single().allowMetered)
     }
 
+    @Test
+    fun `cleanupCrossShowContamination removes AIO rows whose downloadUrl is not for AIO`() = runBlocking {
+        // Pre-v0.1.59 leak: oneplace's related-episodes API didn't
+        // filter by showId, so Sekulow rows landed in the DB with
+        // providerId="aio". On v0.1.59+ launch the cleaner sweeps them.
+        val aioReal = aioRow(
+            externalId = "1278389",
+            title = "The Secret Keys of Discipline",
+            downloadUrl = "https://zcast.swncdn.com/episodes/zcast/adventures-in-odyssey/2026/05-11/1278389/777_x.mp3",
+            filePath = null,
+        )
+        val sekulowLeak = aioRow(
+            externalId = "1278252",
+            title = "Sekulow",
+            downloadUrl = "https://zcast.swncdn.com/episodes/zcast/jay-sekulow-live/2026/04-16/1278252/663_x.mp3",
+            filePath = "/tmp/sekulow-leak.mp3",
+        )
+        // Touch the leak file so we can verify the cleaner deletes it.
+        java.io.File(sekulowLeak.filePath!!).writeBytes(byteArrayOf(0x49, 0x44, 0x33))
+        db.episodes().upsert(aioReal)
+        db.episodes().upsert(sekulowLeak)
+
+        val removed = reconciler.cleanupCrossShowContamination()
+
+        assertEquals("only the Sekulow leak was removed", 1, removed)
+        assertEquals(
+            "real AIO row stays in the DB",
+            "1278389",
+            db.episodes().byKey("aio", "1278389")?.externalId,
+        )
+        assertEquals(
+            "Sekulow leak row was deleted from the DB",
+            null,
+            db.episodes().byKey("aio", "1278252"),
+        )
+        assertEquals(
+            "Sekulow leak file was deleted from disk",
+            false,
+            java.io.File("/tmp/sekulow-leak.mp3").exists(),
+        )
+    }
+
+    @Test
+    fun `cleanupCrossShowContamination is a no-op on a clean DB`() = runBlocking {
+        db.episodes().upsert(aioRow(
+            externalId = "1278389",
+            title = "Clean AIO Row",
+            downloadUrl = "https://zcast.swncdn.com/episodes/zcast/adventures-in-odyssey/2026/05-11/x/777_x.mp3",
+            filePath = null,
+        ))
+        db.episodes().upsert(yshRow("ysh-sku-123", "YSH row", filePath = null))
+
+        val removed = reconciler.cleanupCrossShowContamination()
+
+        assertEquals(0, removed)
+        assertEquals(2, db.episodes().observeAll().first().size)
+    }
+
+    @Test
+    fun `cleanupCrossShowContamination ignores YSH rows even if downloadUrl is non-AIO`() = runBlocking {
+        // YSH rows' downloadUrls go to yourstoryhour S3 or oneplace's
+        // YSH path; neither contains /adventures-in-odyssey/. The
+        // cleaner must NOT delete them — it only acts on providerId="aio".
+        db.episodes().upsert(LocalEpisodeEntity(
+            providerId = "ysh",
+            externalId = "ysh-sku-100",
+            title = "Some YSH Story",
+            airDate = null,
+            description = null,
+            sourceUrl = "https://yourstoryhour.org/x",
+            downloadUrl = "https://your-story-hour.s3.amazonaws.com/documents/mp3s/X.mp3",
+            filePath = null,
+            fileSize = 0L,
+            durationMs = 0L,
+            downloadedAt = null,
+            archivedAt = null,
+            imageUrl = null,
+        ))
+
+        val removed = reconciler.cleanupCrossShowContamination()
+
+        assertEquals("YSH rows are out of scope for this AIO-targeted cleaner", 0, removed)
+    }
+
     // ----- helpers --------------------------------------------------------
 
     private fun yshRow(externalId: String, title: String, filePath: String?) = LocalEpisodeEntity(
@@ -173,6 +258,27 @@ class DownloadReconcilerTest {
         description = null,
         sourceUrl = "https://oneplace.example/$externalId",
         downloadUrl = "https://zcast.example/$externalId.mp3",
+        filePath = filePath,
+        fileSize = if (filePath != null) 1024L else 0L,
+        durationMs = 30 * 60_000L,
+        downloadedAt = if (filePath != null) 1_700_000_000_000L else null,
+        archivedAt = null,
+        imageUrl = null,
+    )
+
+    private fun aioRow(
+        externalId: String,
+        title: String,
+        downloadUrl: String,
+        filePath: String?,
+    ) = LocalEpisodeEntity(
+        providerId = "aio",
+        externalId = externalId,
+        title = title,
+        airDate = null,
+        description = null,
+        sourceUrl = "https://oneplace.com/$externalId",
+        downloadUrl = downloadUrl,
         filePath = filePath,
         fileSize = if (filePath != null) 1024L else 0L,
         durationMs = 30 * 60_000L,

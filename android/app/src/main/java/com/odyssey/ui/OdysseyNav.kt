@@ -137,7 +137,18 @@ fun OdysseyNav(
                     if (activeShow == "ysh") {
                         YshAlbumListScreen(
                             onOpenAlbum = { name ->
-                                val encoded = java.net.URLEncoder.encode(name, "UTF-8")
+                                // android.net.Uri.encode produces RFC-3986 percent-
+                                // encoding (spaces become %20). Compose Navigation's
+                                // StringType uses Uri.decode on the way back, which
+                                // decodes %20 but does NOT decode '+'. If we used
+                                // java.net.URLEncoder.encode (form-style: spaces
+                                // become '+'), the nav arg would arrive at the VM
+                                // still containing literal '+' chars — and the
+                                // catalog join (albumTitle == albumName) would
+                                // silently miss every album whose name has a space,
+                                // leaving the detail screen blank with a "Foo+Bar"
+                                // title.
+                                val encoded = android.net.Uri.encode(name)
                                 nav.navigate("ysh-album/$encoded")
                             },
                             onOpenSettings = onOpenSettings,
