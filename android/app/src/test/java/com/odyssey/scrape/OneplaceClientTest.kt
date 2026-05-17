@@ -97,6 +97,26 @@ class OneplaceClientTest {
         assertTrue(client.episodesBefore(cursor = 1L, pageSize = 5).isEmpty())
     }
 
+    @Test
+    fun `episodesBefore parses showId so providers can filter cross-show contamination`() = runTest {
+        // The api_page1 fixture is real AIO traffic — every row has
+        // showId=777. Without this assertion AioOneplaceProvider's
+        // filter has no way to tell the rows apart, and Sekulow leaks
+        // into the AIO Library. See AioOneplaceFilterTest for the
+        // downstream consumer of this field.
+        server.enqueue(json(fixture("/oneplace/api_page1.json")))
+        val episodes = client.episodesBefore(cursor = 1278295L, pageSize = 20)
+        assertTrue(
+            "every fixture row must report showId so isAio() can run",
+            episodes.all { it.showId != null },
+        )
+        assertEquals(
+            "fixture is real AIO traffic -- showId=777 for every row",
+            777L,
+            episodes.first().showId,
+        )
+    }
+
     // ----- newSince — the path that "Check now" actually exercises -----
 
     @Test
