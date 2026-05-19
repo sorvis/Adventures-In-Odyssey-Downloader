@@ -7,10 +7,17 @@ services:
       ODYSSEY_AUTH_TOKEN: ${ODYSSEY_AUTH_TOKEN:?set ODYSSEY_AUTH_TOKEN in .env or run scripts/up.sh}
       ODYSSEY_DATA_DIR: /data
     volumes:
-      # Defaults to a sibling ./_data dir for local dev. Override on
-      # Proxmox/LXC by exporting ODYSSEY_DATA_HOST_DIR=/data (the NFS
-      # bind-mount path). Compose creates the dir on first `up`.
+      # episodes.db + the import drop-folder live on the local rootfs
+      # (SQLite WAL doesn't survive CIFS, and import is a staging dir).
+      # Defaults to a sibling ./_data dir for local dev.
       - ${ODYSSEY_DATA_HOST_DIR:-./_data}:/data
+      # Audio files are huge and need to live on the NAS. The second
+      # bind layers over /data/audio so the container reads/writes the
+      # CIFS-mounted catalog directly. On Proxmox/LXC export
+      # ODYSSEY_AUDIO_HOST_DIR=/data/audio (the CIFS mount path inside
+      # the LXC). For local dev it falls through to ./_data/audio so
+      # nothing changes.
+      - ${ODYSSEY_AUDIO_HOST_DIR:-./_data/audio}:/data/audio
     ports:
       - "${BIND_IP:-0.0.0.0}:${ODYSSEY_PORT:-8088}:8088"
     healthcheck:
