@@ -166,6 +166,33 @@ interface EpisodeDao {
     suspend fun markArchived(id: Long, ts: Long)
 
     /**
+     * RetentionWorker uses this to "prune" a row that's safe on the
+     * NAS backup: the local file is deleted, but the row stays in the
+     * DB shaped like a BrowseNasScreen backup-mirror ghost
+     * (filePath=null, sourceUrl/downloadUrl="backup://<id>",
+     * archivedAt preserved). Keeping the row prevents DailyCheckWorker
+     * from re-ingesting the episode as "new" on the next pull-to-
+     * refresh — which used to kick off a fresh CDN download → re-
+     * archive → re-prune loop the user noticed after v0.1.59. The
+     * existing ghost-promotion path in DailyCheckWorker restores the
+     * row's real sourceUrl/title/airDate on the next provider fetch
+     * without re-enqueueing a download.
+     */
+    @Query(
+        """
+        UPDATE local_episodes
+           SET filePath     = NULL,
+               fileSize     = 0,
+               downloadedAt = NULL,
+               sourceUrl    = 'backup://' || externalId,
+               downloadUrl  = 'backup://' || externalId
+         WHERE providerId   = :providerId
+           AND externalId   = :externalId
+        """
+    )
+    suspend fun convertToBackupGhost(providerId: String, externalId: String)
+
+    /**
      * Null out archivedAt on every row that has a local file. Used by
      * "Re-archive everything" — after an enrichment fix on the server
      * side that affects how uploads are filed, you want every row to
