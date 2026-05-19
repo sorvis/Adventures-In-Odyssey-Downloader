@@ -80,11 +80,23 @@ class DownloadReconciler @Inject constructor(
      * else with providerId="aio" is a leak. Deletes the on-disk file
      * (if present) then the DB row. Idempotent — no-ops on a clean
      * DB. Returns the count of rows removed.
+     *
+     * Exception: backup-mirror ghost rows carry
+     * `downloadUrl="backup://<id>"` by design (set by
+     * BrowseNasScreen.mirrorServerEpisodes and by RetentionWorker
+     * v0.1.63 when it prunes NAS-backed rows). Those are AIO rows
+     * intentionally — they reference a NAS file, not a CDN URL — and
+     * must not be swept. Skipping them here was the v0.1.64 fix for
+     * the loop where RetentionWorker ghosted a row, app relaunched,
+     * cleanup deleted the ghost, DailyCheck re-ingested it as new,
+     * worker re-downloaded the CDN copy.
      */
     suspend fun cleanupCrossShowContamination(): Int {
         val all = episodes.observeAll().first()
         val contaminated = all.filter {
-            it.providerId == "aio" && !it.downloadUrl.contains("/$AIO_SLUG/")
+            it.providerId == "aio" &&
+                !it.downloadUrl.startsWith(BACKUP_URL_PREFIX) &&
+                !it.downloadUrl.contains("/$AIO_SLUG/")
         }
         if (contaminated.isEmpty()) return 0
         for (row in contaminated) {
@@ -114,5 +126,6 @@ class DownloadReconciler @Inject constructor(
     private companion object {
         const val TAG = "DownloadReconciler"
         const val AIO_SLUG = "adventures-in-odyssey"
+        const val BACKUP_URL_PREFIX = "backup://"
     }
 }

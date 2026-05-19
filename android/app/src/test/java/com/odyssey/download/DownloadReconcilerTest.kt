@@ -231,6 +231,59 @@ class DownloadReconcilerTest {
     }
 
     @Test
+    fun `cleanupCrossShowContamination preserves backup mirror ghost rows`() = runBlocking {
+        // Regression test for the v0.1.63 → v0.1.64 fix: RetentionWorker
+        // converts pruned NAS-backed rows to backup-mirror ghosts
+        // (sourceUrl/downloadUrl="backup://<id>"). The pre-v0.1.64
+        // cleaner matched on "downloadUrl does NOT contain
+        // /adventures-in-odyssey/" — which falsely flagged every ghost
+        // as cross-show contamination and deleted them on next launch.
+        // The user then saw a fresh re-download on the next refresh.
+        // BrowseNasScreen.mirrorServerEpisodes creates the same shape,
+        // so this preserves those too.
+        val realAio = aioRow(
+            externalId = "1278389",
+            title = "Real AIO row",
+            downloadUrl = "https://zcast.swncdn.com/episodes/zcast/adventures-in-odyssey/2026/05-11/1278389/777_x.mp3",
+            filePath = "/tmp/aio-real.mp3",
+        )
+        val ghost = aioRow(
+            externalId = "269",
+            title = "ghosted-after-retention",
+            downloadUrl = "backup://269",  // ← legitimate, must not be swept
+            filePath = null,
+        )
+        val sekulow = aioRow(
+            externalId = "1278252",
+            title = "Sekulow leak",
+            downloadUrl = "https://zcast.swncdn.com/episodes/zcast/jay-sekulow-live/2026/04-16/x/663_x.mp3",
+            filePath = null,
+        )
+        db.episodes().upsert(realAio)
+        db.episodes().upsert(ghost)
+        db.episodes().upsert(sekulow)
+
+        val removed = reconciler.cleanupCrossShowContamination()
+
+        assertEquals("only the real Sekulow contamination should be removed", 1, removed)
+        assertEquals(
+            "backup-mirror ghost stays in the DB",
+            "269",
+            db.episodes().byKey("aio", "269")?.externalId,
+        )
+        assertEquals(
+            "real AIO row stays in the DB",
+            "1278389",
+            db.episodes().byKey("aio", "1278389")?.externalId,
+        )
+        assertEquals(
+            "Sekulow leak still gets cleaned",
+            null,
+            db.episodes().byKey("aio", "1278252"),
+        )
+    }
+
+    @Test
     fun `cleanupCrossShowContamination ignores YSH rows even if downloadUrl is non-AIO`() = runBlocking {
         // YSH rows' downloadUrls go to yourstoryhour S3 or oneplace's
         // YSH path; neither contains /adventures-in-odyssey/. The
