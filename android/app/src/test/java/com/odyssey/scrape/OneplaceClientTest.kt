@@ -164,11 +164,87 @@ class OneplaceClientTest {
     }
 
     @Test
-    fun `newSince terminates when the API returns an empty page`() = runTest {
+    fun `newSince terminates when the API consistently returns empty pages`() = runTest {
+        // As of 2026-05-20 the API returns [] for any seed eid that isn't
+        // a real episodeId — newSince now probes forward through gaps.
+        // Pre-load enough empties to exhaust the probe cap so we still
+        // exit cleanly when oneplace is genuinely empty / broken.
         server.enqueue(html(fixture("/oneplace/listen.html")))
-        server.enqueue(json("[]"))                  // empty page → loop breaks
+        repeat(25) { server.enqueue(json("[]")) }
         val results = client.newSince(listenUrl, lastSeen = 0L, maxFetch = 50)
         assertTrue(results.isEmpty())
+    }
+
+    @Test
+    fun `newSince probes past a gap eid to find the latest episode (2026-05-20 regression)`() = runTest {
+        // User report 2026-05-20: refresh said "no new episodes" when a
+        // new AIO broadcast had aired that morning. Live probe shows
+        // oneplace's /api/related-episodes now returns [] when the seed
+        // eid is a gap in the global CMS id sequence — so the original
+        // `cursor = latest + 1` lookup misses the newly-published episode.
+        // Repro: listen page bootstraps with latest=1278393; cursor=1278394
+        // is a gap (api returns []); cursor=1278395 returns the AIO show's
+        // recent episodes including 1278393.
+        server.enqueue(html("""<html><body><script>episodeId=1278393</script></body></html>"""))
+        // cursor=1278394 → gap
+        server.enqueue(json("[]"))
+        // cursor=1278395 → returns the latest episode (1278393) and 6 more
+        val page = """[
+            {"episodeId":1278393,"title":"First-Hand Experience","subTitle":"May 20, 2026",
+             "downloadFileUrl":"https://cdn.example/1278393.mp3","url":"https://example/1278393",
+             "showId":777,"durationSeconds":1500},
+            {"episodeId":1278392,"title":"Two Brothers and Bernard, Part 2","subTitle":"May 19, 2026",
+             "downloadFileUrl":"https://cdn.example/1278392.mp3","url":"https://example/1278392",
+             "showId":777,"durationSeconds":1500},
+            {"episodeId":1278391,"title":"Two Brothers and Bernard, Part 1","subTitle":"May 18, 2026",
+             "downloadFileUrl":"https://cdn.example/1278391.mp3","url":"https://example/1278391",
+             "showId":777,"durationSeconds":1500}
+        ]"""
+        server.enqueue(json(page))
+        // After walking back via cursor = page.last().episodeId = 1278391,
+        // the next request should hit an empty page and terminate (we've
+        // already found content, so subsequent empty means archive tail —
+        // NOT another gap to probe past).
+        server.enqueue(json("[]"))
+
+        val results = client.newSince(listenUrl, lastSeen = 0L, maxFetch = 50)
+
+        assertEquals("expected the 3 episodes from the gap-skipped page", 3, results.size)
+        assertEquals(
+            "newest episode 1278393 must be in the result -- it's the one the user was waiting for",
+            1278393L, results.first().episodeId,
+        )
+        assertEquals(
+            listOf(1278393L, 1278392L, 1278391L),
+            results.map { it.episodeId },
+        )
+    }
+
+    @Test
+    fun `newSince does not keep probing once it has found content (archive tail stop)`() = runTest {
+        // Once we've successfully read a page, a subsequent [] means
+        // we've walked off the end of the show's archive — not a gap
+        // to skip. Don't keep probing forward, or we'd march through
+        // unrelated eids forever.
+        server.enqueue(html("""<html><body><script>episodeId=1278393</script></body></html>"""))
+        // First call: returns one episode.
+        server.enqueue(json("""[
+            {"episodeId":1278393,"title":"only one","subTitle":"May 20, 2026",
+             "downloadFileUrl":"https://cdn.example/x.mp3","url":"https://example/x",
+             "showId":777,"durationSeconds":1500}
+        ]"""))
+        // Second call (cursor = 1278393 from page.last) → empty.
+        // Must stop here without further probing.
+        server.enqueue(json("[]"))
+
+        val results = client.newSince(listenUrl, lastSeen = 0L, maxFetch = 50)
+
+        assertEquals(1, results.size)
+        // If we did keep probing, MockWebServer would record extra
+        // requests beyond these three. Verify the request count to
+        // catch a regression where probesRemaining doesn't reset on
+        // first success.
+        assertEquals("listen + cursor + empty = 3 requests, no extra probes", 3, server.requestCount)
     }
 
     // ----- helpers -----

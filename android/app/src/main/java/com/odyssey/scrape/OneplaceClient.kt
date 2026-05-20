@@ -71,27 +71,64 @@ class OneplaceClient @Inject constructor(
      *
      * Pass lastSeen = 0 on a fresh install — caller decides how far back to go
      * via maxFetch.
+     *
+     * Cursor strategy: the related-episodes API EXCLUDES its seed eid from
+     * the response, so we start at latest + 1 to capture latest itself. As
+     * of 2026-05-20 the API also returns `[]` whenever the seed eid is a
+     * gap (not a real episode on any show). For active shows, oneplace
+     * leaves small gaps in the global CMS id sequence — AIO's daily
+     * episode lands every 2-3 ids. So `cursor = latest + 1` is now often
+     * empty even though latest itself exists. Skip forward through the
+     * gaps until the response includes latest, capped so a truly broken
+     * API doesn't run away.
      */
     suspend fun newSince(listenUrl: String, lastSeen: Long, maxFetch: Int = 100): List<OneplaceEpisode> {
         val latest = latestEpisodeId(listenUrl) ?: return emptyList()
         if (latest == lastSeen) return emptyList()
 
         val out = mutableListOf<OneplaceEpisode>()
-        // The bootstrap ID is itself an episode; fetch its details by querying
-        // its predecessors then reconstructing — simpler is to start the
-        // pagination at latest+1 so latest is included.
         var cursor = latest + 1
+        var probesRemaining = GAP_PROBE_CAP
         while (out.size < maxFetch) {
             val page = episodesBefore(cursor, pageSize = 20)
-            if (page.isEmpty()) break
+            if (page.isEmpty()) {
+                // Two reasons we can land on []: the cursor is a gap eid
+                // (skip forward), or we've walked off the end of the
+                // show's archive (stop). We can only tell them apart by
+                // whether we've ever seen a non-empty page yet — once
+                // we have, subsequent emptiness means we're past the
+                // archive's tail.
+                if (out.isEmpty() && probesRemaining-- > 0) {
+                    cursor++
+                    continue
+                }
+                break
+            }
             for (ep in page) {
                 if (ep.episodeId == lastSeen) return out
+                // Dedup: when we skip a gap, the first non-empty page may
+                // start at the latest episode, but page.last().episodeId
+                // re-feeds into episodesBefore for the next round, which
+                // could occasionally re-yield the same id. Cheap O(n) check
+                // — pages are 20 deep, maxFetch is ~50.
+                if (out.any { it.episodeId == ep.episodeId }) continue
                 out += ep
                 if (out.size >= maxFetch) return out
             }
             cursor = page.last().episodeId
         }
         return out
+    }
+
+    private companion object {
+        /**
+         * Max number of consecutive empty responses to tolerate while
+         * probing forward from `latest`. Observed range on 2026-05-20:
+         * gap of 1-2 ids between AIO daily episode and the next valid
+         * seed eid. 20 gives plenty of headroom without burning a full
+         * API quota when oneplace is genuinely broken.
+         */
+        const val GAP_PROBE_CAP = 20
     }
 
     private fun get(url: String): String {
