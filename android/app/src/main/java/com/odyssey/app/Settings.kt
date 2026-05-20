@@ -51,9 +51,31 @@ private object Keys {
 private fun lastSeenKey(providerId: String) =
     stringPreferencesKey("last_seen_external_id__$providerId")
 
+/**
+ * Per-provider retention cap — how many downloaded episodes of this
+ * show to keep on the phone before retention prunes the oldest.
+ * Pre-v0.1.66 there was a single `retention_count` shared across every
+ * provider. With YSH downloads (which never archive to NAS) counting
+ * toward the same budget, a small retention number squeezed the AIO
+ * slot to nothing. Per-provider keys let each show keep its own ring
+ * size; the legacy `Keys.RETENTION` is the AIO fallback so existing
+ * installs keep the user-set number on upgrade.
+ */
+private fun retentionKey(providerId: String) =
+    intPreferencesKey("retention_count__$providerId")
+
+const val DEFAULT_RETENTION = 7
+
 data class Settings(
     val nasUrl: String,
     val nasToken: String,
+    /**
+     * Legacy AIO-only retention cap, kept readable as
+     * `settings.retentionCount` so existing call sites (and tests)
+     * keep compiling. New code paths should call
+     * `SettingsRepo.retentionCountFor(providerId)` which honors the
+     * per-provider override and falls back to this value for AIO.
+     */
     val retentionCount: Int,
     val lastSeenEpisodeId: Long,
     val lastRunAtMs: Long,
@@ -80,7 +102,7 @@ class SettingsRepo @Inject constructor(@ApplicationContext private val ctx: Cont
         Settings(
             nasUrl = p[Keys.NAS_URL].orEmpty(),
             nasToken = p[Keys.NAS_TOKEN].orEmpty(),
-            retentionCount = p[Keys.RETENTION] ?: 7,
+            retentionCount = p[Keys.RETENTION] ?: DEFAULT_RETENTION,
             lastSeenEpisodeId = p[Keys.LAST_SEEN_EID] ?: 0L,
             lastRunAtMs = p[Keys.LAST_RUN_AT] ?: 0L,
             allowMeteredDownloads = p[Keys.ALLOW_METERED] ?: false,
@@ -106,7 +128,40 @@ class SettingsRepo @Inject constructor(@ApplicationContext private val ctx: Cont
             it[Keys.CF_CLIENT_SECRET] = clientSecret.trim()
         }
 
-    suspend fun setRetention(n: Int) = ctx.dataStore.edit { it[Keys.RETENTION] = n.coerceIn(1, 100) }
+    /**
+     * Legacy AIO-only retention setter. Mirrors the value into both
+     * the legacy `Keys.RETENTION` key (so older app versions that
+     * still read `settings.retentionCount` see the right number after
+     * a downgrade) and the new per-provider key for AIO.
+     */
+    suspend fun setRetention(n: Int) = ctx.dataStore.edit {
+        val coerced = n.coerceIn(1, 100)
+        it[Keys.RETENTION] = coerced
+        it[retentionKey("aio")] = coerced
+    }
+
+    /**
+     * Per-provider retention cap. Reads `retention_count__<providerId>`
+     * first; for AIO falls back to the legacy `Keys.RETENTION` so
+     * existing installs keep the user-set value on upgrade. Defaults
+     * to [DEFAULT_RETENTION] for every other provider on first run.
+     */
+    fun retentionCountFor(providerId: String): Flow<Int> = ctx.dataStore.data.map { p ->
+        p[retentionKey(providerId)]
+            ?: if (providerId == "aio") (p[Keys.RETENTION] ?: DEFAULT_RETENTION)
+            else DEFAULT_RETENTION
+    }
+
+    /**
+     * Persist a per-provider retention cap. Setting AIO also writes
+     * through to the legacy key for downgrade safety; other providers
+     * only touch their own key.
+     */
+    suspend fun setRetentionFor(providerId: String, n: Int) = ctx.dataStore.edit {
+        val coerced = n.coerceIn(1, 100)
+        it[retentionKey(providerId)] = coerced
+        if (providerId == "aio") it[Keys.RETENTION] = coerced
+    }
     suspend fun setLastSeen(id: Long) = ctx.dataStore.edit { it[Keys.LAST_SEEN_EID] = id }
     suspend fun setLastRun(ms: Long) = ctx.dataStore.edit { it[Keys.LAST_RUN_AT] = ms }
     suspend fun setAllowMeteredDownloads(allow: Boolean) =

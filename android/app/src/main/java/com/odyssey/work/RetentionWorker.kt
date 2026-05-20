@@ -6,6 +6,7 @@ import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.odyssey.app.SettingsRepo
 import com.odyssey.data.local.EpisodeDao
+import com.odyssey.data.local.LocalEpisodeEntity
 import com.odyssey.download.EpisodeDownloader
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
@@ -13,25 +14,23 @@ import kotlinx.coroutines.flow.first
 import java.io.File
 
 /**
- * Prunes oldest local downloads beyond the configured retention count.
+ * Prunes oldest local downloads beyond the configured per-provider
+ * retention cap. Each registered show keeps its own ring size — pre-
+ * v0.1.66 every provider shared one budget, so YSH downloads (which
+ * never archive to NAS) squeezed AIO into a single-episode slot once
+ * the legacy `retention_count=7` was hit. See
+ * `SettingsRepo.retentionCountFor` for the per-provider key fallback.
  *
- * Two modes (per locked-in plan):
- *  - NAS configured     → never prune un-archived episodes (waits for archive)
- *  - NAS not configured → prune oldest regardless of archive status
- *
- * Pruning shape (NAS-configured): the row is NOT deleted from the DB.
- * The file is deleted and the row is converted into a backup-mirror
- * ghost (filePath=null, sourceUrl/downloadUrl="backup://<id>",
- * archivedAt preserved). Keeping the row stops DailyCheckWorker from
- * re-ingesting the episode as a "new" row on the next pull-to-refresh
- * and re-downloading from the CDN — the loop that the user surfaced
- * after v0.1.59. The existing ghost-promotion path in DailyCheckWorker
- * refreshes the row's metadata on the next provider fetch without
- * re-enqueueing a download.
- *
- * Pruning shape (NAS not configured): the row IS deleted, same as
- * before — without a NAS to fall back on, leaving a row pointing at a
- * file we just deleted is just noise.
+ * Pruning shape per provider:
+ *  - AIO + NAS configured  → ghost the row (filePath=null, sourceUrl=
+ *    "backup://<id>", archivedAt preserved). Stops DailyCheckWorker
+ *    from re-ingesting the episode as "new" on the next refresh
+ *    (the loop fixed in v0.1.63).
+ *  - AIO + NAS not configured  → hard-delete the row (no backup to
+ *    fall back on, dangling rows are just noise).
+ *  - non-AIO (YSH, future)  → hard-delete; the archive-service is
+ *    AIO-only by design, so non-AIO rows can never be "safe on the
+ *    NAS" the way AIO rows can.
  */
 @HiltWorker
 class RetentionWorker @AssistedInject constructor(
@@ -45,21 +44,32 @@ class RetentionWorker @AssistedInject constructor(
     override suspend fun doWork(): Result {
         val s = settings.flow.first()
         val downloaded = episodes.downloadedOldestFirst()
-        val excess = downloaded.size - s.retentionCount
-        if (excess <= 0) return Result.success()
+        if (downloaded.isEmpty()) return Result.success()
 
-        val candidates = if (s.nasConfigured) {
-            downloaded.filter { it.archivedAt != null }
-        } else {
-            downloaded
-        }
-        val toPrune = candidates.take(excess)
-        for (ep in toPrune) {
-            ep.filePath?.let { downloader.delete(File(it)) }
-            if (s.nasConfigured) {
-                episodes.convertToBackupGhost(ep.providerId, ep.externalId)
+        val byProvider: Map<String, List<LocalEpisodeEntity>> = downloaded.groupBy { it.providerId }
+        for ((providerId, rows) in byProvider) {
+            val cap = settings.retentionCountFor(providerId).first()
+            val excess = rows.size - cap
+            if (excess <= 0) continue
+
+            // Only AIO rows have a NAS backup to fall back on (and even
+            // then only when the NAS is configured AND the row is
+            // already archived). Everything else is delete-from-DB on
+            // prune.
+            val ghostable = s.nasConfigured && providerId == "aio"
+            val candidates = if (ghostable) {
+                rows.filter { it.archivedAt != null }
             } else {
-                episodes.delete(ep.episodeId)
+                rows
+            }
+            val toPrune = candidates.take(excess)
+            for (ep in toPrune) {
+                ep.filePath?.let { downloader.delete(File(it)) }
+                if (ghostable) {
+                    episodes.convertToBackupGhost(ep.providerId, ep.externalId)
+                } else {
+                    episodes.deleteByKey(ep.providerId, ep.externalId)
+                }
             }
         }
         return Result.success()

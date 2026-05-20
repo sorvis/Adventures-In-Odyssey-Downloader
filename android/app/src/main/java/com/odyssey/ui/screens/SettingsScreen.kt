@@ -158,6 +158,25 @@ class SettingsVm @Inject constructor(
     }
 
     fun saveRetention(n: Int) = viewModelScope.launch { settings.setRetention(n) }
+
+    /**
+     * Per-provider retention cap. The Settings screen renders one input
+     * per registered provider so AIO and YSH can have independent ring
+     * sizes — previously they shared the legacy `retention_count` and
+     * YSH downloads squeezed the AIO slot to nothing.
+     */
+    fun saveRetentionFor(providerId: String, n: Int) =
+        viewModelScope.launch { settings.setRetentionFor(providerId, n) }
+
+    /**
+     * StateFlow of the per-provider cap, suitable for binding the
+     * text-field initial value. Default seeded with `DEFAULT_RETENTION`
+     * so the field never blinks empty on first composition.
+     */
+    fun retentionCountFor(providerId: String) =
+        settings.retentionCountFor(providerId)
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), com.odyssey.app.DEFAULT_RETENTION)
+
     fun setAllowMetered(allow: Boolean) = viewModelScope.launch { settings.setAllowMeteredDownloads(allow) }
 }
 
@@ -204,7 +223,6 @@ fun SettingsScreen(
     var nasToken by remember(current.nasToken) { mutableStateOf(current.nasToken) }
     var cfClientId by remember(current.cfAccessClientId) { mutableStateOf(current.cfAccessClientId) }
     var cfClientSecret by remember(current.cfAccessClientSecret) { mutableStateOf(current.cfAccessClientSecret) }
-    var retention by remember(current.retentionCount) { mutableStateOf(current.retentionCount.toString()) }
     var showQrDialog by remember { mutableStateOf(false) }
     // Reveal the Cloudflare Access pair only when the user has
     // already pasted at least one of them, OR they expand the
@@ -468,13 +486,36 @@ fun SettingsScreen(
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
             Text("Retention", style = MaterialTheme.typography.titleMedium)
-            OutlinedTextField(
-                value = retention, onValueChange = { retention = it.filter(Char::isDigit) },
-                label = { Text("Episodes to keep on phone") },
-                singleLine = true, modifier = Modifier.fillMaxWidth(),
+            Text(
+                "Episodes to keep on phone, per show. Pruning happens after " +
+                    "each successful archive — older episodes stay accessible on " +
+                    "the NAS backup (AIO) or are removed entirely (no NAS / non-AIO).",
+                style = MaterialTheme.typography.bodySmall,
             )
-            Button(onClick = { retention.toIntOrNull()?.let(vm::saveRetention) }) {
-                Text("Save retention")
+            // One input per registered provider so AIO and YSH have
+            // independent ring sizes. Pre-v0.1.66 these shared the
+            // legacy `retention_count` key and YSH downloads squeezed
+            // the AIO slot to nothing.
+            for (provider in vm.allProviders) {
+                val cap by vm.retentionCountFor(provider.id).collectAsState()
+                var text by remember(cap) { mutableStateOf(cap.toString()) }
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it.filter(Char::isDigit) },
+                    label = { Text("${provider.displayName} — episodes to keep") },
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("retention-input-${provider.id}"),
+                    trailingIcon = {
+                        TextButton(
+                            onClick = {
+                                text.toIntOrNull()?.let { vm.saveRetentionFor(provider.id, it) }
+                            },
+                            modifier = Modifier.testTag("retention-save-${provider.id}"),
+                        ) { Text("Save") }
+                    },
+                )
             }
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))

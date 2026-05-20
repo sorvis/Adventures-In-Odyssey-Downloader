@@ -206,6 +206,15 @@ interface EpisodeDao {
     @Query("DELETE FROM local_episodes WHERE externalId = :id AND providerId = 'aio'")
     suspend fun delete(id: Long)
 
+    /**
+     * Provider-aware delete. RetentionWorker uses this for YSH rows
+     * — the legacy `delete(id: Long)` hard-codes `providerId='aio'`
+     * which silently no-ops on YSH externalIds (and would mismatch
+     * even if it didn't, since YSH ids aren't numeric).
+     */
+    @Query("DELETE FROM local_episodes WHERE providerId = :providerId AND externalId = :externalId")
+    suspend fun deleteByKey(providerId: String, externalId: String)
+
     @Query("""SELECT * FROM local_episodes
               WHERE filePath IS NOT NULL
               ORDER BY airDate ASC, externalId ASC""")

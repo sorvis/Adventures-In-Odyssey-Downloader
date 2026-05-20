@@ -182,6 +182,94 @@ class RetentionWorkerTest {
     }
 
     @Test
+    fun `per-provider caps are honored independently (YSH downloads don't squeeze AIO)`() = runBlocking {
+        // v0.1.66 regression test for user report: with retention=7 and
+        // 6 YSH downloads, only 1 AIO slot fit before retention pruned
+        // archived AIO rows out from under the user. Per-provider keys
+        // mean each show's ring is sized on its own.
+        settings.setNas("http://nas.example", "token")
+        settings.setRetentionFor("aio", 5)
+        settings.setRetentionFor("ysh", 2)
+
+        // 3 AIO rows downloaded + archived — below AIO cap of 5,
+        // none should be pruned.
+        for (n in 1..3) {
+            val file = File(ctx.cacheDir, "aio-$n.mp3").apply { writeText("x") }
+            episodes.upsert(
+                LocalEpisodeEntity(
+                    providerId = "aio",
+                    externalId = "40$n",
+                    title = "AIO $n",
+                    airDate = "2026-05-0$n",
+                    description = null,
+                    sourceUrl = "https://oneplace.com/40$n",
+                    downloadUrl = "https://zcast/40$n.mp3",
+                    filePath = file.absolutePath,
+                    fileSize = file.length(),
+                    durationMs = 25 * 60_000L,
+                    downloadedAt = 1000L * n,
+                    archivedAt = 2000L * n,
+                ),
+            )
+        }
+        // 4 YSH rows downloaded (never archived — YSH has no NAS path).
+        // Cap is 2 → 2 oldest should be pruned (hard-deleted).
+        for (n in 1..4) {
+            val file = File(ctx.cacheDir, "ysh-$n.mp3").apply { writeText("x") }
+            episodes.upsert(
+                LocalEpisodeEntity(
+                    providerId = "ysh",
+                    externalId = "ysh-sku-50$n",
+                    title = "YSH $n",
+                    airDate = "2026-05-0$n",
+                    description = null,
+                    sourceUrl = "https://yourstoryhour.org/$n",
+                    downloadUrl = "https://s3.example/$n.mp3",
+                    filePath = file.absolutePath,
+                    fileSize = file.length(),
+                    durationMs = 25 * 60_000L,
+                    downloadedAt = 1000L * n,
+                    archivedAt = null,
+                ),
+            )
+        }
+
+        buildWorker().doWork()
+
+        val rows = episodes.observeAll().first()
+        assertEquals(
+            "expected 3 AIO untouched + 2 YSH kept (oldest 2 pruned) = 5",
+            5, rows.size,
+        )
+        val aio = rows.filter { it.providerId == "aio" }
+        assertEquals("AIO cap=5, 3 rows present — all kept", 3, aio.size)
+        assertTrue("AIO rows still have filePath", aio.all { it.filePath != null })
+
+        val ysh = rows.filter { it.providerId == "ysh" }
+        assertEquals("YSH cap=2, 4 rows downloaded — 2 oldest deleted", 2, ysh.size)
+        // Oldest two YSH (ysh-sku-501, ysh-sku-502) should be GONE — including row.
+        assertTrue(
+            "YSH cap should leave only the newest 2 ids",
+            ysh.map { it.externalId }.toSet() == setOf("ysh-sku-503", "ysh-sku-504"),
+        )
+        assertFalse("oldest YSH file deleted from disk", File(ctx.cacheDir, "ysh-1.mp3").exists())
+        assertFalse("second-oldest YSH file deleted from disk", File(ctx.cacheDir, "ysh-2.mp3").exists())
+    }
+
+    @Test
+    fun `legacy retention setter still drives AIO cap (migration safety)`() = runBlocking {
+        // Pre-v0.1.66 installs called `setRetention(n)` which writes the
+        // legacy single key. After upgrade, that legacy value must keep
+        // driving the AIO cap (otherwise the user wakes up to a fresh
+        // default of 7 silently overriding their preference). Lock the
+        // contract by writing through the legacy setter and verifying
+        // the per-provider read sees the same number.
+        settings.setRetention(15)
+        val aioCap = settings.retentionCountFor("aio").first()
+        assertEquals(15, aioCap)
+    }
+
+    @Test
     fun `NAS not configured -- retention falls back to the legacy delete-row behavior`() = runBlocking {
         // Without a backup to point at, leaving a filePath=null row in
         // the DB is just noise — the old behavior of deleting the row
