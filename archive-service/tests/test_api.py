@@ -100,6 +100,43 @@ def test_get_404_on_missing(client, auth_headers):
     assert client.get("/episodes/999999", headers=auth_headers).status_code == 404
 
 
+def test_head_episode_returns_200_when_row_and_file_present(client, auth_headers, fake_mp3_bytes):
+    """HEAD /episodes/{id} powers the Android RetentionWorker's
+    verify-before-prune check (added v0.1.67). Confirms an episode is
+    actually on the server before the phone deletes its local copy."""
+    _upload(client, auth_headers, fake_mp3_bytes, episode_id=55)
+    r = client.head("/episodes/55", headers=auth_headers)
+    assert r.status_code == 200
+    assert r.headers.get("X-File-Size") == str(len(fake_mp3_bytes))
+
+
+def test_head_episode_returns_404_when_row_does_not_exist(client, auth_headers):
+    r = client.head("/episodes/999999", headers=auth_headers)
+    assert r.status_code == 404
+
+
+def test_head_episode_returns_410_when_row_exists_but_file_missing(
+    client, auth_headers, fake_mp3_bytes
+):
+    """A phantom row -- row present but on-disk file gone -- would let
+    the phone delete its local copy thinking the backup was safe. 410
+    Gone surfaces this so the client treats it as 'do NOT prune'."""
+    import os
+    _upload(client, auth_headers, fake_mp3_bytes, episode_id=56)
+    # Find the file the upload landed on disk and remove it underneath.
+    from app import db
+    with db.connect() as c:
+        path = c.execute("SELECT file_path FROM episodes WHERE episode_id = 56").fetchone()["file_path"]
+    os.remove(path)
+    r = client.head("/episodes/56", headers=auth_headers)
+    assert r.status_code == 410
+
+
+def test_head_episode_requires_auth(client, fake_mp3_bytes):
+    r = client.head("/episodes/1")
+    assert r.status_code == 401
+
+
 def test_audio_full_download(client, auth_headers, fake_mp3_bytes):
     _upload(client, auth_headers, fake_mp3_bytes, episode_id=7)
     r = client.get("/episodes/7/audio", headers=auth_headers)

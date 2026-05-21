@@ -1,6 +1,6 @@
 from pathlib import Path
 from typing import Annotated
-from fastapi import APIRouter, Depends, Form, Header, HTTPException, UploadFile, File, Query
+from fastapi import APIRouter, Depends, Form, Header, HTTPException, Response, UploadFile, File, Query
 from pydantic import BaseModel
 from .. import db
 from ..auth import require_token
@@ -139,6 +139,34 @@ def get_episode(episode_id: int):
     if not row:
         raise HTTPException(404, "not found")
     return _row_to_out(row)
+
+
+@router.head("/{episode_id}")
+def head_episode(episode_id: int) -> Response:
+    """Verify-before-prune endpoint for the Android RetentionWorker.
+
+    Returns 200 only when the DB row AND the on-disk file are present.
+    A row pointing at a deleted file returns 410 Gone so the client can
+    distinguish "definitively missing" (and re-archive) from "row never
+    existed" (404, also a definitive no). Anything else (network error,
+    5xx) is the client's signal to leave the local copy alone.
+
+    Cheap: no body, no streaming, just a SELECT + stat().
+    """
+    with db.connect() as c:
+        row = c.execute(
+            "SELECT file_path, file_size FROM episodes WHERE episode_id = ?",
+            (episode_id,),
+        ).fetchone()
+    if not row:
+        raise HTTPException(404, "row not in archive index")
+    path = Path(row["file_path"])
+    if not path.exists():
+        raise HTTPException(410, "row present but audio file missing")
+    return Response(
+        status_code=200,
+        headers={"X-File-Size": str(row["file_size"])},
+    )
 
 
 @router.get("/{episode_id}/audio")
