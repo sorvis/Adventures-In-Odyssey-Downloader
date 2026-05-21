@@ -53,6 +53,7 @@ class RetentionWorkerTest {
     private lateinit var episodes: EpisodeDao
     private lateinit var settings: SettingsRepo
     private lateinit var downloader: EpisodeDownloader
+    private lateinit var nas: com.odyssey.nas.NasClient
 
     @Before
     fun setUp() {
@@ -66,8 +67,16 @@ class RetentionWorkerTest {
             .allowMainThreadQueries().build()
         episodes = db.episodes()
         settings = SettingsRepo(ctx)
-        runBlocking { settings.clearAllForTest() }
+        runBlocking {
+            settings.clearAllForTest()
+            // Default existing assertions run with verify-before-prune
+            // disabled so they don't try to reach a fake NAS that
+            // isn't standing — verify-on path has its own focused
+            // tests below.
+            settings.setVerifyBackupBeforePrune(false)
+        }
         downloader = EpisodeDownloader(ctx, OkHttpClient())
+        nas = com.odyssey.nas.NasClient(settings, OkHttpClient())
     }
 
     @After
@@ -310,6 +319,180 @@ class RetentionWorkerTest {
         assertEquals("303", remaining.single().externalId)
     }
 
+    @Test
+    fun `verify-before-prune -- NAS missing leaves row alone and clears archivedAt`() = runBlocking {
+        // The whole point of the v0.1.67 verify path: if the NAS HEAD
+        // probe says 404/410, RetentionWorker MUST NOT delete the local
+        // copy (it's the only one left). Instead it clears archivedAt
+        // so ArchiveBackfill re-uploads on the next pass.
+        val server = okhttp3.mockwebserver.MockWebServer().apply { start() }
+        try {
+            settings.setNas(server.url("/").toString().trimEnd('/'), "tok")
+            settings.setVerifyBackupBeforePrune(true)
+            settings.setRetentionFor("aio", 1)
+            // Server says "definitively missing" for the HEAD probe.
+            server.enqueue(okhttp3.mockwebserver.MockResponse().setResponseCode(404))
+
+            val file = File(ctx.cacheDir, "verify-miss.mp3").apply { writeText("audio") }
+            episodes.upsert(
+                LocalEpisodeEntity(
+                    providerId = "aio",
+                    externalId = "777",
+                    title = "would-have-been-pruned",
+                    airDate = "2026-05-01",
+                    description = null,
+                    sourceUrl = "https://oneplace/777",
+                    downloadUrl = "https://zcast/777.mp3",
+                    filePath = file.absolutePath,
+                    fileSize = file.length(),
+                    durationMs = 25 * 60_000L,
+                    downloadedAt = 1L,
+                    archivedAt = 2L,
+                ),
+            )
+            episodes.upsert(
+                LocalEpisodeEntity(
+                    providerId = "aio",
+                    externalId = "778",
+                    title = "newer-kept",
+                    airDate = "2026-05-02",
+                    description = null,
+                    sourceUrl = "https://oneplace/778",
+                    downloadUrl = "https://zcast/778.mp3",
+                    filePath = File(ctx.cacheDir, "verify-keep.mp3").apply { writeText("y") }.absolutePath,
+                    fileSize = 1L,
+                    durationMs = 25 * 60_000L,
+                    downloadedAt = 1L,
+                    archivedAt = 2L,
+                ),
+            )
+
+            buildWorker().doWork()
+
+            // Row 777 still in DB, still has filePath, but archivedAt cleared.
+            val survivor = episodes.byKey("aio", "777")!!
+            assertNotNull("file path preserved when NAS says missing", survivor.filePath)
+            assertTrue("local file still on disk", file.exists())
+            assertEquals("archivedAt cleared so backfill re-uploads", null, survivor.archivedAt)
+        } finally {
+            server.shutdown()
+        }
+    }
+
+    @Test
+    fun `verify-before-prune -- NAS confirms then row is ghosted as usual`() = runBlocking {
+        val server = okhttp3.mockwebserver.MockWebServer().apply { start() }
+        try {
+            settings.setNas(server.url("/").toString().trimEnd('/'), "tok")
+            settings.setVerifyBackupBeforePrune(true)
+            settings.setRetentionFor("aio", 1)
+            // Server says "yes, it's here."
+            server.enqueue(okhttp3.mockwebserver.MockResponse().setResponseCode(200))
+
+            val file = File(ctx.cacheDir, "verify-ok.mp3").apply { writeText("audio") }
+            episodes.upsert(
+                LocalEpisodeEntity(
+                    providerId = "aio",
+                    externalId = "888",
+                    title = "safe-to-prune",
+                    airDate = "2026-05-01",
+                    description = null,
+                    sourceUrl = "https://oneplace/888",
+                    downloadUrl = "https://zcast/888.mp3",
+                    filePath = file.absolutePath,
+                    fileSize = file.length(),
+                    durationMs = 25 * 60_000L,
+                    downloadedAt = 1L,
+                    archivedAt = 2L,
+                ),
+            )
+            episodes.upsert(
+                LocalEpisodeEntity(
+                    providerId = "aio",
+                    externalId = "889",
+                    title = "keeper",
+                    airDate = "2026-05-02",
+                    description = null,
+                    sourceUrl = "https://oneplace/889",
+                    downloadUrl = "https://zcast/889.mp3",
+                    filePath = File(ctx.cacheDir, "verify-keeper.mp3").apply { writeText("y") }.absolutePath,
+                    fileSize = 1L,
+                    durationMs = 25 * 60_000L,
+                    downloadedAt = 1L,
+                    archivedAt = 2L,
+                ),
+            )
+
+            buildWorker().doWork()
+
+            val ghosted = episodes.byKey("aio", "888")!!
+            assertEquals("filePath cleared on verified prune", null, ghosted.filePath)
+            assertTrue("sourceUrl rewritten to backup://", ghosted.sourceUrl.startsWith("backup://"))
+            assertNotNull("archivedAt preserved — row stays on backup", ghosted.archivedAt)
+            assertFalse("local file deleted", file.exists())
+        } finally {
+            server.shutdown()
+        }
+    }
+
+    @Test
+    fun `verify-before-prune -- network error skips prune without clearing archivedAt`() = runBlocking {
+        // 500-class server error is NOT a definitive "missing on NAS" —
+        // backup is probably fine, just unreachable. Skip prune this
+        // cycle, leave archivedAt set so backfill doesn't pointlessly
+        // re-upload.
+        val server = okhttp3.mockwebserver.MockWebServer().apply { start() }
+        try {
+            settings.setNas(server.url("/").toString().trimEnd('/'), "tok")
+            settings.setVerifyBackupBeforePrune(true)
+            settings.setRetentionFor("aio", 1)
+            server.enqueue(okhttp3.mockwebserver.MockResponse().setResponseCode(503))
+
+            val file = File(ctx.cacheDir, "verify-flaky.mp3").apply { writeText("audio") }
+            episodes.upsert(
+                LocalEpisodeEntity(
+                    providerId = "aio",
+                    externalId = "999",
+                    title = "flaky-network",
+                    airDate = "2026-05-01",
+                    description = null,
+                    sourceUrl = "https://oneplace/999",
+                    downloadUrl = "https://zcast/999.mp3",
+                    filePath = file.absolutePath,
+                    fileSize = file.length(),
+                    durationMs = 25 * 60_000L,
+                    downloadedAt = 1L,
+                    archivedAt = 99L,
+                ),
+            )
+            episodes.upsert(
+                LocalEpisodeEntity(
+                    providerId = "aio",
+                    externalId = "1000",
+                    title = "keeper",
+                    airDate = "2026-05-02",
+                    description = null,
+                    sourceUrl = "https://oneplace/1000",
+                    downloadUrl = "https://zcast/1000.mp3",
+                    filePath = File(ctx.cacheDir, "verify-fkeeper.mp3").apply { writeText("y") }.absolutePath,
+                    fileSize = 1L,
+                    durationMs = 25 * 60_000L,
+                    downloadedAt = 1L,
+                    archivedAt = 100L,
+                ),
+            )
+
+            buildWorker().doWork()
+
+            val row = episodes.byKey("aio", "999")!!
+            assertNotNull("filePath preserved on network error", row.filePath)
+            assertTrue("file still on disk", file.exists())
+            assertEquals("archivedAt left intact (backup IS fine, just unreachable)", 99L, row.archivedAt)
+        } finally {
+            server.shutdown()
+        }
+    }
+
     // ---- helpers ---------------------------------------------------------
 
     private fun buildWorker(): RetentionWorker =
@@ -330,6 +513,7 @@ class RetentionWorkerTest {
                 episodes = episodes,
                 downloader = downloader,
                 settings = settings,
+                nas = nas,
             )
         }
     }

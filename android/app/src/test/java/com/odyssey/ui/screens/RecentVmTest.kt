@@ -368,6 +368,7 @@ class RecentVmTest {
         override suspend fun markDownloaded(id: Long, path: String, size: Long, ts: Long) {}
         override suspend fun markUndownloaded(id: Long) {}
         override suspend fun markArchived(id: Long, ts: Long) {}
+        override suspend fun markUnarchived(id: Long) {}
         override suspend fun convertToBackupGhost(providerId: String, externalId: String) {}
         override suspend fun clearAllArchived(): Int = 0
         override suspend fun delete(id: Long) {}

@@ -34,6 +34,7 @@ import com.odyssey.download.queuedTransferKicks
 import com.odyssey.nas.NasAlbum
 import com.odyssey.nas.NasClient
 import com.odyssey.nas.NasEpisode
+import com.odyssey.nas.NasMirror
 import com.odyssey.player.PlayerController
 import com.odyssey.work.WorkScheduler
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -54,6 +55,7 @@ class BrowseVm @Inject constructor(
     private val episodes: EpisodeDao,
     private val scheduler: WorkScheduler,
     private val aioCatalog: AioCatalogRepo,
+    private val mirror: NasMirror,
     downloads: DownloadProgressTracker,
     uploads: ArchiveProgressTracker,
     restores: RestoreProgressTracker,
@@ -108,7 +110,7 @@ class BrowseVm @Inject constructor(
         // metadata — no audio downloads. Failure is non-fatal: the
         // album list above already loaded; the user keeps a working
         // Backup tab even if the per-episode mirror failed.
-        nas.listAllEpisodes().onSuccess { mirrorServerEpisodes(it) }
+        mirror.run()
     }
 
     fun search(q: String, album: String?) = viewModelScope.launch {
@@ -116,67 +118,14 @@ class BrowseVm @Inject constructor(
             { eps ->
                 results.value = eps
                 error.value = null
-                // Mirror server episodes into the local DB so the Album
-                // tab's title-join can recognize them as "on backup"
-                // even when the phone never downloaded the episode from
-                // oneplace. archivedAt + filePath=null means the row is
-                // backed up but not on-disk — exactly the STREAMABLE
-                // state with the backedUp flag set.
-                mirrorServerEpisodes(eps)
+                // After a successful search, kick a full-catalog mirror
+                // so the local DB stays in sync — same idempotent path
+                // refresh() uses. Cheap: NasMirror skips rows that are
+                // already present.
+                mirror.run()
             },
             { error.value = "Search failed: ${it.message}" },
         )
-    }
-
-    private suspend fun mirrorServerEpisodes(eps: List<NasEpisode>) {
-        val now = System.currentTimeMillis()
-        var skipped = 0
-        for (ep in eps) {
-            // AIO-only filter: the server may still hold files from
-            // pre-v0.1.59 cross-show leaks (Sekulow etc. that the AIO
-            // provider mistakenly uploaded). Without this filter, every
-            // Sync refresh re-creates `providerId="aio"` rows for them,
-            // which DownloadReconciler then re-cleans on next launch —
-            // an infinite ping-pong. Title catalog-match is the
-            // source-of-truth: a Sekulow title never matches the AIO
-            // catalog, but every real AIO episode does (the bundled
-            // catalog has ~1182 entries; newly-aired episodes also flow
-            // in via DailyCheckWorker → oneplace so the mirror isn't
-            // the only ingest path).
-            if (aioCatalog.match(ep.title) == null) {
-                skipped++
-                continue
-            }
-            val existing = episodes.byId(ep.episode_id)
-            if (existing != null) {
-                // Don't clobber an existing row's filePath/title — just
-                // ensure archivedAt is set so the album view shows the
-                // ☁ on backup badge.
-                if (existing.archivedAt == null) {
-                    episodes.markArchived(ep.episode_id, now)
-                }
-                continue
-            }
-            episodes.upsert(
-                LocalEpisodeEntity(
-                    providerId = "aio",
-                    externalId = ep.episode_id.toString(),
-                    title = ep.title,
-                    airDate = ep.air_date,
-                    description = ep.description,
-                    sourceUrl = "backup://${ep.episode_id}",
-                    downloadUrl = "backup://${ep.episode_id}",
-                    filePath = null,
-                    fileSize = ep.file_size,
-                    durationMs = (ep.duration_secs ?: 0L) * 1000,
-                    downloadedAt = null,
-                    archivedAt = now,
-                ),
-            )
-        }
-        if (skipped > 0) {
-            DebugLogger.i("BrowseVm", "mirrorServerEpisodes: skipped $skipped non-AIO server row(s)")
-        }
     }
 
     fun stream(ep: NasEpisode) = viewModelScope.launch {

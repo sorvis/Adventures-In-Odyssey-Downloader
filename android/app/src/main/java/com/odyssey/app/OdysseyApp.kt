@@ -5,6 +5,7 @@ import androidx.hilt.work.HiltWorkerFactory
 import androidx.work.Configuration
 import com.odyssey.download.DiskLayoutMigrator
 import com.odyssey.download.DownloadReconciler
+import com.odyssey.nas.NasMirror
 import com.odyssey.show.YshCatalog
 import com.odyssey.work.WorkScheduler
 import dagger.hilt.android.HiltAndroidApp
@@ -23,6 +24,7 @@ class OdysseyApp : Application(), Configuration.Provider {
     @Inject lateinit var yshCatalog: YshCatalog
     @Inject lateinit var downloadReconciler: DownloadReconciler
     @Inject lateinit var settings: SettingsRepo
+    @Inject lateinit var nasMirror: NasMirror
 
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder().setWorkerFactory(workerFactory).build()
@@ -61,6 +63,24 @@ class OdysseyApp : Application(), Configuration.Provider {
             // before the AioOneplaceProvider showId filter landed.
             // Idempotent; no-ops on a clean DB.
             downloadReconciler.cleanupCrossShowContamination()
+            // Opportunistic NAS mirror so the local DB reflects the
+            // full backup catalog without forcing the user to open
+            // Sync first (v0.1.67). Albums' "on backup" counts and
+            // the "stream from backup" path on Album detail rely on
+            // local rows existing for NAS-side episodes. Skipped when
+            // no NAS is configured (nothing to mirror) or when NAS is
+            // unreachable on this network (silent — runs again next
+            // launch). NasMirror returns Result, so the failure path
+            // is just a logged warning, not a crash.
+            if (settings.flow.first().nasConfigured) {
+                nasMirror.run().onFailure {
+                    com.odyssey.debug.DebugLogger.w(
+                        "OdysseyApp",
+                        "launch NAS mirror failed (likely off-LAN); will retry next launch",
+                        it,
+                    )
+                }
+            }
         }
     }
 }

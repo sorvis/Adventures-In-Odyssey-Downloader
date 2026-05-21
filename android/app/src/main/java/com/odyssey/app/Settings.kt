@@ -24,6 +24,14 @@ private object Keys {
     val LAST_SEEN_EID = longPreferencesKey("last_seen_episode_id")
     val LAST_RUN_AT = longPreferencesKey("last_run_at_ms")
     val ALLOW_METERED = booleanPreferencesKey("allow_metered_downloads")
+    /**
+     * When ON, RetentionWorker confirms each AIO episode is still on
+     * the NAS via a `HEAD /episodes/{id}` round-trip before deleting
+     * the local copy. A 404/410 means the backup is missing — the
+     * worker leaves the row alone and clears `archivedAt` so the
+     * backfill re-uploads it on the next pass.
+     */
+    val VERIFY_BACKUP = booleanPreferencesKey("verify_backup_before_prune")
     val CF_CLIENT_ID = stringPreferencesKey("cf_access_client_id")
     val CF_CLIENT_SECRET = stringPreferencesKey("cf_access_client_secret")
     /**
@@ -81,6 +89,13 @@ data class Settings(
     val lastRunAtMs: Long,
     val allowMeteredDownloads: Boolean,
     /**
+     * If true, RetentionWorker calls `HEAD /episodes/{id}` against the
+     * NAS before pruning an AIO row. Belt-and-suspenders over the
+     * stored `archivedAt`. Defaults ON — safer to skip a prune than
+     * lose audio.
+     */
+    val verifyBackupBeforePrune: Boolean,
+    /**
      * Cloudflare Access service-token credentials. Required when the
      * backup server is exposed via a Cloudflare Tunnel + Access app —
      * the tunnel rejects every request that doesn't carry both
@@ -106,6 +121,7 @@ class SettingsRepo @Inject constructor(@ApplicationContext private val ctx: Cont
             lastSeenEpisodeId = p[Keys.LAST_SEEN_EID] ?: 0L,
             lastRunAtMs = p[Keys.LAST_RUN_AT] ?: 0L,
             allowMeteredDownloads = p[Keys.ALLOW_METERED] ?: false,
+            verifyBackupBeforePrune = p[Keys.VERIFY_BACKUP] ?: true,
             cfAccessClientId = p[Keys.CF_CLIENT_ID].orEmpty(),
             cfAccessClientSecret = p[Keys.CF_CLIENT_SECRET].orEmpty(),
         )
@@ -166,6 +182,17 @@ class SettingsRepo @Inject constructor(@ApplicationContext private val ctx: Cont
     suspend fun setLastRun(ms: Long) = ctx.dataStore.edit { it[Keys.LAST_RUN_AT] = ms }
     suspend fun setAllowMeteredDownloads(allow: Boolean) =
         ctx.dataStore.edit { it[Keys.ALLOW_METERED] = allow }
+
+    /**
+     * Toggle for the verify-before-prune safety net. When ON,
+     * RetentionWorker probes `HEAD /episodes/{id}` against the NAS for
+     * each AIO row it's about to ghost; a 404/410 response leaves the
+     * row alone and clears `archivedAt` so the backfill re-uploads on
+     * the next pass. Default ON — safer to skip a prune than lose
+     * the only copy.
+     */
+    suspend fun setVerifyBackupBeforePrune(enabled: Boolean) =
+        ctx.dataStore.edit { it[Keys.VERIFY_BACKUP] = enabled }
 
     // -----------------------------------------------------------------
     // Per-provider lastSeen API (multi-show prep, step 2 of YSH plan).

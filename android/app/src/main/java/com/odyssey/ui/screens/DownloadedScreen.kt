@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -23,13 +24,17 @@ import com.odyssey.data.local.LocalEpisodeEntity
 import com.odyssey.data.local.PlaybackDao
 import com.odyssey.debug.DebugLogger
 import com.odyssey.download.DownloadProgressTracker
+import com.odyssey.nas.NasMirror
 import com.odyssey.work.WorkScheduler
 import com.odyssey.player.EpisodePlayer
 import com.odyssey.player.PlaySource
 import com.odyssey.player.playSourceFor
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -54,7 +59,35 @@ class DownloadedVm @Inject constructor(
     private val downloadProgress: DownloadProgressTracker,
     private val archiveProgress: com.odyssey.download.ArchiveProgressTracker,
     val catalog: AioCatalogRepo,
+    private val mirror: NasMirror,
 ) : ViewModel() {
+
+    private val _isRefreshing = MutableStateFlow(false)
+    val isRefreshing = _isRefreshing.asStateFlow()
+
+    /**
+     * Pull-to-refresh on Library: kicks the oneplace DailyCheck AND a
+     * NAS mirror sweep. Mirror brings the backup catalog into the
+     * local DB so the user can see what's on backup even when nothing
+     * is downloaded locally — addressing the "Library is blank but my
+     * NAS has plenty" report (v0.1.67).
+     */
+    fun refresh() {
+        if (_isRefreshing.value) return
+        _isRefreshing.value = true
+        viewModelScope.launch {
+            try {
+                scheduler.runDailyCheckNow()
+                if (settings.flow.first().nasConfigured) {
+                    mirror.run().onFailure {
+                        DebugLogger.w("DownloadedVm", "library refresh NAS mirror failed", it)
+                    }
+                }
+            } finally {
+                _isRefreshing.value = false
+            }
+        }
+    }
 
     val progress = downloadProgress.progress
     val archive = archiveProgress.progress
@@ -146,6 +179,7 @@ fun DownloadedScreen(
     val progress by vm.progress.collectAsState()
     val archive by vm.archive.collectAsState()
     val playerState by vm.playerState.collectAsState()
+    val isRefreshing by vm.isRefreshing.collectAsState()
     var expandedIds by remember { mutableStateOf(setOf<Long>()) }
 
     Scaffold(
@@ -156,54 +190,66 @@ fun DownloadedScreen(
             )
         },
     ) { padding ->
-        if (items.isEmpty()) {
-            Box(
-                modifier = Modifier.fillMaxSize().padding(padding),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = "No downloaded episodes yet — pull-to-refresh or tap Check now in Recent.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier
-                        .padding(32.dp)
-                        .testTag("downloaded-empty-state"),
-                )
-            }
-            return@Scaffold
-        }
-
-        LazyColumn(
+        // Wraps both the list AND the empty-state so the message's
+        // "pull-to-refresh" hint actually does something. Pulling down
+        // kicks both the oneplace DailyCheck and a NAS-catalog mirror;
+        // the latter is what backfills "everything I have on backup"
+        // when retention left only a handful of ghost rows behind.
+        PullToRefreshBox(
+            isRefreshing = isRefreshing,
+            onRefresh = vm::refresh,
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .semantics { testTagsAsResourceId = true }
-                .testTag("downloaded-list"),
+                .testTag("downloaded-pull-to-refresh"),
         ) {
-            val completedSet = completedIds.toSet()
-            items(items, key = { it.episodeId }) { ep ->
-                ElevatedCard(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 4.dp),
+            if (items.isEmpty()) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center,
                 ) {
-                    EpisodeRow(
-                        ep = ep,
-                        played = ep.episodeId in completedSet,
-                        expanded = ep.episodeId in expandedIds,
-                        downloadProgress = progress[ep.episodeId],
-                        archiveProgress = archive[ep.episodeId],
-                        match = vm.catalog.match(ep.title),
-                        playback = positions[ep.episodeId],
-                        isCurrentlyPlaying = playerState.currentEpisodeId == ep.episodeId &&
-                                playerState.isPlaying,
-                        onToggleExpand = {
-                            expandedIds = if (ep.episodeId in expandedIds) expandedIds - ep.episodeId
-                                          else expandedIds + ep.episodeId
-                        },
-                        onPlay = { vm.play(ep) },
-                        onDelete = { vm.delete(ep) },
-                        onDownload = { vm.download(ep) },
+                    Text(
+                        text = "No downloaded episodes yet — pull-to-refresh or tap Check now in Recent.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier
+                            .padding(32.dp)
+                            .testTag("downloaded-empty-state"),
                     )
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .semantics { testTagsAsResourceId = true }
+                        .testTag("downloaded-list"),
+                ) {
+                    val completedSet = completedIds.toSet()
+                    items(items, key = { it.episodeId }) { ep ->
+                        ElevatedCard(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 4.dp),
+                        ) {
+                            EpisodeRow(
+                                ep = ep,
+                                played = ep.episodeId in completedSet,
+                                expanded = ep.episodeId in expandedIds,
+                                downloadProgress = progress[ep.episodeId],
+                                archiveProgress = archive[ep.episodeId],
+                                match = vm.catalog.match(ep.title),
+                                playback = positions[ep.episodeId],
+                                isCurrentlyPlaying = playerState.currentEpisodeId == ep.episodeId &&
+                                        playerState.isPlaying,
+                                onToggleExpand = {
+                                    expandedIds = if (ep.episodeId in expandedIds) expandedIds - ep.episodeId
+                                                  else expandedIds + ep.episodeId
+                                },
+                                onPlay = { vm.play(ep) },
+                                onDelete = { vm.delete(ep) },
+                                onDownload = { vm.download(ep) },
+                            )
+                        }
+                    }
                 }
             }
         }

@@ -56,7 +56,7 @@ class DownloadedVmTest {
     @Test
     fun `play(downloaded) calls Player playLocal`() = runTest {
         val fakePlayer = FakeEpisodePlayer()
-        val vm = DownloadedVm(NoopEpisodeDao(), NoopPlaybackDao(), fakePlayer, WorkScheduler(ApplicationProvider.getApplicationContext()), com.odyssey.app.SettingsRepo(ApplicationProvider.getApplicationContext()), DownloadProgressTracker(), com.odyssey.download.ArchiveProgressTracker(), AioCatalogRepo(ApplicationProvider.getApplicationContext()))
+        val vm = buildVm(fakePlayer)
 
         val ep = makeEp(filePath = "/data/odyssey/123.mp3")
         vm.play(ep)
@@ -69,7 +69,7 @@ class DownloadedVmTest {
     @Test
     fun `play(stale row with null filePath) falls back to playStream`() = runTest {
         val fakePlayer = FakeEpisodePlayer()
-        val vm = DownloadedVm(NoopEpisodeDao(), NoopPlaybackDao(), fakePlayer, WorkScheduler(ApplicationProvider.getApplicationContext()), com.odyssey.app.SettingsRepo(ApplicationProvider.getApplicationContext()), DownloadProgressTracker(), com.odyssey.download.ArchiveProgressTracker(), AioCatalogRepo(ApplicationProvider.getApplicationContext()))
+        val vm = buildVm(fakePlayer)
 
         // RetentionWorker may have nulled out filePath after the row
         // was observed but before the tap arrived. Dispatching to
@@ -84,11 +84,38 @@ class DownloadedVmTest {
     @Test
     fun `play swallows exceptions thrown by Player`() = runTest {
         val fakePlayer = FakeEpisodePlayer(throwOnLocal = true)
-        val vm = DownloadedVm(NoopEpisodeDao(), NoopPlaybackDao(), fakePlayer, WorkScheduler(ApplicationProvider.getApplicationContext()), com.odyssey.app.SettingsRepo(ApplicationProvider.getApplicationContext()), DownloadProgressTracker(), com.odyssey.download.ArchiveProgressTracker(), AioCatalogRepo(ApplicationProvider.getApplicationContext()))
+        val vm = buildVm(fakePlayer)
 
         // Must not propagate — the user tapping play shouldn't crash.
         vm.play(makeEp(filePath = "/data/odyssey/123.mp3"))
         assertEquals(1, fakePlayer.playLocalCalls.size)
+    }
+
+    private fun buildVm(fakePlayer: FakeEpisodePlayer): DownloadedVm {
+        val ctx = ApplicationProvider.getApplicationContext<android.app.Application>()
+        val settings = com.odyssey.app.SettingsRepo(ctx)
+        val dao = NoopEpisodeDao()
+        val catalog = AioCatalogRepo(ctx)
+        val nasClient = com.odyssey.nas.NasClient(
+            settings = settings,
+            http = okhttp3.OkHttpClient(),
+        )
+        val mirror = com.odyssey.nas.NasMirror(
+            nas = nasClient,
+            episodes = dao,
+            aioCatalog = catalog,
+        )
+        return DownloadedVm(
+            episodes = dao,
+            playback = NoopPlaybackDao(),
+            player = fakePlayer,
+            scheduler = WorkScheduler(ctx),
+            settings = settings,
+            downloadProgress = DownloadProgressTracker(),
+            archiveProgress = com.odyssey.download.ArchiveProgressTracker(),
+            catalog = catalog,
+            mirror = mirror,
+        )
     }
 
     private fun makeEp(filePath: String? = null, downloadUrl: String = "https://cdn.example/x.mp3") =
@@ -148,6 +175,7 @@ class DownloadedVmTest {
         override suspend fun markDownloaded(id: Long, path: String, size: Long, ts: Long) {}
         override suspend fun markUndownloaded(id: Long) {}
         override suspend fun markArchived(id: Long, ts: Long) {}
+        override suspend fun markUnarchived(id: Long) {}
         override suspend fun convertToBackupGhost(providerId: String, externalId: String) {}
         override suspend fun clearAllArchived(): Int = 0
         override suspend fun delete(id: Long) {}

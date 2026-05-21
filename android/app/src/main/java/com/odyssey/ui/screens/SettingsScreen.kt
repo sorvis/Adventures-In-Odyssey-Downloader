@@ -160,6 +160,15 @@ class SettingsVm @Inject constructor(
     fun saveRetention(n: Int) = viewModelScope.launch { settings.setRetention(n) }
 
     /**
+     * Toggle the verify-before-prune safety net. When ON, RetentionWorker
+     * confirms each AIO episode is still on the NAS (HEAD round-trip)
+     * before deleting the local copy. Off-by-design only if the user
+     * explicitly trusts archivedAt and wants the extra HTTP call gone.
+     */
+    fun setVerifyBackupBeforePrune(enabled: Boolean) =
+        viewModelScope.launch { settings.setVerifyBackupBeforePrune(enabled) }
+
+    /**
      * Per-provider retention cap. The Settings screen renders one input
      * per registered provider so AIO and YSH can have independent ring
      * sizes — previously they shared the legacy `retention_count` and
@@ -492,6 +501,38 @@ fun SettingsScreen(
                     "the NAS backup (AIO) or are removed entirely (no NAS / non-AIO).",
                 style = MaterialTheme.typography.bodySmall,
             )
+            // Verify-before-prune safety net. With this ON,
+            // RetentionWorker does a HEAD round-trip to the NAS for
+            // each AIO row it's about to ghost; a missing-on-server
+            // response leaves the row alone and reschedules a re-
+            // upload. Defaults ON — safer to skip a prune than lose
+            // the only copy. Hidden when the NAS isn't configured
+            // (irrelevant — without a NAS, retention always deletes).
+            if (current.nasConfigured) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Verify backup before deleting")
+                        Text(
+                            if (current.verifyBackupBeforePrune)
+                                "On — phone confirms each episode is on the NAS before " +
+                                    "freeing the local copy. Missing episodes get re-uploaded."
+                            else
+                                "Off — phone trusts the recorded archive timestamp. Faster " +
+                                    "retention, but a deleted-on-NAS episode won't be re-uploaded.",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                    Switch(
+                        checked = current.verifyBackupBeforePrune,
+                        onCheckedChange = vm::setVerifyBackupBeforePrune,
+                        modifier = Modifier.testTag("verify-backup-toggle"),
+                    )
+                }
+            }
+
             // One input per registered provider so AIO and YSH have
             // independent ring sizes. Pre-v0.1.66 these shared the
             // legacy `retention_count` key and YSH downloads squeezed

@@ -167,6 +167,31 @@ class NasClient @Inject constructor(
         ))
     }
 
+    /**
+     * Verify-before-prune check used by RetentionWorker. Returns
+     *   Result.success(true)  → server has both DB row + on-disk file
+     *   Result.success(false) → row missing (404) OR file missing (410)
+     *   Result.failure(...)   → network/auth error; caller should NOT
+     *                           interpret as "missing"
+     * A HEAD round-trip is one socket + zero body bytes, so this is
+     * cheap enough to call once per pruning candidate.
+     */
+    suspend fun episodeExistsOnNas(episodeId: Long): Result<Boolean> = call { s ->
+        val req = Request.Builder()
+            .url("${s.nasUrl}/episodes/$episodeId")
+            .head()
+            .header("Authorization", "Bearer ${s.nasToken}")
+            .applyCfAccess(s)
+            .build()
+        http.newCall(req).execute().use { resp ->
+            when (resp.code) {
+                200 -> true
+                404, 410 -> false
+                else -> error("HEAD episode/$episodeId HTTP ${resp.code}")
+            }
+        }
+    }
+
     private suspend inline fun <T> call(crossinline block: (Settings) -> T): Result<T> {
         val s = settings.flow.first()
         if (!s.nasConfigured) return Result.failure(NasNotConfiguredException)

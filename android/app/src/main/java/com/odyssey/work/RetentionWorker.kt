@@ -7,7 +7,9 @@ import androidx.work.WorkerParameters
 import com.odyssey.app.SettingsRepo
 import com.odyssey.data.local.EpisodeDao
 import com.odyssey.data.local.LocalEpisodeEntity
+import com.odyssey.debug.DebugLogger
 import com.odyssey.download.EpisodeDownloader
+import com.odyssey.nas.NasClient
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.flow.first
@@ -21,10 +23,18 @@ import java.io.File
  * the legacy `retention_count=7` was hit. See
  * `SettingsRepo.retentionCountFor` for the per-provider key fallback.
  *
+ * Verify-before-prune (v0.1.67, default ON): for AIO + NAS configured,
+ * each candidate row gets a `HEAD /episodes/{id}` round-trip against
+ * the NAS before its file gets deleted. A 404/410 response means the
+ * backup is missing — the worker leaves the row alone and clears
+ * `archivedAt` so the backfill re-uploads on the next pass. Network
+ * errors are treated as "skip prune" (don't reset archivedAt — the
+ * backup is likely still fine, just unreachable).
+ *
  * Pruning shape per provider:
- *  - AIO + NAS configured  → ghost the row (filePath=null, sourceUrl=
- *    "backup://<id>", archivedAt preserved). Stops DailyCheckWorker
- *    from re-ingesting the episode as "new" on the next refresh
+ *  - AIO + NAS configured + verified  → ghost the row (filePath=null,
+ *    sourceUrl/downloadUrl="backup://<id>", archivedAt preserved).
+ *    Stops DailyCheckWorker from re-ingesting on the next refresh
  *    (the loop fixed in v0.1.63).
  *  - AIO + NAS not configured  → hard-delete the row (no backup to
  *    fall back on, dangling rows are just noise).
@@ -39,6 +49,7 @@ class RetentionWorker @AssistedInject constructor(
     private val episodes: EpisodeDao,
     private val downloader: EpisodeDownloader,
     private val settings: SettingsRepo,
+    private val nas: NasClient,
 ) : CoroutineWorker(ctx, params) {
 
     override suspend fun doWork(): Result {
@@ -52,10 +63,6 @@ class RetentionWorker @AssistedInject constructor(
             val excess = rows.size - cap
             if (excess <= 0) continue
 
-            // Only AIO rows have a NAS backup to fall back on (and even
-            // then only when the NAS is configured AND the row is
-            // already archived). Everything else is delete-from-DB on
-            // prune.
             val ghostable = s.nasConfigured && providerId == "aio"
             val candidates = if (ghostable) {
                 rows.filter { it.archivedAt != null }
@@ -64,6 +71,28 @@ class RetentionWorker @AssistedInject constructor(
             }
             val toPrune = candidates.take(excess)
             for (ep in toPrune) {
+                if (ghostable && s.verifyBackupBeforePrune) {
+                    val verified = nas.episodeExistsOnNas(ep.episodeId)
+                    when {
+                        verified.isFailure -> {
+                            DebugLogger.w(
+                                "RetentionWorker",
+                                "verify network error for ${ep.episodeId} — skipping prune (backup likely fine, will retry)",
+                                verified.exceptionOrNull(),
+                            )
+                            continue
+                        }
+                        verified.getOrNull() == false -> {
+                            DebugLogger.w(
+                                "RetentionWorker",
+                                "NAS missing ${ep.episodeId} \"${ep.title}\" — skipping prune, clearing archivedAt so backfill re-uploads",
+                            )
+                            episodes.markUnarchived(ep.episodeId)
+                            continue
+                        }
+                        // verified.getOrNull() == true → fall through to prune.
+                    }
+                }
                 ep.filePath?.let { downloader.delete(File(it)) }
                 if (ghostable) {
                     episodes.convertToBackupGhost(ep.providerId, ep.externalId)

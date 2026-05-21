@@ -26,6 +26,7 @@ class CfAccessHeadersTest {
         allowMeteredDownloads = false,
         cfAccessClientId = cfId,
         cfAccessClientSecret = cfSecret,
+        verifyBackupBeforePrune = true,
     )
 
     @Test

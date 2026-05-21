@@ -166,6 +166,15 @@ interface EpisodeDao {
     suspend fun markArchived(id: Long, ts: Long)
 
     /**
+     * Inverse of `markArchived` — used by RetentionWorker's verify-
+     * before-prune path when the NAS reports a row missing. Clearing
+     * `archivedAt` makes `ArchiveBackfill.run()` pick the row up and
+     * re-upload it on the next pass.
+     */
+    @Query("UPDATE local_episodes SET archivedAt = NULL WHERE externalId = :id AND providerId = 'aio'")
+    suspend fun markUnarchived(id: Long)
+
+    /**
      * RetentionWorker uses this to "prune" a row that's safe on the
      * NAS backup: the local file is deleted, but the row stays in the
      * DB shaped like a BrowseNasScreen backup-mirror ghost
