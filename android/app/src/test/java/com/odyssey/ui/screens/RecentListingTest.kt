@@ -154,34 +154,84 @@ class RecentListingTest {
     }
 
     @Test
-    fun `recentItemsFor drops backup-mirror ghost rows`() {
-        // The screenshot bug (2026-05-13): BrowseNasScreen
-        // .mirrorServerEpisodes() inserts old episodes purely to power
-        // the Albums "☁ on backup" badge. They carry
-        // sourceUrl="backup://<id>" + filePath=null and a year-only
-        // airDate ("2011") that fails to parse — without the filter
-        // they pile up under #261 in the Recent list as junk.
+    fun `recentItemsFor drops junk backup-mirror ghost rows with unparseable airDates`() {
+        // The original screenshot bug (2026-05-13): BrowseNasScreen
+        // .mirrorServerEpisodes() ingests carry year-only strings
+        // ("2011") that fail to parse. Without filtering, those pile
+        // up under #261 in Recent looking like noise. The filter still
+        // drops THOSE — but only those — under the v0.1.68 relaxation.
         val list = listOf(
             ep(externalId = "265", airDate = "May 8, 2026"),
             ep(
                 externalId = "010",
-                airDate = "2011",
+                airDate = "2011",                   // year-only, doesn't parse
                 sourceUrl = "backup://010",
                 filePath = null,
             ),
             ep(
                 externalId = "140",
-                airDate = "2011",
+                airDate = null,                     // no date at all
                 sourceUrl = "backup://140",
                 filePath = null,
             ),
         )
         val result = recentItemsFor(list, activeShow = "aio")
         assertEquals(
-            "backup-mirror rows with no on-phone file must NOT appear in Recent",
+            "year-only and null airDate ghosts must NOT appear in Recent",
             listOf("265"),
             result.map { it.externalId },
         )
+    }
+
+    @Test
+    fun `recentItemsFor KEEPS retention-pruned ghosts with parseable airDates`() {
+        // v0.1.68 fix to the v0.1.63 ghost-shape regression: after
+        // RetentionWorker prunes a row, the original airDate from
+        // oneplace is preserved on the ghost. The user wants to see
+        // "what aired last Thursday" in Recent even though the local
+        // copy is gone — tapping the row should stream from NAS.
+        // (User report 2026-05-22: "everything is still really broken"
+        // because all their AIO rows were ghosted and hidden.)
+        val list = listOf(
+            ep(externalId = "274", airDate = "May 20, 2026"),
+            ep(
+                externalId = "272",
+                airDate = "May 18, 2026",           // real date, retention-preserved
+                sourceUrl = "backup://272",
+                filePath = null,                    // local copy gone
+            ),
+            ep(
+                externalId = "271",
+                airDate = "May 15, 2026",
+                sourceUrl = "backup://271",
+                filePath = null,
+            ),
+        )
+        val result = recentItemsFor(list, activeShow = "aio")
+        assertEquals(
+            "pruned ghosts with real dates must show in Recent so the user can stream them",
+            listOf("274", "272", "271"),
+            result.map { it.externalId },
+        )
+    }
+
+    @Test
+    fun `recentItemsFor KEEPS NAS-mirror ghosts when server provides a real airDate`() {
+        // v0.1.67 NasMirror copies whatever air_date the server has.
+        // Catalog episodes from years past commonly have year-only
+        // ("2011") which still drops, but newer mirror rows (server
+        // populated from oneplace ingest) carry full dates — those
+        // should show in Recent + be streamable.
+        val list = listOf(
+            ep(
+                externalId = "657",
+                airDate = "March 11, 2008",         // catalog has a real broadcast date
+                sourceUrl = "backup://657",
+                filePath = null,
+            ),
+        )
+        val result = recentItemsFor(list, activeShow = "aio")
+        assertEquals(listOf("657"), result.map { it.externalId })
     }
 
     @Test

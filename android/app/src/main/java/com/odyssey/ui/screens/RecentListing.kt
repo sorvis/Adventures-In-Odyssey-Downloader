@@ -47,15 +47,21 @@ fun parseAirDateMillis(airDate: String?): Long {
  *      (AIO/YSH) survive. The two providers' externalIds never overlap
  *      (different prefixes) so this is a clean cut.
  *
- *   2. Backup-mirror ghost filter — drop rows that BrowseNasScreen's
- *      `mirrorServerEpisodes()` inserted purely to power the Albums
- *      tab's "☁ on backup" badge. Those carry `sourceUrl="backup://<id>"`
- *      with `filePath=null`, no on-phone audio, and a year-only airDate
- *      ("2011") that fails to parse — without this filter they pile up
- *      under "Recent" looking like noise to the user (reported via
- *      screenshot 2026-05-13). Backup rows that have BEEN downloaded
- *      (filePath != null after a Restore) stay visible — they're real
- *      on-phone audio now.
+ *   2. Junk-ghost filter — drop ONLY backup-mirror ghost rows whose
+ *      airDate doesn't parse to a real date. Older BrowseNasScreen
+ *      `mirrorServerEpisodes()` ingests carry year-only strings ("2011")
+ *      that fail to parse and pile up under "Recent" looking like noise
+ *      (reported 2026-05-13).
+ *
+ *      KEEP ghost rows that have a parseable airDate — those are
+ *      either (a) retention-pruned rows where RetentionWorker preserved
+ *      the original airDate, or (b) newer NAS-mirror rows where the
+ *      server carries a real date. The user wants to see "what aired
+ *      last Thursday" even after retention deleted the local copy, so
+ *      tap → stream-from-NAS still makes sense (reported 2026-05-22).
+ *
+ *      KEEP downloaded backup rows (filePath != null after a Restore)
+ *      regardless of airDate shape — they're real on-phone audio now.
  *
  * Sort: parsed air-date DESC, then externalId DESC as tiebreaker.
  */
@@ -70,7 +76,14 @@ fun <T> recentItemsFor(
 ): List<T> =
     eps.asSequence()
         .filter { providerId(it) == activeShow }
-        .filterNot { filePath(it) == null && sourceUrl(it).startsWith("backup://") }
+        .filterNot { ep ->
+            val isGhost = filePath(ep) == null && sourceUrl(ep).startsWith("backup://")
+            val airDateUnparseable = parseAirDateMillis(airDate(ep)) == 0L
+            // Hide ONLY junk ghosts (no on-phone file AND backup-mirror
+            // source AND no usable date). Ghost rows with real dates
+            // stay so the user can see + stream their NAS catalog.
+            isGhost && airDateUnparseable
+        }
         .sortedWith(
             compareByDescending<T> { parseAirDateMillis(airDate(it)) }
                 .thenByDescending(externalId),

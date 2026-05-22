@@ -304,6 +304,10 @@ class RecentVmTest {
             ApplicationProvider.getApplicationContext(),
             okhttp3.OkHttpClient(),
         ),
+        nas = com.odyssey.nas.NasClient(
+            SettingsRepo(ApplicationProvider.getApplicationContext()),
+            okhttp3.OkHttpClient(),
+        ),
     )
 
     private fun makeEp(

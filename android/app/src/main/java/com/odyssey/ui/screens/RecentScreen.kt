@@ -76,6 +76,7 @@ class RecentVm @Inject constructor(
     private val archiveProgress: com.odyssey.download.ArchiveProgressTracker,
     val catalog: AioCatalogRepo,
     private val yshCatalog: com.odyssey.show.YshCatalog,
+    private val nas: com.odyssey.nas.NasClient,
 ) : ViewModel() {
 
     /**
@@ -201,19 +202,43 @@ class RecentVm @Inject constructor(
             viewModelScope.launch { runCatching { player.pause() } }
             return
         }
-        val src = playSourceFor(ep.filePath, ep.downloadUrl)
         val artwork = catalog.match(ep.title)?.thumbnailUrl
             ?: ep.imageUrl
             ?: yshAlbumArtworkFor(ep)
-        DebugLogger.i(
-            "RecentVm",
-            "play(${ep.episodeId}) — ${if (src is PlaySource.Local) "local" else "stream"}",
-        )
         viewModelScope.launch {
             try {
-                when (src) {
-                    is PlaySource.Local -> player.playLocal(ep, artwork)
-                    is PlaySource.Stream -> player.playStream(ep.episodeId, ep.downloadUrl, ep.title, artwork)
+                when {
+                    // On-disk file beats every other path.
+                    ep.filePath != null -> {
+                        DebugLogger.i("RecentVm", "play(${ep.episodeId}) — local")
+                        player.playLocal(ep, artwork)
+                    }
+                    // backup:// row — retention-pruned local copy OR
+                    // NasMirror-only entry. Resolve via NasClient and
+                    // stream from the bearer-protected /audio endpoint.
+                    // (v0.1.68 — was previously hidden from Recent by
+                    // the ghost filter; now visible + tappable, so
+                    // dispatch must be aware of the backup scheme.)
+                    ep.downloadUrl.startsWith("backup://") -> {
+                        val audio = nas.audioUrl(ep.episodeId).getOrNull()
+                        if (audio == null) {
+                            DebugLogger.w(
+                                "RecentVm",
+                                "play(${ep.episodeId}) — backup:// row but NAS unconfigured/unreachable",
+                            )
+                            return@launch
+                        }
+                        DebugLogger.i("RecentVm", "play(${ep.episodeId}) — stream from NAS")
+                        player.playStream(ep.episodeId, audio.url, ep.title, artwork)
+                    }
+                    // Public CDN — oneplace stream URL, no auth.
+                    else -> {
+                        DebugLogger.i("RecentVm", "play(${ep.episodeId}) — stream from CDN")
+                        when (val src = playSourceFor(ep.filePath, ep.downloadUrl)) {
+                            is PlaySource.Local -> player.playLocal(ep, artwork)
+                            is PlaySource.Stream -> player.playStream(ep.episodeId, src.url, ep.title, artwork)
+                        }
+                    }
                 }
             } catch (t: Throwable) {
                 DebugLogger.e("RecentVm", "play(${ep.episodeId}) — dispatch threw", t)
