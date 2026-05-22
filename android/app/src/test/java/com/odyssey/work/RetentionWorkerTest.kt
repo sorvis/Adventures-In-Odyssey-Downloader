@@ -436,6 +436,192 @@ class RetentionWorkerTest {
     }
 
     @Test
+    fun `bad-data -- empty DB short-circuits to success with no work done`() = runBlocking {
+        settings.setNas("http://nas.example", "token")
+        settings.setRetentionFor("aio", 1)
+        val result = buildWorker().doWork()
+        assertTrue(result is ListenableWorker.Result.Success)
+    }
+
+    @Test
+    fun `bad-data -- DB full of ghost rows is a no-op (nothing eligible for pruning)`() = runBlocking {
+        // Post-retention steady state: all rows are backup-mirror
+        // ghosts. RetentionWorker.downloadedOldestFirst() filters on
+        // `filePath IS NOT NULL`, so ghost rows aren't returned —
+        // there's literally nothing to prune. Worker must succeed
+        // without touching the DB.
+        settings.setNas("http://nas.example", "token")
+        settings.setRetentionFor("aio", 1)
+        for (n in 1..5) {
+            episodes.upsert(
+                LocalEpisodeEntity(
+                    providerId = "aio",
+                    externalId = "ghost-$n",
+                    title = "ghosted",
+                    airDate = "2026-05-0$n",
+                    description = null,
+                    sourceUrl = "backup://ghost-$n",
+                    downloadUrl = "backup://ghost-$n",
+                    filePath = null,
+                    fileSize = 0L,
+                    durationMs = 0L,
+                    downloadedAt = null,
+                    archivedAt = 1L,
+                ),
+            )
+        }
+        val before = episodes.observeAll().first().size
+        buildWorker().doWork()
+        assertEquals("ghost rows untouched", before, episodes.observeAll().first().size)
+    }
+
+    @Test
+    fun `bad-data -- file already missing on disk does not crash the worker`() = runBlocking {
+        // Sometimes the on-disk file gets cleaned up by the user, the
+        // OS, or a previous botched delete. Retention's
+        // downloader.delete(File(path)) silently returns false in that
+        // case; the row should still be ghosted normally.
+        settings.setNas("http://nas.example", "token")
+        settings.setRetentionFor("aio", 1)
+        episodes.upsert(
+            LocalEpisodeEntity(
+                providerId = "aio",
+                externalId = "missing-file",
+                title = "phantom",
+                airDate = "2026-05-01",
+                description = null,
+                sourceUrl = "https://oneplace/x",
+                downloadUrl = "https://zcast/x.mp3",
+                filePath = "/data/odyssey/this-path-does-not-exist.mp3",
+                fileSize = 1L,
+                durationMs = 25 * 60_000L,
+                downloadedAt = 1L,
+                archivedAt = 2L,
+            ),
+        )
+        episodes.upsert(
+            LocalEpisodeEntity(
+                providerId = "aio",
+                externalId = "keeper",
+                title = "keep",
+                airDate = "2026-05-02",
+                description = null,
+                sourceUrl = "https://oneplace/y",
+                downloadUrl = "https://zcast/y.mp3",
+                filePath = File(ctx.cacheDir, "real-keeper.mp3").apply { writeText("x") }.absolutePath,
+                fileSize = 1L,
+                durationMs = 25 * 60_000L,
+                downloadedAt = 1L,
+                archivedAt = 2L,
+            ),
+        )
+
+        val result = buildWorker().doWork()
+        assertTrue("worker must not crash on a missing file", result is ListenableWorker.Result.Success)
+
+        val ghosted = episodes.byKey("aio", "missing-file")!!
+        assertNull("row should still get ghosted even without on-disk file", ghosted.filePath)
+    }
+
+    @Test
+    fun `bad-data -- cap of 1 still leaves exactly one row`() = runBlocking {
+        // Minimum allowed (coerceIn(1,100)). Belt-and-suspenders test
+        // — every other case uses cap=2+, this pins the edge.
+        settings.setNas("http://nas.example", "token")
+        settings.setVerifyBackupBeforePrune(false)
+        settings.setRetentionFor("aio", 1)
+        for (n in 1..3) {
+            val file = File(ctx.cacheDir, "cap1-$n.mp3").apply { writeText("x") }
+            episodes.upsert(
+                LocalEpisodeEntity(
+                    providerId = "aio",
+                    externalId = "cap-$n",
+                    title = "ep $n",
+                    airDate = "2026-05-0$n",
+                    description = null,
+                    sourceUrl = "https://x/$n",
+                    downloadUrl = "https://x/$n.mp3",
+                    filePath = file.absolutePath,
+                    fileSize = file.length(),
+                    durationMs = 25 * 60_000L,
+                    downloadedAt = n * 100L,
+                    archivedAt = n * 100L,
+                ),
+            )
+        }
+        buildWorker().doWork()
+        val downloaded = episodes.observeDownloaded().first()
+        assertEquals("cap=1 leaves exactly one downloaded row", 1, downloaded.size)
+        assertEquals("newest by airDate survives", "cap-3", downloaded.single().externalId)
+    }
+
+    @Test
+    fun `bad-data -- mixed AIO and YSH with independent caps prunes each independently`() = runBlocking {
+        // The v0.1.66 per-provider retention contract. YSH downloads
+        // (archivedAt=null) MUST NOT eat into the AIO cap, and vice
+        // versa. Tighter test than the existing per-provider case —
+        // both providers over their respective caps simultaneously,
+        // with NAS configured so AIO ghosts and YSH deletes.
+        settings.setNas("http://nas.example", "token")
+        settings.setVerifyBackupBeforePrune(false)
+        settings.setRetentionFor("aio", 1)
+        settings.setRetentionFor("ysh", 1)
+        // 2 AIO archived → 1 kept, 1 ghosted
+        for (n in 1..2) {
+            val file = File(ctx.cacheDir, "mixed-aio-$n.mp3").apply { writeText("a") }
+            episodes.upsert(
+                LocalEpisodeEntity(
+                    providerId = "aio",
+                    externalId = "aio-$n",
+                    title = "AIO $n",
+                    airDate = "2026-05-0$n",
+                    description = null,
+                    sourceUrl = "https://x/a$n",
+                    downloadUrl = "https://x/a$n.mp3",
+                    filePath = file.absolutePath,
+                    fileSize = file.length(),
+                    durationMs = 0L,
+                    downloadedAt = n * 100L,
+                    archivedAt = n * 100L,
+                ),
+            )
+        }
+        // 2 YSH downloaded (no archive — YSH has no NAS) → 1 kept, 1 deleted
+        for (n in 1..2) {
+            val file = File(ctx.cacheDir, "mixed-ysh-$n.mp3").apply { writeText("y") }
+            episodes.upsert(
+                LocalEpisodeEntity(
+                    providerId = "ysh",
+                    externalId = "ysh-sku-$n",
+                    title = "YSH $n",
+                    airDate = "2026-05-0$n",
+                    description = null,
+                    sourceUrl = "https://x/y$n",
+                    downloadUrl = "https://x/y$n.mp3",
+                    filePath = file.absolutePath,
+                    fileSize = file.length(),
+                    durationMs = 0L,
+                    downloadedAt = n * 100L,
+                    archivedAt = null,
+                ),
+            )
+        }
+
+        buildWorker().doWork()
+
+        val rows = episodes.observeAll().first()
+        val aio = rows.filter { it.providerId == "aio" }
+        val ysh = rows.filter { it.providerId == "ysh" }
+        assertEquals("AIO: 1 downloaded + 1 ghosted = 2 rows total", 2, aio.size)
+        assertEquals("YSH: 1 downloaded + 1 deleted = 1 row total", 1, ysh.size)
+        // The AIO ghosted row keeps its row in DB
+        assertEquals(
+            "exactly one AIO row remains downloaded after retention",
+            1, aio.count { it.filePath != null },
+        )
+    }
+
+    @Test
     fun `verify-before-prune -- network error skips prune without clearing archivedAt`() = runBlocking {
         // 500-class server error is NOT a definitive "missing on NAS" —
         // backup is probably fine, just unreachable. Skip prune this
