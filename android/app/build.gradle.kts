@@ -7,6 +7,7 @@ plugins {
     id("org.jetbrains.kotlin.plugin.serialization")
     id("com.google.devtools.ksp")
     id("com.google.dagger.hilt.android")
+    jacoco
 }
 
 // Signing config for the release buildType. Loaded from
@@ -53,6 +54,19 @@ android {
         // classpath so it can boot a shadow Android runtime for unit tests.
         unitTests.isIncludeAndroidResources = true
         unitTests.isReturnDefaultValues = true
+        // Enable JaCoCo on the unit-test task so the pre-push coverage
+        // gate measures the WHOLE app under Robolectric, not just the
+        // pure-JVM subset hand-picked by scripts/run-jvm-tests.sh.
+        // Pre-v0.1.68 the gate ratcheted ~96% against ~15 files while
+        // entire packages (com.odyssey.nas, the Workers, the screens)
+        // had zero coverage at all — the user surfaced this after five
+        // releases of bugs in untested code paths.
+        unitTests.all {
+            it.extensions.configure(JacocoTaskExtension::class.java) {
+                isIncludeNoLocationClasses = true
+                excludes = listOf("jdk.internal.*")
+            }
+        }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -148,3 +162,6 @@ dependencies {
     // — otherwise createComposeRule() fails with "Unable to resolve activity".
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 }
+
+apply(from = "jacoco.gradle.kts")
+
