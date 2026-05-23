@@ -142,6 +142,64 @@ def test_provider_album_episodes(client, auth_headers, fake_mp3_bytes):
     assert titles == {"One", "Two"}
 
 
+def test_head_episode_returns_200_when_ysh_row_and_file_present(client, auth_headers, fake_mp3_bytes):
+    """HEAD /providers/ysh/episodes/{eid} — v0.1.72 verify-before-prune
+    for YSH. Existing legacy HEAD only handles AIO (integer episode_id);
+    the v2 path needs its own HEAD for YSH's sku-string ids."""
+    _upload_provider(
+        client, auth_headers, fake_mp3_bytes,
+        provider="ysh", external_id="ysh-sku-1958", title="Madeleine's Courage",
+    )
+    r = client.head(
+        "/providers/ysh/episodes/ysh-sku-1958",
+        headers=auth_headers,
+    )
+    assert r.status_code == 200
+    assert r.headers.get("X-File-Size") == str(len(fake_mp3_bytes))
+
+
+def test_head_episode_returns_404_for_missing_provider_row(client, auth_headers):
+    r = client.head("/providers/ysh/episodes/ysh-sku-nonexistent", headers=auth_headers)
+    assert r.status_code == 404
+
+
+def test_head_episode_returns_410_when_row_present_but_file_missing(
+    client, auth_headers, fake_mp3_bytes
+):
+    """Phantom row safety: row exists in index, on-disk file gone.
+    Client must NOT prune its local copy in that case."""
+    import os
+    _upload_provider(
+        client, auth_headers, fake_mp3_bytes,
+        provider="ysh", external_id="ysh-sku-555", title="Phantom",
+    )
+    from app import db
+    with db.connect() as c:
+        path = c.execute(
+            "SELECT file_path FROM episodes WHERE provider_id='ysh' AND external_id='ysh-sku-555'"
+        ).fetchone()["file_path"]
+    os.remove(path)
+    r = client.head("/providers/ysh/episodes/ysh-sku-555", headers=auth_headers)
+    assert r.status_code == 410
+
+
+def test_head_episode_requires_auth(client):
+    r = client.head("/providers/ysh/episodes/ysh-sku-1958")
+    assert r.status_code == 401
+
+
+def test_head_episode_works_for_aio_via_v2_path_too(client, auth_headers, fake_mp3_bytes):
+    """Symmetry: the v2 HEAD endpoint accepts provider='aio' too, so
+    the Android client can use a single code path for both shows
+    instead of branching legacy-vs-v2 by provider."""
+    _upload_provider(
+        client, auth_headers, fake_mp3_bytes,
+        provider="aio", external_id="1278294", title="Clutter", album="51",
+    )
+    r = client.head("/providers/aio/episodes/1278294", headers=auth_headers)
+    assert r.status_code == 200
+
+
 def test_legacy_route_still_works_after_new_route_added(client, auth_headers, fake_mp3_bytes):
     """Critical back-compat: Android v0.1.37 hits POST /episodes
     (no provider field). The new providers router must not shadow

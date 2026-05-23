@@ -14,7 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, Response, UploadFile
 from pydantic import BaseModel
 
 from .. import db
@@ -198,6 +198,32 @@ def get_episode(provider: str, external_id: str):
     if not row:
         raise HTTPException(404, "not found")
     return _row_to_outv2(row)
+
+
+@router.head("/episodes/{external_id}")
+def head_episode(provider: str, external_id: str) -> Response:
+    """Verify-before-prune endpoint, v0.1.72 extension to YSH.
+
+    Mirrors the legacy `HEAD /episodes/{episode_id}` for AIO. Returns
+    200 only when the DB row AND the on-disk file are present;
+    404 when no row; 410 when the row exists but the audio is gone
+    (phantom row — phone must NOT prune the local copy in that case).
+    Cheap: no body, no streaming, just a SELECT + stat().
+    """
+    with db.connect() as c:
+        row = c.execute(
+            "SELECT file_path, file_size FROM episodes WHERE provider_id = ? AND external_id = ?",
+            (provider, external_id),
+        ).fetchone()
+    if not row:
+        raise HTTPException(404, "row not in archive index")
+    path = Path(row["file_path"])
+    if not path.exists():
+        raise HTTPException(410, "row present but audio file missing")
+    return Response(
+        status_code=200,
+        headers={"X-File-Size": str(row["file_size"])},
+    )
 
 
 @router.get("/episodes/{external_id}/audio")
