@@ -20,6 +20,14 @@ step "Android JVM tests + coverage gate"
 "$REPO_ROOT/scripts/run-jvm-tests.sh"
 "$REPO_ROOT/scripts/check-coverage.sh"
 
+step "App-wide coverage gate (Robolectric JaCoCo via Gradle)"
+# Added v0.1.69 after the user surfaced that scripts/run-jvm-tests.sh
+# only measures coverage of ~15 hand-picked pure-JVM files, missing
+# entire packages (com.odyssey.nas, the Workers, the screens). This
+# runs :app:jacocoDebugReport against the full Robolectric suite and
+# ratchets against app-coverage-baseline.txt + app-coverage-floors.txt.
+"$REPO_ROOT/scripts/check-app-coverage.sh"
+
 step "Detekt (lint gate)"
 # Belt-and-suspenders catch for SwallowedException + friends before
 # the push lands. Tag-build CI runs detekt too (see
