@@ -273,13 +273,39 @@ class RecentVm @Inject constructor(
         // 2026-05-13: "pin doesn't show a progress bar on YSH rows."
         downloadProgress.queue(ep.episodeId)
         viewModelScope.launch {
-            val allowMetered = settings.flow.first().allowMeteredDownloads
-            // Use the provider-aware enqueue so YSH rows route correctly.
+            val s = settings.flow.first()
+            val allowMetered = s.allowMeteredDownloads
+            // Prefer the NAS over the public CDN when (a) the server
+            // has it (archivedAt set) AND (b) NAS is configured AND
+            // (c) it's an AIO row (RestoreEpisodeWorker is AIO-only —
+            // YSH lives on yourstoryhour.org S3, not the archive
+            // service). LAN/Tailscale beats internet bandwidth, and
+            // the NAS is the canonical archive — CDN copies can rotate
+            // off. User ask 2026-05-23: "if recents has a server
+            // version always prefer the server to download from."
+            val canRestore = ep.providerId == "aio" &&
+                ep.archivedAt != null &&
+                s.nasConfigured
+            if (canRestore) {
+                scheduler.enqueueRestore(
+                    episodeId = ep.episodeId,
+                    title = ep.title,
+                    airDate = ep.airDate,
+                    album = null,
+                    description = ep.description,
+                    durationSecs = ep.durationMs / 1000,
+                    allowMetered = allowMetered,
+                )
+                val onWifi = !isOnMeteredNetwork()
+                pinMessages.value = when {
+                    onWifi || allowMetered -> "Pulling from backup: ${ep.title}"
+                    else -> "Pull queued — will start on WiFi"
+                }
+                return@launch
+            }
+            // Fallback: provider-aware CDN download so YSH rows route
+            // correctly and AIO rows without a NAS copy still work.
             scheduler.enqueueDownload(ep.providerId, ep.externalId, allowMetered = allowMetered)
-            // Surface the pending state to the user — workers honor an
-            // UNMETERED constraint unless they've opted into metered
-            // downloads in Settings, so on cellular a tap will just
-            // wait until WiFi.
             val onWifi = !isOnMeteredNetwork()
             pinMessages.value = when {
                 onWifi || allowMetered -> "Download started: ${ep.title}"

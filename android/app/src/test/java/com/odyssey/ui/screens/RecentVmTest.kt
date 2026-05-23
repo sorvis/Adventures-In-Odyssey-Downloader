@@ -180,6 +180,116 @@ class RecentVmTest {
     }
 
     @Test
+    fun `download -- AIO row with archivedAt set + NAS configured prefers Restore over CDN`() = kotlinx.coroutines.runBlocking {
+        // User ask 2026-05-23: "if recents has a server version always
+        // prefer the server to download from." LAN/Tailscale beats
+        // CDN bandwidth and the NAS is the canonical archive. When the
+        // row has archivedAt set and the NAS is configured, the pin
+        // tap must route through RestoreEpisodeWorker (unique work
+        // "restore-<id>"), NOT DownloadEpisodeWorker ("download-aio-<id>").
+        val ctx = ApplicationProvider.getApplicationContext<Application>()
+        val settings = SettingsRepo(ctx)
+        settings.setNas("http://nas.example", "tok")
+        val vm = makeVm(FakePlayer())
+        val onBackup = LocalEpisodeEntity(
+            providerId = "aio",
+            externalId = "1234",
+            title = "Backed Up Episode",
+            airDate = "May 8, 2026",
+            description = "x",
+            sourceUrl = "https://oneplace.com/1234",
+            downloadUrl = "https://zcast/1234.mp3",
+            filePath = null,
+            fileSize = 0L,
+            durationMs = 25 * 60_000L,
+            downloadedAt = null,
+            archivedAt = 12345L,         // ← key bit: server has it
+        )
+
+        vm.download(onBackup)
+
+        val wm = androidx.work.WorkManager.getInstance(ctx)
+        val restoreWork = "restore-1234"
+        val downloadWork = "download-aio-1234"
+        repeat(40) {  // ~2s budget for the coroutine to fire
+            val info = wm.getWorkInfosForUniqueWork(restoreWork).get()
+            if (info.isNotEmpty()) {
+                // Pinned via Restore (NAS) — confirm the CDN-keyed work
+                // name was NOT enqueued.
+                val dlInfo = wm.getWorkInfosForUniqueWork(downloadWork).get()
+                org.junit.Assert.assertTrue(
+                    "must NOT enqueue the CDN download when restore is available",
+                    dlInfo.isEmpty(),
+                )
+                return@runBlocking
+            }
+            kotlinx.coroutines.delay(50)
+        }
+        org.junit.Assert.fail("expected restore enqueue ($restoreWork) within 2s but only saw CDN download")
+    }
+
+    @Test
+    fun `download -- AIO row with archivedAt set BUT no NAS configured falls back to CDN`() = kotlinx.coroutines.runBlocking {
+        // If the user has marked rows as archived in the past but their
+        // NAS isn't currently configured (e.g. they removed the NAS
+        // settings), don't get stuck enqueuing restores against a NAS
+        // we can't reach. Fall back to the CDN download path.
+        val ctx = ApplicationProvider.getApplicationContext<Application>()
+        val settings = SettingsRepo(ctx)
+        settings.clearAllForTest()           // no NAS
+        val vm = makeVm(FakePlayer())
+        val onBackupNoNas = LocalEpisodeEntity(
+            providerId = "aio", externalId = "5678",
+            title = "Stranded Backup", airDate = "May 1, 2026", description = null,
+            sourceUrl = "https://oneplace.com/5678",
+            downloadUrl = "https://zcast/5678.mp3",
+            filePath = null, fileSize = 0L, durationMs = 25 * 60_000L,
+            downloadedAt = null,
+            archivedAt = 99L,
+        )
+
+        vm.download(onBackupNoNas)
+
+        val wm = androidx.work.WorkManager.getInstance(ctx)
+        repeat(40) {
+            val info = wm.getWorkInfosForUniqueWork("download-aio-5678").get()
+            if (info.isNotEmpty()) return@runBlocking
+            kotlinx.coroutines.delay(50)
+        }
+        org.junit.Assert.fail("expected CDN download fallback when NAS isn't configured")
+    }
+
+    @Test
+    fun `download -- YSH row always uses CDN even when archivedAt is set`() = kotlinx.coroutines.runBlocking {
+        // archive-service is AIO-only by design — RestoreEpisodeWorker
+        // can't fetch YSH from the NAS. YSH rows always go to the
+        // yourstoryhour S3 CDN regardless of archivedAt state.
+        val ctx = ApplicationProvider.getApplicationContext<Application>()
+        val settings = SettingsRepo(ctx)
+        settings.setNas("http://nas.example", "tok")
+        val vm = makeVm(FakePlayer())
+        val yshArchived = LocalEpisodeEntity(
+            providerId = "ysh", externalId = "ysh-sku-1958",
+            title = "Madeleine's Courage", airDate = null, description = null,
+            sourceUrl = "https://yourstoryhour.org/x",
+            downloadUrl = "https://s3/EE-11-02.mp3",
+            filePath = null, fileSize = 0L, durationMs = 0L,
+            downloadedAt = null,
+            archivedAt = 99L,  // shouldn't matter — YSH never restores
+        )
+
+        vm.download(yshArchived)
+
+        val wm = androidx.work.WorkManager.getInstance(ctx)
+        repeat(40) {
+            val info = wm.getWorkInfosForUniqueWork("download-ysh-ysh-sku-1958").get()
+            if (info.isNotEmpty()) return@runBlocking
+            kotlinx.coroutines.delay(50)
+        }
+        org.junit.Assert.fail("YSH row must enqueue the CDN download regardless of archivedAt")
+    }
+
+    @Test
     fun `download seeds tracker IMMEDIATELY so the row shows queued progress on pin-tap`() = runTest {
         // User report (screenshot 2026-05-13): tapping pin on YSH does
         // not surface a progress bar — the row stayed visually
