@@ -49,7 +49,12 @@ class AioOneplaceProvider @Inject constructor(
         // AIO; tolerate null (older clients hadn't requested the
         // field) by accepting downloadUrls that contain the AIO show
         // slug as a fallback identity check.
-        return oneplace.newSince(listenUrl, lastSeen, maxFetch)
+        // Pass showId into newSince so the probe-forward loop skips
+        // PAST other shows' pages until it finds an AIO-context seed.
+        // The post-filter stays as a defense-in-depth — newSince's
+        // showId param is optional and a future regression could lose
+        // the wiring; isAio() catches any stray that slips through.
+        return oneplace.newSince(listenUrl, lastSeen, maxFetch, showId = AIO_SHOW_ID)
             .filter { isAio(it) }
             .map { it.toProvider(catalog) }
     }

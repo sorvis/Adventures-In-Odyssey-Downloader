@@ -169,8 +169,10 @@ class OneplaceClientTest {
         // a real episodeId — newSince now probes forward through gaps.
         // Pre-load enough empties to exhaust the probe cap so we still
         // exit cleanly when oneplace is genuinely empty / broken.
+        // (Probe cap bumped 20 → 50 in v0.1.69 to handle wider AIO/other-
+        // show interleaving; enqueue 60 to be safely past it.)
         server.enqueue(html(fixture("/oneplace/listen.html")))
-        repeat(25) { server.enqueue(json("[]")) }
+        repeat(60) { server.enqueue(json("[]")) }
         val results = client.newSince(listenUrl, lastSeen = 0L, maxFetch = 50)
         assertTrue(results.isEmpty())
     }
@@ -218,6 +220,66 @@ class OneplaceClientTest {
             listOf(1278393L, 1278392L, 1278391L),
             results.map { it.episodeId },
         )
+    }
+
+    @Test
+    fun `newSince -- showId probe walks PAST other-show pages until target found (2026-05-23 regression)`() = runTest {
+        // User report 2026-05-23: AIO refresh missed May 21 and May 22
+        // broadcasts. Root cause: oneplace's CMS id sequence interleaves
+        // shows. latest=1278397 (AIO). cursor=latest+1 returned 20 items
+        // of a DIFFERENT show. Old gap-probe accepted that page as
+        // "found content", walked back via its last id into yet more
+        // other-show history, returned 50 episodes — AioOneplaceProvider
+        // filtered them all out → 0 AIO. The new probe takes showId and
+        // keeps advancing until target-show items appear.
+        //
+        // (CMS ids must be ≥6 digits — bootstrapRe = `episodeId[=:"\s]+(\d{6,})`.
+        // Use the real-world 1278XXX range so the regex actually matches.)
+        server.enqueue(html("""<html><body><script>episodeId=1278397</script></body></html>"""))
+        val otherShowPage = (1..20).joinToString(",") {
+            """{"episodeId":${1278500 - it},"title":"sekulow $it","showId":999,"downloadFileUrl":"https://x/s$it.mp3","url":"https://x/s$it"}"""
+        }
+        server.enqueue(json("[$otherShowPage]"))           // cursor=1278398 → wrong show
+        server.enqueue(json("[]"))                          // cursor=1278399 → gap
+        val aioPage = """[
+            {"episodeId":1278397,"title":"AIO Third Degree","showId":777,"downloadFileUrl":"https://x/a397.mp3","url":"https://x/a397"},
+            {"episodeId":1278395,"title":"AIO Second Thoughts","showId":777,"downloadFileUrl":"https://x/a395.mp3","url":"https://x/a395"},
+            {"episodeId":1278393,"title":"AIO First-Hand","showId":777,"downloadFileUrl":"https://x/a393.mp3","url":"https://x/a393"}
+        ]"""
+        server.enqueue(json(aioPage))                       // cursor=1278400 → has AIO
+        server.enqueue(json("[]"))                           // walk-back tail
+
+        val results = client.newSince(listenUrl, lastSeen = 0L, maxFetch = 50, showId = 777L)
+
+        assertEquals("expected 3 AIO episodes after probing past 2 non-AIO pages", 3, results.size)
+        assertTrue("latest AIO (1278397) must be in the result -- this is the regression",
+            results.any { it.episodeId == 1278397L })
+        assertEquals(setOf(1278397L, 1278395L, 1278393L), results.map { it.episodeId }.toSet())
+    }
+
+    @Test
+    fun `newSince -- showId probe exhausts cap when no target-show seed found`() = runTest {
+        // Every probe within the cap returns wrong-show pages. newSince
+        // returns empty rather than spinning forever or leaking unrelated
+        // rows.
+        server.enqueue(html("""<html><body><script>episodeId=1278397</script></body></html>"""))
+        repeat(60) {
+            val wrongShow = """[{"episodeId":${1300000 + it},"title":"x","showId":999,"downloadFileUrl":"https://x/$it.mp3","url":"https://x/$it"}]"""
+            server.enqueue(json(wrongShow))
+        }
+        val results = client.newSince(listenUrl, lastSeen = 0L, maxFetch = 50, showId = 777L)
+        assertTrue("no target-show content → empty result, NOT wrong-show passthrough", results.isEmpty())
+    }
+
+    @Test
+    fun `newSince -- no showId given keeps old behavior (any non-empty page wins)`() = runTest {
+        // Back-compat: when caller doesn't pass showId, the old probe
+        // semantics apply — first non-empty page wins.
+        server.enqueue(html("""<html><body><script>episodeId=1278397</script></body></html>"""))
+        server.enqueue(json("""[{"episodeId":1278395,"title":"a","downloadFileUrl":"https://x/a.mp3","url":"https://x/a"}]"""))
+        server.enqueue(json("[]"))
+        val results = client.newSince(listenUrl, lastSeen = 0L, maxFetch = 50, showId = null)
+        assertEquals(1, results.size)
     }
 
     @Test
