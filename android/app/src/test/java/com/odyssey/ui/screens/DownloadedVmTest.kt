@@ -176,6 +176,8 @@ class DownloadedVmTest {
         override suspend fun markUndownloaded(id: Long) {}
         override suspend fun markArchived(id: Long, ts: Long) {}
         override suspend fun markUnarchived(id: Long) {}
+        override suspend fun markArchivedByKey(providerId: String, externalId: String, ts: Long) {}
+        override suspend fun markUnarchivedByKey(providerId: String, externalId: String) {}
         override suspend fun convertToBackupGhost(providerId: String, externalId: String) {}
         override suspend fun clearAllArchived(): Int = 0
         override suspend fun delete(id: Long) {}

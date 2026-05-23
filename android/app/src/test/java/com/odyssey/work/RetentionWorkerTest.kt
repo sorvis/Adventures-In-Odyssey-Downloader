@@ -192,53 +192,45 @@ class RetentionWorkerTest {
 
     @Test
     fun `per-provider caps are honored independently (YSH downloads don't squeeze AIO)`() = runBlocking {
-        // v0.1.66 regression test for user report: with retention=7 and
-        // 6 YSH downloads, only 1 AIO slot fit before retention pruned
-        // archived AIO rows out from under the user. Per-provider keys
-        // mean each show's ring is sized on its own.
+        // v0.1.66 regression: per-provider retention caps mean YSH and
+        // AIO downloads don't compete for the same slot.
+        //
+        // v0.1.72 follow-up: YSH archives via the server's v2 endpoint
+        // now, so YSH rows that are archived GHOST (preserved row +
+        // backup:// shape) instead of hard-deleting. To exercise the
+        // cap with the new semantics, the YSH rows here carry
+        // archivedAt set — same eligibility rule as AIO.
         settings.setNas("http://nas.example", "token")
+        settings.setVerifyBackupBeforePrune(false)
         settings.setRetentionFor("aio", 5)
         settings.setRetentionFor("ysh", 2)
 
-        // 3 AIO rows downloaded + archived — below AIO cap of 5,
-        // none should be pruned.
         for (n in 1..3) {
             val file = File(ctx.cacheDir, "aio-$n.mp3").apply { writeText("x") }
             episodes.upsert(
                 LocalEpisodeEntity(
-                    providerId = "aio",
-                    externalId = "40$n",
-                    title = "AIO $n",
-                    airDate = "2026-05-0$n",
-                    description = null,
+                    providerId = "aio", externalId = "40$n",
+                    title = "AIO $n", airDate = "2026-05-0$n", description = null,
                     sourceUrl = "https://oneplace.com/40$n",
                     downloadUrl = "https://zcast/40$n.mp3",
-                    filePath = file.absolutePath,
-                    fileSize = file.length(),
+                    filePath = file.absolutePath, fileSize = file.length(),
                     durationMs = 25 * 60_000L,
-                    downloadedAt = 1000L * n,
-                    archivedAt = 2000L * n,
+                    downloadedAt = 1000L * n, archivedAt = 2000L * n,
                 ),
             )
         }
-        // 4 YSH rows downloaded (never archived — YSH has no NAS path).
-        // Cap is 2 → 2 oldest should be pruned (hard-deleted).
         for (n in 1..4) {
             val file = File(ctx.cacheDir, "ysh-$n.mp3").apply { writeText("x") }
             episodes.upsert(
                 LocalEpisodeEntity(
-                    providerId = "ysh",
-                    externalId = "ysh-sku-50$n",
-                    title = "YSH $n",
-                    airDate = "2026-05-0$n",
-                    description = null,
+                    providerId = "ysh", externalId = "ysh-sku-50$n",
+                    title = "YSH $n", airDate = "2026-05-0$n", description = null,
                     sourceUrl = "https://yourstoryhour.org/$n",
                     downloadUrl = "https://s3.example/$n.mp3",
-                    filePath = file.absolutePath,
-                    fileSize = file.length(),
+                    filePath = file.absolutePath, fileSize = file.length(),
                     durationMs = 25 * 60_000L,
                     downloadedAt = 1000L * n,
-                    archivedAt = null,
+                    archivedAt = 3000L * n,             // ← v0.1.72: archived YSH eligible to ghost
                 ),
             )
         }
@@ -246,20 +238,28 @@ class RetentionWorkerTest {
         buildWorker().doWork()
 
         val rows = episodes.observeAll().first()
-        assertEquals(
-            "expected 3 AIO untouched + 2 YSH kept (oldest 2 pruned) = 5",
-            5, rows.size,
-        )
         val aio = rows.filter { it.providerId == "aio" }
-        assertEquals("AIO cap=5, 3 rows present — all kept", 3, aio.size)
-        assertTrue("AIO rows still have filePath", aio.all { it.filePath != null })
+        assertEquals("AIO cap=5, 3 rows present — all kept (NO ghosting)", 3, aio.size)
+        assertTrue("AIO rows still downloaded", aio.all { it.filePath != null })
 
         val ysh = rows.filter { it.providerId == "ysh" }
-        assertEquals("YSH cap=2, 4 rows downloaded — 2 oldest deleted", 2, ysh.size)
-        // Oldest two YSH (ysh-sku-501, ysh-sku-502) should be GONE — including row.
+        // v0.1.72: YSH ghosts like AIO. 4 rows total, cap=2, prune 2
+        // oldest → 2 stay downloaded, 2 become ghosts (preserved row,
+        // filePath=null, sourceUrl=backup://). Total YSH row count
+        // stays at 4 — ghosting doesn't remove rows.
+        assertEquals("YSH ghosts preserve rows: 4 still in DB", 4, ysh.size)
+        val yshDownloaded = ysh.filter { it.filePath != null }
+        val yshGhosted = ysh.filter { it.filePath == null }
+        assertEquals("2 newest YSH still downloaded", 2, yshDownloaded.size)
+        assertEquals("2 oldest YSH ghosted", 2, yshGhosted.size)
+        assertEquals(
+            "newest YSH ids stay downloaded",
+            setOf("ysh-sku-503", "ysh-sku-504"),
+            yshDownloaded.map { it.externalId }.toSet(),
+        )
         assertTrue(
-            "YSH cap should leave only the newest 2 ids",
-            ysh.map { it.externalId }.toSet() == setOf("ysh-sku-503", "ysh-sku-504"),
+            "ghost rows carry backup:// sourceUrl",
+            yshGhosted.all { it.sourceUrl.startsWith("backup://") },
         )
         assertFalse("oldest YSH file deleted from disk", File(ctx.cacheDir, "ysh-1.mp3").exists())
         assertFalse("second-oldest YSH file deleted from disk", File(ctx.cacheDir, "ysh-2.mp3").exists())
@@ -557,52 +557,37 @@ class RetentionWorkerTest {
 
     @Test
     fun `bad-data -- mixed AIO and YSH with independent caps prunes each independently`() = runBlocking {
-        // The v0.1.66 per-provider retention contract. YSH downloads
-        // (archivedAt=null) MUST NOT eat into the AIO cap, and vice
-        // versa. Tighter test than the existing per-provider case —
-        // both providers over their respective caps simultaneously,
-        // with NAS configured so AIO ghosts and YSH deletes.
+        // v0.1.66 per-provider retention contract + v0.1.72 YSH ghost
+        // support. Both providers carry archivedAt so both are eligible
+        // for retention pruning; both ghost (preserve row, backup://
+        // shape) when NAS configured.
         settings.setNas("http://nas.example", "token")
         settings.setVerifyBackupBeforePrune(false)
         settings.setRetentionFor("aio", 1)
         settings.setRetentionFor("ysh", 1)
-        // 2 AIO archived → 1 kept, 1 ghosted
         for (n in 1..2) {
             val file = File(ctx.cacheDir, "mixed-aio-$n.mp3").apply { writeText("a") }
             episodes.upsert(
                 LocalEpisodeEntity(
-                    providerId = "aio",
-                    externalId = "aio-$n",
-                    title = "AIO $n",
-                    airDate = "2026-05-0$n",
-                    description = null,
-                    sourceUrl = "https://x/a$n",
-                    downloadUrl = "https://x/a$n.mp3",
-                    filePath = file.absolutePath,
-                    fileSize = file.length(),
-                    durationMs = 0L,
-                    downloadedAt = n * 100L,
+                    providerId = "aio", externalId = "aio-$n",
+                    title = "AIO $n", airDate = "2026-05-0$n", description = null,
+                    sourceUrl = "https://x/a$n", downloadUrl = "https://x/a$n.mp3",
+                    filePath = file.absolutePath, fileSize = file.length(),
+                    durationMs = 0L, downloadedAt = n * 100L,
                     archivedAt = n * 100L,
                 ),
             )
         }
-        // 2 YSH downloaded (no archive — YSH has no NAS) → 1 kept, 1 deleted
         for (n in 1..2) {
             val file = File(ctx.cacheDir, "mixed-ysh-$n.mp3").apply { writeText("y") }
             episodes.upsert(
                 LocalEpisodeEntity(
-                    providerId = "ysh",
-                    externalId = "ysh-sku-$n",
-                    title = "YSH $n",
-                    airDate = "2026-05-0$n",
-                    description = null,
-                    sourceUrl = "https://x/y$n",
-                    downloadUrl = "https://x/y$n.mp3",
-                    filePath = file.absolutePath,
-                    fileSize = file.length(),
-                    durationMs = 0L,
-                    downloadedAt = n * 100L,
-                    archivedAt = null,
+                    providerId = "ysh", externalId = "ysh-sku-$n",
+                    title = "YSH $n", airDate = "2026-05-0$n", description = null,
+                    sourceUrl = "https://x/y$n", downloadUrl = "https://x/y$n.mp3",
+                    filePath = file.absolutePath, fileSize = file.length(),
+                    durationMs = 0L, downloadedAt = n * 100L,
+                    archivedAt = n * 100L,     // ← v0.1.72: archived YSH ghosts too
                 ),
             )
         }
@@ -613,11 +598,22 @@ class RetentionWorkerTest {
         val aio = rows.filter { it.providerId == "aio" }
         val ysh = rows.filter { it.providerId == "ysh" }
         assertEquals("AIO: 1 downloaded + 1 ghosted = 2 rows total", 2, aio.size)
-        assertEquals("YSH: 1 downloaded + 1 deleted = 1 row total", 1, ysh.size)
-        // The AIO ghosted row keeps its row in DB
+        assertEquals("YSH: 1 downloaded + 1 ghosted = 2 rows total (v0.1.72)", 2, ysh.size)
         assertEquals(
             "exactly one AIO row remains downloaded after retention",
             1, aio.count { it.filePath != null },
+        )
+        assertEquals(
+            "exactly one YSH row remains downloaded after retention",
+            1, ysh.count { it.filePath != null },
+        )
+        assertTrue(
+            "the AIO ghost carries backup:// sourceUrl",
+            aio.first { it.filePath == null }.sourceUrl.startsWith("backup://"),
+        )
+        assertTrue(
+            "the YSH ghost carries backup:// sourceUrl",
+            ysh.first { it.filePath == null }.sourceUrl.startsWith("backup://"),
         )
     }
 

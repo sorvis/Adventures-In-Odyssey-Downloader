@@ -139,6 +139,15 @@ class ArchiveBackfillTest {
     private class RecordingArchiveEnqueuer : ArchiveEnqueuer {
         data class Call(val episodeId: Long, val allowMetered: Boolean)
         val calls = mutableListOf<Call>()
+        override fun enqueueArchiveByKey(providerId: String, externalId: String, allowMetered: Boolean) {
+            // Backfill uses this v2 path as of v0.1.72. Map back to the
+            // legacy Long-id shape the existing test assertions use so
+            // we don't have to rewrite every case. AIO externalIds are
+            // numeric strings; YSH would fall back to hashCode (no
+            // current YSH cases assert ids).
+            val id = externalId.toLongOrNull() ?: externalId.hashCode().toLong()
+            calls += Call(id, allowMetered)
+        }
         override fun enqueueArchive(episodeId: Long, allowMetered: Boolean) {
             calls += Call(episodeId, allowMetered)
         }
@@ -164,6 +173,8 @@ class ArchiveBackfillTest {
         override suspend fun markUndownloaded(id: Long) {}
         override suspend fun markArchived(id: Long, ts: Long) {}
         override suspend fun markUnarchived(id: Long) {}
+        override suspend fun markArchivedByKey(providerId: String, externalId: String, ts: Long) {}
+        override suspend fun markUnarchivedByKey(providerId: String, externalId: String) {}
         override suspend fun convertToBackupGhost(providerId: String, externalId: String) {}
         override suspend fun clearAllArchived(): Int = 0
         override suspend fun delete(id: Long) {}

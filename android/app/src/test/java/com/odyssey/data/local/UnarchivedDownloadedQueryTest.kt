@@ -14,22 +14,21 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * Pins the AIO-only scope on [EpisodeDao.unarchivedDownloaded] and
+ * Pins the cross-provider scope on [EpisodeDao.unarchivedDownloaded] +
  * [EpisodeDao.observeUnarchivedDownloaded].
  *
- * **Why this matters:** the archive-service is AIO-only today.
- * YSH externalIds are non-numeric ("ysh-sku-1958"), so their
- * `episodeId` getter falls back to `String.hashCode().toLong()`.
- * If unarchivedDownloaded returns YSH rows, ArchiveBackfill enqueues
- * `archive-<hash>`. ArchiveEpisodeWorker then calls
- * `episodes.byId(<hash>)` which filters `WHERE providerId = 'aio'`
- * — guaranteed miss → `Result.failure()` + "no row in DB" log spam.
- * Worse, the row stays unarchived so the next snapshot re-yields it,
- * pull-to-refresh kicks it again, and the orphan loops forever.
+ * **History:** v0.1.62 made these queries AIO-only as a defensive fix.
+ * YSH externalIds are non-numeric ("ysh-sku-1958"), and the legacy
+ * archive pipeline routed by Long episodeId — YSH rows fell back to
+ * `hashCode().toLong()`, never matched `byId(Long)`, and the
+ * ArchiveBackfill orphan looped forever.
  *
- * User device logs 2026-05-17 showed 13 such hash-shaped IDs
- * (`469853093, 469853122, ..., 1680575637`) recurring across
- * sessions. This DAO scope is the v0.1.62 fix.
+ * v0.1.72 lifts that filter now that the archive pipeline routes by
+ * `(providerId, externalId)` end-to-end via `WorkScheduler.
+ * enqueueArchiveByKey` + `ArchiveEpisodeWorker.KEY_PROVIDER_ID/
+ * KEY_EXTERNAL_ID` + the server-side v2 endpoint
+ * `POST /providers/{provider}/episodes`. YSH rows are now legitimate
+ * backfill candidates.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(application = Application::class, sdk = [33])
@@ -53,29 +52,34 @@ class UnarchivedDownloadedQueryTest {
     }
 
     @Test
-    fun `unarchivedDownloaded excludes YSH rows -- archive-service is AIO-only`() = runBlocking {
+    fun `unarchivedDownloaded includes YSH rows -- v0_1_72 multi-provider archive`() = runBlocking {
+        // Server now accepts YSH via POST /providers/ysh/episodes;
+        // ArchiveBackfill routes by (providerId, externalId) so YSH
+        // archives no longer hash-collide. YSH belongs in the backfill
+        // candidate pool.
         episodes.upsert(downloadedRow(providerId = "aio", externalId = "1278389"))
         episodes.upsert(downloadedRow(providerId = "ysh", externalId = "ysh-sku-1958"))
         episodes.upsert(downloadedRow(providerId = "ysh", externalId = "ysh-sku-559"))
 
         val out = episodes.unarchivedDownloaded()
-
+        val ids = out.map { it.externalId }.toSet()
         assertEquals(
-            "only the AIO row passes the filter -- YSH rows would create archive-<hash> " +
-                "orphans that ArchiveEpisodeWorker can't resolve",
-            listOf("1278389"),
-            out.map { it.externalId },
+            "all three unarchived downloaded rows must surface for backfill",
+            setOf("1278389", "ysh-sku-1958", "ysh-sku-559"),
+            ids,
         )
     }
 
     @Test
-    fun `observeUnarchivedDownloaded also excludes YSH rows`() = runBlocking {
+    fun `observeUnarchivedDownloaded also includes YSH rows`() = runBlocking {
         episodes.upsert(downloadedRow(providerId = "aio", externalId = "1278389"))
         episodes.upsert(downloadedRow(providerId = "ysh", externalId = "ysh-sku-1958"))
 
         val out = episodes.observeUnarchivedDownloaded().first()
-
-        assertEquals(listOf("1278389"), out.map { it.externalId })
+        assertEquals(
+            setOf("1278389", "ysh-sku-1958"),
+            out.map { it.externalId }.toSet(),
+        )
     }
 
     @Test

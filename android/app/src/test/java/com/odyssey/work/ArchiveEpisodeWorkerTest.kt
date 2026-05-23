@@ -200,6 +200,61 @@ class ArchiveEpisodeWorkerTest {
     }
 
     @Test
+    fun `doWork -- v0_1_72 YSH upload routes through v2 endpoint and marks archived by key`() = runBlocking {
+        // The whole point of v0.1.72: YSH externalIds are non-numeric
+        // ("ysh-sku-1958") so they CANNOT route through the legacy
+        // KEY_EPISODE_ID Long. The v2 worker shape (providerId +
+        // externalId in WorkData) plus uploadV2 + markArchivedByKey
+        // make YSH archiving work end-to-end.
+        settings.setNas(server.url("/").toString().trimEnd('/'), "tok")
+        val file = File(ctx.cacheDir, "ysh-archive.mp3").apply { writeText("ysh audio bytes") }
+        episodes.upsert(
+            LocalEpisodeEntity(
+                providerId = "ysh",
+                externalId = "ysh-sku-1958",
+                title = "Madeleine's Courage",
+                airDate = "2020-01-01",
+                description = null,
+                sourceUrl = "https://yourstoryhour.org/x",
+                downloadUrl = "https://s3/EE-11-02.mp3",
+                filePath = file.absolutePath,
+                fileSize = file.length(),
+                durationMs = 25 * 60_000L,
+                downloadedAt = 1L,
+                archivedAt = null,
+                albumName = "Exciting Events - Volume 11",
+            ),
+        )
+        server.enqueue(MockResponse().setResponseCode(201).setBody("""{"provider_id":"ysh","external_id":"ysh-sku-1958","title":"x","air_date":null,"album":null,"description":null,"duration_secs":null,"file_size":1,"sha256":null,"archived_at":"now"}"""))
+
+        // Build a worker with v2-style input data (providerId + externalId).
+        val worker = TestListenableWorkerBuilder.from(ctx, ArchiveEpisodeWorker::class.java)
+            .setInputData(
+                workDataOf(
+                    ArchiveEpisodeWorker.KEY_PROVIDER_ID to "ysh",
+                    ArchiveEpisodeWorker.KEY_EXTERNAL_ID to "ysh-sku-1958",
+                ),
+            )
+            .setWorkerFactory(testWorkerFactory())
+            .build() as ArchiveEpisodeWorker
+
+        val result = worker.doWork()
+
+        assertTrue("YSH upload via v2 path must succeed", result is ListenableWorker.Result.Success)
+        // Confirm server saw the v2 POST with the YSH external_id.
+        val req = server.takeRequest()
+        assertEquals("/providers/ysh/episodes", req.path)
+        val body = req.body.readUtf8()
+        assertTrue("multipart must carry the YSH sku id as external_id",
+            body.contains("ysh-sku-1958"))
+        assertTrue("album must come from row.albumName for YSH (not catalog match)",
+            body.contains("Exciting Events - Volume 11"))
+        // Row marked archived via key (not legacy Long).
+        val row = episodes.byKey("ysh", "ysh-sku-1958")!!
+        assertNotNull("archivedAt set after YSH upload", row.archivedAt)
+    }
+
+    @Test
     fun `doWork -- server 4xx auth error returns retry (not silent success)`() = runBlocking {
         // Bad token. Same retry path — the user might fix the token and
         // re-trigger. Crucially the row stays unarchived.

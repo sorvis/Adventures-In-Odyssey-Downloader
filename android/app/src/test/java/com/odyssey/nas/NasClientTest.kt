@@ -268,6 +268,95 @@ class NasClientTest {
         assertTrue(r.exceptionOrNull() is NasNotConfiguredException)
     }
 
+    // ---- v0.1.72 provider-aware (v2) helpers ------------------------------
+
+    @Test
+    fun `episodeExistsOnNasByKey -- 200 maps to true`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200))
+        val r = client.episodeExistsOnNasByKey("ysh", "ysh-sku-1958")
+        assertEquals(true, r.getOrThrow())
+        val req = server.takeRequest()
+        assertEquals("HEAD", req.method)
+        // YSH externalIds have dashes — must be URL-encoded so the path
+        // round-trips intact through the FastAPI router.
+        assertEquals("/providers/ysh/episodes/ysh-sku-1958", req.path)
+        assertEquals("Bearer tok", req.getHeader("Authorization"))
+    }
+
+    @Test
+    fun `episodeExistsOnNasByKey -- 404 maps to false, 5xx surfaces as failure`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(404))
+        assertEquals(false, client.episodeExistsOnNasByKey("ysh", "ysh-sku-X").getOrThrow())
+
+        server.enqueue(MockResponse().setResponseCode(500))
+        assertTrue(
+            "5xx must surface as Result.failure -- NOT success(false)",
+            client.episodeExistsOnNasByKey("ysh", "ysh-sku-X").isFailure,
+        )
+    }
+
+    @Test
+    fun `audioUrlByKey -- builds canonical v2 URL with URL-encoded externalId`() = runBlocking {
+        val a = client.audioUrlByKey("ysh", "ysh-sku-1958").getOrThrow()
+        assertTrue(
+            "v2 audio URL shape: /providers/{p}/episodes/{eid}/audio",
+            a.url.endsWith("/providers/ysh/episodes/ysh-sku-1958/audio"),
+        )
+        assertEquals("Bearer tok", a.authHeader)
+    }
+
+    @Test
+    fun `audioUrlByKey -- failure when NAS unconfigured`() = runBlocking {
+        settings.setNas("", "")
+        assertTrue(
+            client.audioUrlByKey("ysh", "ysh-sku-1958").exceptionOrNull() is NasNotConfiguredException
+        )
+    }
+
+    @Test
+    fun `uploadV2 -- posts to v2 endpoint with external_id form field`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(201).setBody("""{"provider_id":"ysh","external_id":"ysh-sku-1958","title":"x","air_date":null,"album":null,"description":null,"duration_secs":null,"file_size":1,"sha256":null,"archived_at":"now"}"""))
+        val file = java.io.File.createTempFile("ysh-audio", ".mp3").apply { writeText("bytes") }
+        val r = client.uploadV2(
+            providerId = "ysh",
+            externalId = "ysh-sku-1958",
+            title = "Madeleine's Courage",
+            airDate = "2020-01-01",
+            description = null,
+            durationSecs = 1500,
+            sourceUrl = "https://yourstoryhour.org/x",
+            audio = file,
+            album = "Exciting Events - Volume 11",
+        )
+        assertTrue("upload result should be success", r.isSuccess)
+        val req = server.takeRequest()
+        assertEquals("POST", req.method)
+        assertEquals("/providers/ysh/episodes", req.path)
+        // Multipart body must include external_id as a form field —
+        // the v2 server handler reads it as the canonical row identity.
+        val body = req.body.readUtf8()
+        assertTrue("body must carry external_id form field", body.contains("name=\"external_id\""))
+        assertTrue("body must carry the YSH sku id", body.contains("ysh-sku-1958"))
+        assertTrue("body must carry album", body.contains("Exciting Events - Volume 11"))
+    }
+
+    @Test
+    fun `uploadV2 -- 5xx surfaces as failure (caller retries)`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(503))
+        val file = java.io.File.createTempFile("aio-audio", ".mp3").apply { writeText("bytes") }
+        val r = client.uploadV2(
+            providerId = "aio",
+            externalId = "1278294",
+            title = "Clutter",
+            airDate = null,
+            description = null,
+            durationSecs = 1500,
+            sourceUrl = "https://oneplace.com/1278294",
+            audio = file,
+        )
+        assertTrue(r.isFailure)
+    }
+
     // ---- helpers ----------------------------------------------------------
 
     private fun json(body: String) = MockResponse()

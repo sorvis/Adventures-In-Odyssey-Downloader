@@ -175,6 +175,19 @@ interface EpisodeDao {
     suspend fun markUnarchived(id: Long)
 
     /**
+     * Provider-aware versions of markArchived / markUnarchived (v0.1.72).
+     * Needed for YSH archive support — YSH externalIds aren't numeric so
+     * the AIO-only Long-keyed `markArchived` can't find them. New
+     * archive-pipeline code paths use these; the AIO-only versions stay
+     * for callers that still pass a bare Long.
+     */
+    @Query("UPDATE local_episodes SET archivedAt = :ts WHERE providerId = :providerId AND externalId = :externalId")
+    suspend fun markArchivedByKey(providerId: String, externalId: String, ts: Long)
+
+    @Query("UPDATE local_episodes SET archivedAt = NULL WHERE providerId = :providerId AND externalId = :externalId")
+    suspend fun markUnarchivedByKey(providerId: String, externalId: String)
+
+    /**
      * RetentionWorker uses this to "prune" a row that's safe on the
      * NAS backup: the local file is deleted, but the row stays in the
      * DB shaped like a BrowseNasScreen backup-mirror ghost
@@ -242,26 +255,24 @@ interface EpisodeDao {
     @Query("""SELECT * FROM local_episodes
               WHERE filePath IS NOT NULL
                 AND archivedAt IS NULL
-                AND providerId = 'aio'
               ORDER BY airDate ASC, externalId ASC""")
     fun observeUnarchivedDownloaded(): Flow<List<LocalEpisodeEntity>>
 
     /**
-     * Snapshot of every downloaded-but-not-yet-archived AIO episode.
-     * **AIO-only** — the archive-service is AIO-only today (per
-     * design step 11b), and YSH rows have non-numeric externalIds
-     * whose `episodeId` getter falls back to `String.hashCode()`,
-     * which doesn't round-trip through `byId(Long)` (filters on
-     * providerId='aio'). Without this filter, YSH rows would loop
-     * forever through ArchiveBackfill → enqueueArchive(hash) →
-     * ArchiveWorker.byId(hash) miss → Result.failure(), with the
-     * row still unarchived so the next snapshot re-yields it. See
-     * the v0.1.62 fix and the user device logs that surfaced it.
+     * Snapshot of every downloaded-but-not-yet-archived episode
+     * across ALL providers. As of v0.1.72 the archive-service accepts
+     * YSH uploads via `POST /providers/ysh/episodes`, so YSH rows
+     * are no longer excluded from the backfill candidate pool.
+     *
+     * The v0.1.62 hash-collision concern is now neutralized: the
+     * archive pipeline routes by (providerId, externalId) end-to-end
+     * via `WorkScheduler.enqueueArchiveByKey` + the v2 worker input,
+     * so YSH's non-numeric externalIds no longer fall back through
+     * `byId(Long)`.
      */
     @Query("""SELECT * FROM local_episodes
               WHERE filePath IS NOT NULL
-                AND archivedAt IS NULL
-                AND providerId = 'aio'""")
+                AND archivedAt IS NULL""")
     suspend fun unarchivedDownloaded(): List<LocalEpisodeEntity>
 
     /**

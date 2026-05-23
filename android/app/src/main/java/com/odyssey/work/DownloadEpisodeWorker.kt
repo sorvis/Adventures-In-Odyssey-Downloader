@@ -63,7 +63,6 @@ class DownloadEpisodeWorker @AssistedInject constructor(
             // with the new file fields filled in).
             if (ep.providerId == "aio") {
                 episodes.markDownloaded(ep.externalId.toLong(), out.absolutePath, size, System.currentTimeMillis())
-                scheduler.enqueueArchive(ep.externalId.toLong(), allowMetered = settings.flow.first().allowMeteredDownloads)
             } else {
                 episodes.upsert(
                     ep.copy(
@@ -72,9 +71,16 @@ class DownloadEpisodeWorker @AssistedInject constructor(
                         downloadedAt = System.currentTimeMillis(),
                     ),
                 )
-                // Archive upload for non-AIO is deferred — server route
-                // rewrite for /providers/{provider}/... is step 11b.
             }
+            // v0.1.72: enqueue archive for BOTH providers via the
+            // provider-aware key path. The archive-service accepts YSH
+            // uploads via `POST /providers/ysh/episodes` so YSH no
+            // longer needs to be deferred.
+            scheduler.enqueueArchiveByKey(
+                ep.providerId,
+                ep.externalId,
+                allowMetered = settings.flow.first().allowMeteredDownloads,
+            )
             DebugLogger.i(TAG, "download success: ${ep.providerId}/${ep.externalId} bytes=$size")
             Result.success()
         }.getOrElse { t ->

@@ -192,6 +192,102 @@ class NasClient @Inject constructor(
         }
     }
 
+    /**
+     * Provider-aware verify-before-prune (v0.1.72). Same contract as
+     * [episodeExistsOnNas] but hits the v2 endpoint
+     * `HEAD /providers/{provider}/episodes/{externalId}` so YSH rows
+     * (with non-numeric externalIds) can be verified too.
+     */
+    suspend fun episodeExistsOnNasByKey(
+        providerId: String,
+        externalId: String,
+    ): Result<Boolean> = call { s ->
+        val req = Request.Builder()
+            .url("${s.nasUrl}/providers/$providerId/episodes/${java.net.URLEncoder.encode(externalId, "UTF-8")}")
+            .head()
+            .header("Authorization", "Bearer ${s.nasToken}")
+            .applyCfAccess(s)
+            .build()
+        http.newCall(req).execute().use { resp ->
+            when (resp.code) {
+                200 -> true
+                404, 410 -> false
+                else -> error("HEAD providers/$providerId/episodes/$externalId HTTP ${resp.code}")
+            }
+        }
+    }
+
+    /**
+     * Provider-aware upload (v0.1.72). Posts to the v2 endpoint
+     * `POST /providers/{provider}/episodes` instead of the legacy
+     * AIO-only `/episodes`. YSH rows whose externalId isn't parseable
+     * as int can be uploaded this way — the server's v2 handler
+     * leaves the legacy `episode_id` column NULL for those rows and
+     * uses the `(provider_id, external_id)` composite as the row's
+     * identity.
+     */
+    suspend fun uploadV2(
+        providerId: String,
+        externalId: String,
+        title: String,
+        airDate: String?,
+        description: String?,
+        durationSecs: Long,
+        sourceUrl: String,
+        audio: File,
+        album: String? = null,
+        onProgress: ((Long, Long) -> Unit)? = null,
+    ): Result<Unit> = call { s ->
+        val audioBody = audio.asRequestBody("audio/mpeg".toMediaType())
+        val countingAudio = if (onProgress != null) {
+            CountingRequestBody(audioBody, audio.length(), onProgress)
+        } else audioBody
+        val body = MultipartBody.Builder().setType(MultipartBody.FORM)
+            .addFormDataPart("external_id", externalId)
+            .addFormDataPart("title", title)
+            .apply {
+                airDate?.let     { addFormDataPart("air_date", it) }
+                description?.let { addFormDataPart("description", it) }
+                album?.takeIf { it.isNotBlank() }
+                    ?.let { addFormDataPart("album", it) }
+                addFormDataPart("duration_secs", durationSecs.toString())
+                addFormDataPart("source_url", sourceUrl)
+            }
+            .addFormDataPart("audio", audio.name, countingAudio)
+            .build()
+        val url = "${s.nasUrl}/providers/$providerId/episodes"
+        val req = Request.Builder()
+            .url(url)
+            .header("Authorization", "Bearer ${s.nasToken}")
+            .applyCfAccess(s)
+            .post(body)
+            .build()
+        DebugLogger.i("NasClient", "uploadV2($providerId:$externalId) → POST $url (${audio.length()} bytes)")
+        http.newCall(req).execute().use { resp ->
+            if (resp.code !in 200..201) {
+                val bodyPreview = runCatching { resp.body?.string()?.take(200) }.getOrNull().orEmpty()
+                DebugLogger.w("NasClient", "uploadV2($providerId:$externalId) — HTTP ${resp.code}: $bodyPreview")
+                error("uploadV2 HTTP ${resp.code}: $bodyPreview")
+            }
+            DebugLogger.d("NasClient", "uploadV2($providerId:$externalId) — HTTP ${resp.code} OK")
+        }
+    }
+
+    /**
+     * Provider-aware streaming URL builder. Mirrors [audioUrl] but
+     * uses the v2 endpoint so YSH externalIds (non-numeric strings)
+     * round-trip cleanly.
+     */
+    suspend fun audioUrlByKey(providerId: String, externalId: String): Result<NasAudio> {
+        val s = settings.flow.first()
+        if (!s.nasConfigured) return Result.failure(NasNotConfiguredException)
+        val encoded = java.net.URLEncoder.encode(externalId, "UTF-8")
+        return Result.success(NasAudio(
+            url = "${s.nasUrl}/providers/$providerId/episodes/$encoded/audio",
+            authHeader = "Bearer ${s.nasToken}",
+        ))
+    }
+
     private suspend inline fun <T> call(crossinline block: (Settings) -> T): Result<T> {
         val s = settings.flow.first()
         if (!s.nasConfigured) return Result.failure(NasNotConfiguredException)

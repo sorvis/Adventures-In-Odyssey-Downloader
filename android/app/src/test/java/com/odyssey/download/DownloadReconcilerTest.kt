@@ -380,6 +380,9 @@ class DownloadReconcilerTest {
         val enqueues = mutableListOf<Long>()
         val cancels = mutableListOf<Long>()
 
+        override fun enqueueArchiveByKey(providerId: String, externalId: String, allowMetered: Boolean) {
+            enqueues += externalId.toLongOrNull() ?: externalId.hashCode().toLong()
+        }
         override fun enqueueArchive(episodeId: Long, allowMetered: Boolean) {
             enqueues += episodeId
         }

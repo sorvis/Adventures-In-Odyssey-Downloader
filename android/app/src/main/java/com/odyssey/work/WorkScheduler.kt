@@ -207,11 +207,11 @@ class WorkScheduler @Inject constructor(@ApplicationContext private val ctx: Con
     private fun downloadWorkName(providerId: String, externalId: String): String =
         "download-$providerId-$externalId"
 
-    override fun enqueueArchive(episodeId: Long, allowMetered: Boolean) {
+    override fun enqueueArchiveByKey(providerId: String, externalId: String, allowMetered: Boolean) {
         wm.enqueueUniqueWork(
-            archiveWorkName(episodeId),
+            archiveWorkNameByKey(providerId, externalId),
             ExistingWorkPolicy.KEEP,
-            buildArchiveRequest(episodeId, allowMetered),
+            buildArchiveRequestByKey(providerId, externalId, allowMetered),
         )
     }
 
@@ -219,18 +219,28 @@ class WorkScheduler @Inject constructor(@ApplicationContext private val ctx: Con
         // Cancel first so the subsequent enqueue isn't no-op'd by the
         // unique-name + KEEP policy. cancelUniqueWork is idempotent
         // and a no-op if nothing's enqueued. Mirrors kickDownload.
-        val name = archiveWorkName(episodeId)
+        // Legacy AIO-only shape — see enqueueArchive in the interface.
+        val name = archiveWorkNameByKey("aio", episodeId.toString())
         wm.cancelUniqueWork(name)
         wm.enqueueUniqueWork(
             name,
             ExistingWorkPolicy.KEEP,
-            buildArchiveRequest(episodeId, allowMetered),
+            buildArchiveRequestByKey("aio", episodeId.toString(), allowMetered),
         )
     }
 
-    private fun buildArchiveRequest(episodeId: Long, allowMetered: Boolean): OneTimeWorkRequest =
+    private fun buildArchiveRequestByKey(
+        providerId: String,
+        externalId: String,
+        allowMetered: Boolean,
+    ): OneTimeWorkRequest =
         OneTimeWorkRequestBuilder<ArchiveEpisodeWorker>()
-            .setInputData(workDataOf(DownloadEpisodeWorker.KEY_EPISODE_ID to episodeId))
+            .setInputData(
+                workDataOf(
+                    ArchiveEpisodeWorker.KEY_PROVIDER_ID to providerId,
+                    ArchiveEpisodeWorker.KEY_EXTERNAL_ID to externalId,
+                ),
+            )
             .setConstraints(
                 Constraints.Builder()
                     .setRequiredNetworkType(if (allowMetered) NetworkType.CONNECTED else NetworkType.UNMETERED)
@@ -239,10 +249,12 @@ class WorkScheduler @Inject constructor(@ApplicationContext private val ctx: Con
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 15, TimeUnit.MINUTES)
             .build()
 
-    private fun archiveWorkName(episodeId: Long): String = "archive-$episodeId"
+    private fun archiveWorkNameByKey(providerId: String, externalId: String): String =
+        "archive-$providerId-$externalId"
 
     override fun cancelArchive(episodeId: Long) {
-        wm.cancelUniqueWork(archiveWorkName(episodeId))
+        // Legacy AIO-only signature — cancel the AIO-keyed work entry.
+        wm.cancelUniqueWork(archiveWorkNameByKey("aio", episodeId.toString()))
     }
 
     fun enqueueRetention() {

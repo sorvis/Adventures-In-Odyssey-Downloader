@@ -51,7 +51,21 @@ interface DownloadEnqueuer {
  * "scan for unarchived files and push" loop is JVM-testable.
  */
 interface ArchiveEnqueuer {
-    fun enqueueArchive(episodeId: Long, allowMetered: Boolean)
+    /**
+     * Provider-aware archive enqueue (v0.1.72). The work-unique key
+     * encodes both providerId and externalId so YSH archives don't
+     * collide with AIO archives that happen to share a numeric range.
+     */
+    fun enqueueArchiveByKey(providerId: String, externalId: String, allowMetered: Boolean)
+
+    /**
+     * Legacy AIO-only convenience. Delegates to the v2 overload with
+     * `providerId="aio"`. Kept so callers that already have a Long
+     * episodeId (DownloadEpisodeWorker, AlbumDetailVm's "re-archive
+     * this episode" tap) don't need to plumb providerId through.
+     */
+    fun enqueueArchive(episodeId: Long, allowMetered: Boolean) =
+        enqueueArchiveByKey("aio", episodeId.toString(), allowMetered)
 
     /**
      * Force a fresh enqueue for an upload whose previous work is stuck
@@ -61,10 +75,6 @@ interface ArchiveEnqueuer {
      * doesn't no-op, then enqueues. Used by the Sync screen's
      * pull-to-refresh to drain the queue on-demand when the user
      * reconnects to the home LAN.
-     *
-     * Default implementation just calls [enqueueArchive] — fine for
-     * test recorders that don't model WorkManager backoff. Production
-     * WorkScheduler overrides with cancel-then-enqueue semantics.
      */
     fun kickArchive(episodeId: Long, allowMetered: Boolean) =
         enqueueArchive(episodeId, allowMetered)
@@ -72,10 +82,7 @@ interface ArchiveEnqueuer {
     /**
      * Cancel any pending archive work for [episodeId]. Called by
      * DownloadReconciler.cleanupCrossShowContamination when it deletes
-     * a row so the corresponding WorkManager entry doesn't fire later
-     * and spam the log with "no row in DB". No-op if nothing's
-     * enqueued. Default implementation is a no-op — test recorders
-     * don't model WorkManager so they don't need to do anything.
+     * a row so the corresponding WorkManager entry doesn't fire later.
      */
     fun cancelArchive(episodeId: Long) = Unit
 }

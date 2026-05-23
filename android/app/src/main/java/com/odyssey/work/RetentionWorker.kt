@@ -63,7 +63,13 @@ class RetentionWorker @AssistedInject constructor(
             val excess = rows.size - cap
             if (excess <= 0) continue
 
-            val ghostable = s.nasConfigured && providerId == "aio"
+            // v0.1.72: any provider can ghost when the NAS is configured
+            // AND the row is already archived. Pre-v0.1.72 this was
+            // AIO-only because the archive-service didn't accept YSH
+            // uploads — now it does via the v2 endpoint, so YSH rows
+            // that have been archived can be ghosted (and re-streamed
+            // from the NAS) the same way AIO does.
+            val ghostable = s.nasConfigured
             val candidates = if (ghostable) {
                 rows.filter { it.archivedAt != null }
             } else {
@@ -72,12 +78,12 @@ class RetentionWorker @AssistedInject constructor(
             val toPrune = candidates.take(excess)
             for (ep in toPrune) {
                 if (ghostable && s.verifyBackupBeforePrune) {
-                    val verified = nas.episodeExistsOnNas(ep.episodeId)
+                    val verified = nas.episodeExistsOnNasByKey(ep.providerId, ep.externalId)
                     when {
                         verified.isFailure -> {
                             DebugLogger.w(
                                 "RetentionWorker",
-                                "verify network error for ${ep.episodeId} — skipping prune (backup likely fine, will retry)",
+                                "verify network error for ${ep.providerId}:${ep.externalId} — skipping prune (backup likely fine, will retry)",
                                 verified.exceptionOrNull(),
                             )
                             continue
@@ -85,9 +91,9 @@ class RetentionWorker @AssistedInject constructor(
                         verified.getOrNull() == false -> {
                             DebugLogger.w(
                                 "RetentionWorker",
-                                "NAS missing ${ep.episodeId} \"${ep.title}\" — skipping prune, clearing archivedAt so backfill re-uploads",
+                                "NAS missing ${ep.providerId}:${ep.externalId} \"${ep.title}\" — skipping prune, clearing archivedAt so backfill re-uploads",
                             )
-                            episodes.markUnarchived(ep.episodeId)
+                            episodes.markUnarchivedByKey(ep.providerId, ep.externalId)
                             continue
                         }
                         // verified.getOrNull() == true → fall through to prune.

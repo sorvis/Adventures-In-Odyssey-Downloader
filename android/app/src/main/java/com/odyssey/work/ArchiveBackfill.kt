@@ -41,7 +41,9 @@ class ArchiveBackfill @Inject constructor(
         val allowMetered = settings.flow.first().allowMeteredDownloads
         DebugLogger.i("ArchiveBackfill", "enqueuing ${pending.size} archive jobs (allowMetered=$allowMetered)")
         for (ep in pending) {
-            scheduler.enqueueArchive(ep.episodeId, allowMetered)
+            // v0.1.72: route by (providerId, externalId) so YSH rows
+            // don't hash-fall-back through the legacy Long path.
+            scheduler.enqueueArchiveByKey(ep.providerId, ep.externalId, allowMetered)
         }
         return pending.size
     }
