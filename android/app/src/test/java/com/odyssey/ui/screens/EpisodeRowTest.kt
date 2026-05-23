@@ -615,9 +615,109 @@ class EpisodeRowTest {
         composeRule.onNodeWithTag("episode-row-description").assertDoesNotExist()
     }
 
+    // ---- ownership badges (v0.1.70 — match Album view's two-chip pattern) ----
+
+    @Test
+    fun `on-phone badge appears when filePath is set`() {
+        composeRule.setContent {
+            EpisodeRow(
+                ep = episode(filePath = "/data/odyssey/aio/1.mp3"),
+                played = false,
+                expanded = false,
+                onToggleExpand = {},
+                onPlay = {},
+            )
+        }
+        // assertExists rather than assertIsDisplayed: M3 ListItem's
+        // trailingContent slot has tight measurement constraints that
+        // can leave stacked Text nodes technically out-of-viewport in
+        // the test harness. The contract we care about is "the badge
+        // composable rendered" — assertExists captures that.
+        composeRule.onNodeWithTag("episode-row-on-phone", useUnmergedTree = true).assertExists()
+    }
+
+    @Test
+    fun `on-phone badge hidden when filePath is null`() {
+        composeRule.setContent {
+            EpisodeRow(
+                ep = episode(filePath = null),
+                played = false,
+                expanded = false,
+                onToggleExpand = {},
+                onPlay = {},
+            )
+        }
+        composeRule.onNodeWithTag("episode-row-on-phone").assertDoesNotExist()
+    }
+
+    @Test
+    fun `on-backup badge appears when archivedAt is set`() {
+        composeRule.setContent {
+            EpisodeRow(
+                ep = episode(filePath = null, archivedAt = 12345L),
+                played = false,
+                expanded = false,
+                onToggleExpand = {},
+                onPlay = {},
+            )
+        }
+        composeRule.onNodeWithTag("episode-row-on-backup", useUnmergedTree = true).assertExists()
+    }
+
+    @Test
+    fun `on-backup badge hidden when archivedAt is null`() {
+        composeRule.setContent {
+            EpisodeRow(
+                ep = episode(filePath = null, archivedAt = null),
+                played = false,
+                expanded = false,
+                onToggleExpand = {},
+                onPlay = {},
+            )
+        }
+        composeRule.onNodeWithTag("episode-row-on-backup").assertDoesNotExist()
+    }
+
+    @Test
+    fun `both badges show when row is on-phone AND on-backup`() {
+        // The "I have this everywhere" state — local file present AND
+        // archived to the NAS. Both chips stack so the user can see at
+        // a glance what they have where. Same UX as the Album view.
+        composeRule.setContent {
+            EpisodeRow(
+                ep = episode(filePath = "/data/odyssey/aio/1.mp3", archivedAt = 12345L),
+                played = false,
+                expanded = false,
+                onToggleExpand = {},
+                onPlay = {},
+            )
+        }
+        composeRule.onNodeWithTag("episode-row-on-phone", useUnmergedTree = true).assertExists()
+        composeRule.onNodeWithTag("episode-row-on-backup", useUnmergedTree = true).assertExists()
+    }
+
+    @Test
+    fun `neither badge shows when row is streamable-only (CDN, no backup, no local)`() {
+        // Fresh DailyCheck ingest before download — row exists, points
+        // at oneplace CDN, but nothing's been downloaded or archived
+        // yet. Both badges hidden.
+        composeRule.setContent {
+            EpisodeRow(
+                ep = episode(filePath = null, archivedAt = null),
+                played = false,
+                expanded = false,
+                onToggleExpand = {},
+                onPlay = {},
+            )
+        }
+        composeRule.onNodeWithTag("episode-row-on-phone").assertDoesNotExist()
+        composeRule.onNodeWithTag("episode-row-on-backup").assertDoesNotExist()
+    }
+
     private fun episode(
         filePath: String? = null,
         description: String? = "Some description.",
+        archivedAt: Long? = null,
     ): LocalEpisodeEntity = LocalEpisodeEntity(
         providerId = "aio",
         externalId = "1",
@@ -630,6 +730,6 @@ class EpisodeRowTest {
         fileSize = 0L,
         durationMs = 0L,
         downloadedAt = null,
-        archivedAt = null,
+        archivedAt = archivedAt,
     )
 }

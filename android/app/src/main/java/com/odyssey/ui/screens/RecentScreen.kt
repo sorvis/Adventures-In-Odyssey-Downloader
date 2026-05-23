@@ -557,13 +557,14 @@ internal fun EpisodeRow(
                 }
             },
             trailingContent = {
-                // The chip is now ALWAYS a length cue (or in-flight
-                // progress), never a downloaded/stream toggle —
-                // downloaded vs not is communicated by the row's alpha.
-                // Played stays as its own chip because "have I finished
-                // this?" is a separate dimension from "is it on disk?".
+                // Two independent dimensions, same shape as the Album
+                // view (user ask 2026-05-23): show "✓ on phone" and/or
+                // "☁ on backup" as separate chips so the user can see
+                // at a glance what they have where. A row can be both,
+                // either, or neither.
                 //
-                // Priority:
+                // The first slot stays as it was — a length/progress/
+                // played cue with priority order:
                 //   in-flight download → "NN%"
                 //   in-flight upload   → "↑NN%"
                 //   played             → "✓ played"
@@ -573,32 +574,48 @@ internal fun EpisodeRow(
                     formatRemaining(it.positionMs, it.durationMs)
                 }
                 val totalLen = formatTotalDuration(ep.durationMs)
-                when {
-                    downloadProgress != null -> Text(
-                        text = "${downloadProgress.percent}%",
-                        style = MaterialTheme.typography.labelSmall,
-                        modifier = Modifier.testTag("episode-row-progress-pct"),
-                    )
-                    archiveProgress != null -> Text(
-                        text = "↑${archiveProgress.percent}%",
-                        style = MaterialTheme.typography.labelSmall,
-                        modifier = Modifier.testTag("episode-row-archive-pct"),
-                    )
-                    played -> Text(
-                        "✓ played",
-                        style = MaterialTheme.typography.labelSmall,
-                        modifier = Modifier.testTag("episode-row-played"),
-                    )
-                    remaining != null -> Text(
-                        text = remaining,
-                        style = MaterialTheme.typography.labelSmall,
-                        modifier = Modifier.testTag("episode-row-remaining"),
-                    )
-                    totalLen != null -> Text(
-                        text = totalLen,
-                        style = MaterialTheme.typography.labelSmall,
-                        modifier = Modifier.testTag("episode-row-duration"),
-                    )
+                Column(horizontalAlignment = Alignment.End) {
+                    when {
+                        downloadProgress != null -> Text(
+                            text = "${downloadProgress.percent}%",
+                            style = MaterialTheme.typography.labelSmall,
+                            modifier = Modifier.testTag("episode-row-progress-pct"),
+                        )
+                        archiveProgress != null -> Text(
+                            text = "↑${archiveProgress.percent}%",
+                            style = MaterialTheme.typography.labelSmall,
+                            modifier = Modifier.testTag("episode-row-archive-pct"),
+                        )
+                        played -> Text(
+                            "✓ played",
+                            style = MaterialTheme.typography.labelSmall,
+                            modifier = Modifier.testTag("episode-row-played"),
+                        )
+                        remaining != null -> Text(
+                            text = remaining,
+                            style = MaterialTheme.typography.labelSmall,
+                            modifier = Modifier.testTag("episode-row-remaining"),
+                        )
+                        totalLen != null -> Text(
+                            text = totalLen,
+                            style = MaterialTheme.typography.labelSmall,
+                            modifier = Modifier.testTag("episode-row-duration"),
+                        )
+                    }
+                    if (ep.filePath != null) {
+                        Text(
+                            "✓ on phone",
+                            style = MaterialTheme.typography.labelSmall,
+                            modifier = Modifier.testTag("episode-row-on-phone"),
+                        )
+                    }
+                    if (ep.archivedAt != null) {
+                        Text(
+                            "☁ on backup",
+                            style = MaterialTheme.typography.labelSmall,
+                            modifier = Modifier.testTag("episode-row-on-backup"),
+                        )
+                    }
                 }
             },
         )
