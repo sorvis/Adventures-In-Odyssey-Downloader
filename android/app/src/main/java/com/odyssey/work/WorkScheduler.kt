@@ -263,12 +263,16 @@ class WorkScheduler @Inject constructor(@ApplicationContext private val ctx: Con
     }
 
     /**
-     * Pin a server-side episode onto the phone for offline play. Same
-     * unique-work key shape as enqueueDownload (`restore-<id>`) so a
-     * second pin tap while one is pending is a no-op.
+     * Pin a server-side episode onto the phone for offline play.
+     * Provider-aware (v0.1.73) so YSH episodes — whose externalIds
+     * aren't numeric — can be restored too. The work-unique key
+     * encodes both providerId and externalId so AIO and YSH restores
+     * with overlapping numeric ranges don't collapse onto the same
+     * KEEP-policy slot.
      */
-    fun enqueueRestore(
-        episodeId: Long,
+    fun enqueueRestoreByKey(
+        providerId: String,
+        externalId: String,
         title: String,
         airDate: String?,
         album: String?,
@@ -279,7 +283,8 @@ class WorkScheduler @Inject constructor(@ApplicationContext private val ctx: Con
         val req = OneTimeWorkRequestBuilder<RestoreEpisodeWorker>()
             .setInputData(
                 workDataOf(
-                    RestoreEpisodeWorker.KEY_EPISODE_ID to episodeId,
+                    RestoreEpisodeWorker.KEY_PROVIDER_ID to providerId,
+                    RestoreEpisodeWorker.KEY_EXTERNAL_ID to externalId,
                     RestoreEpisodeWorker.KEY_TITLE to title,
                     RestoreEpisodeWorker.KEY_AIR_DATE to airDate,
                     RestoreEpisodeWorker.KEY_ALBUM to album,
@@ -295,8 +300,37 @@ class WorkScheduler @Inject constructor(@ApplicationContext private val ctx: Con
             )
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 5, TimeUnit.MINUTES)
             .build()
-        wm.enqueueUniqueWork("restore-$episodeId", ExistingWorkPolicy.KEEP, req)
+        wm.enqueueUniqueWork(
+            "restore-$providerId-$externalId",
+            ExistingWorkPolicy.KEEP,
+            req,
+        )
     }
+
+    /**
+     * Legacy AIO-only convenience that delegates to
+     * [enqueueRestoreByKey]. Kept so call sites that already have a
+     * `Long episodeId` (BrowseNasScreen, AlbumDetailVm) don't have to
+     * plumb providerId through right now.
+     */
+    fun enqueueRestore(
+        episodeId: Long,
+        title: String,
+        airDate: String?,
+        album: String?,
+        description: String?,
+        durationSecs: Long,
+        allowMetered: Boolean,
+    ) = enqueueRestoreByKey(
+        providerId = "aio",
+        externalId = episodeId.toString(),
+        title = title,
+        airDate = airDate,
+        album = album,
+        description = description,
+        durationSecs = durationSecs,
+        allowMetered = allowMetered,
+    )
 }
 
 /**

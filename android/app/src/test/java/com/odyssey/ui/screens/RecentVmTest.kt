@@ -209,7 +209,10 @@ class RecentVmTest {
         vm.download(onBackup)
 
         val wm = androidx.work.WorkManager.getInstance(ctx)
-        val restoreWork = "restore-1234"
+        // v0.1.73 unique-work name shape: "restore-<providerId>-<externalId>"
+        // (was "restore-<id>" pre-v0.1.73; bumped so AIO and YSH restores
+        // with overlapping numeric ranges don't collide).
+        val restoreWork = "restore-aio-1234"
         val downloadWork = "download-aio-1234"
         repeat(40) {  // ~2s budget for the coroutine to fire
             val info = wm.getWorkInfosForUniqueWork(restoreWork).get()
@@ -260,10 +263,11 @@ class RecentVmTest {
     }
 
     @Test
-    fun `download -- YSH row always uses CDN even when archivedAt is set`() = kotlinx.coroutines.runBlocking {
-        // archive-service is AIO-only by design — RestoreEpisodeWorker
-        // can't fetch YSH from the NAS. YSH rows always go to the
-        // yourstoryhour S3 CDN regardless of archivedAt state.
+    fun `download -- YSH row with archivedAt set + NAS configured restores from NAS (v0_1_73)`() = kotlinx.coroutines.runBlocking {
+        // v0.1.73 extends Restore to YSH. The archive-service accepts
+        // YSH uploads (v0.1.72) and RestoreEpisodeWorker now takes
+        // (providerId, externalId), so YSH rows that are on backup
+        // restore through the same NAS-preferred path AIO uses.
         val ctx = ApplicationProvider.getApplicationContext<Application>()
         val settings = SettingsRepo(ctx)
         settings.setNas("http://nas.example", "tok")
@@ -275,18 +279,59 @@ class RecentVmTest {
             downloadUrl = "https://s3/EE-11-02.mp3",
             filePath = null, fileSize = 0L, durationMs = 0L,
             downloadedAt = null,
-            archivedAt = 99L,  // shouldn't matter — YSH never restores
+            archivedAt = 99L,
         )
 
         vm.download(yshArchived)
 
         val wm = androidx.work.WorkManager.getInstance(ctx)
+        val restoreWork = "restore-ysh-ysh-sku-1958"
+        val cdnWork = "download-ysh-ysh-sku-1958"
         repeat(40) {
-            val info = wm.getWorkInfosForUniqueWork("download-ysh-ysh-sku-1958").get()
+            val info = wm.getWorkInfosForUniqueWork(restoreWork).get()
+            if (info.isNotEmpty()) {
+                // Restore won — confirm CDN download was NOT enqueued.
+                val cdnInfo = wm.getWorkInfosForUniqueWork(cdnWork).get()
+                org.junit.Assert.assertTrue(
+                    "YSH on backup must NOT fall through to CDN download",
+                    cdnInfo.isEmpty(),
+                )
+                return@runBlocking
+            }
+            kotlinx.coroutines.delay(50)
+        }
+        org.junit.Assert.fail("expected YSH restore enqueue ($restoreWork) within 2s but only saw CDN download")
+    }
+
+    @Test
+    fun `download -- YSH row WITHOUT archivedAt falls through to CDN`() = kotlinx.coroutines.runBlocking {
+        // Symmetric back-compat: YSH rows that aren't backed up yet
+        // (no archivedAt) still use the CDN download path. Sanity-
+        // checks that the v0.1.73 "drop AIO-only guard" change still
+        // gates on archivedAt.
+        val ctx = ApplicationProvider.getApplicationContext<Application>()
+        val settings = SettingsRepo(ctx)
+        settings.setNas("http://nas.example", "tok")
+        val vm = makeVm(FakePlayer())
+        val yshFresh = LocalEpisodeEntity(
+            providerId = "ysh", externalId = "ysh-sku-2745",
+            title = "Fresh YSH", airDate = null, description = null,
+            sourceUrl = "https://yourstoryhour.org/y",
+            downloadUrl = "https://s3/y.mp3",
+            filePath = null, fileSize = 0L, durationMs = 0L,
+            downloadedAt = null,
+            archivedAt = null,
+        )
+
+        vm.download(yshFresh)
+
+        val wm = androidx.work.WorkManager.getInstance(ctx)
+        repeat(40) {
+            val info = wm.getWorkInfosForUniqueWork("download-ysh-ysh-sku-2745").get()
             if (info.isNotEmpty()) return@runBlocking
             kotlinx.coroutines.delay(50)
         }
-        org.junit.Assert.fail("YSH row must enqueue the CDN download regardless of archivedAt")
+        org.junit.Assert.fail("YSH without archivedAt must enqueue CDN download")
     }
 
     @Test

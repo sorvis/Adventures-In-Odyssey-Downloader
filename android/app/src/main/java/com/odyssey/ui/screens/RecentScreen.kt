@@ -276,22 +276,22 @@ class RecentVm @Inject constructor(
             val s = settings.flow.first()
             val allowMetered = s.allowMeteredDownloads
             // Prefer the NAS over the public CDN when (a) the server
-            // has it (archivedAt set) AND (b) NAS is configured AND
-            // (c) it's an AIO row (RestoreEpisodeWorker is AIO-only —
-            // YSH lives on yourstoryhour.org S3, not the archive
-            // service). LAN/Tailscale beats internet bandwidth, and
-            // the NAS is the canonical archive — CDN copies can rotate
-            // off. User ask 2026-05-23: "if recents has a server
-            // version always prefer the server to download from."
-            val canRestore = ep.providerId == "aio" &&
-                ep.archivedAt != null &&
-                s.nasConfigured
+            // has it (archivedAt set) AND (b) NAS is configured.
+            // LAN/Tailscale beats internet bandwidth, and the NAS is
+            // the canonical archive — CDN copies can rotate off.
+            // User ask 2026-05-23: "if recents has a server version
+            // always prefer the server to download from."
+            // v0.1.73 drops the AIO-only guard — RestoreEpisodeWorker
+            // now accepts (providerId, externalId) so YSH restores
+            // route through the same path.
+            val canRestore = ep.archivedAt != null && s.nasConfigured
             if (canRestore) {
-                scheduler.enqueueRestore(
-                    episodeId = ep.episodeId,
+                scheduler.enqueueRestoreByKey(
+                    providerId = ep.providerId,
+                    externalId = ep.externalId,
                     title = ep.title,
                     airDate = ep.airDate,
-                    album = null,
+                    album = ep.albumName,
                     description = ep.description,
                     durationSecs = ep.durationMs / 1000,
                     allowMetered = allowMetered,
