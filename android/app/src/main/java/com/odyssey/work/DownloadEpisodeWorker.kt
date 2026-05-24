@@ -42,6 +42,31 @@ class DownloadEpisodeWorker @AssistedInject constructor(
         } ?: return Result.failure()
         if (ep.filePath != null) return Result.success()
 
+        // v0.1.75 guard: a backup-mirror ghost row carries
+        // downloadUrl = "backup://<id>" (set by RetentionWorker.
+        // convertToBackupGhost or BrowseNasScreen.mirrorServerEpisodes).
+        // Those URLs aren't HTTP — they're a marker that the audio
+        // lives on the NAS and should be fetched via the restore
+        // pipeline (RestoreEpisodeWorker + NasClient.audioUrlByKey),
+        // not the download pipeline.
+        // Without this guard the worker hands "backup://..." to OkHttp,
+        // hits `IllegalArgumentException: Expected URL scheme 'http'
+        // or 'https'`, the exception flows through runCatching and gets
+        // converted to Result.retry() — burning the full 8-attempt cap
+        // (~10h) before giving up. Fail-fast so the WorkManager entry
+        // drops immediately and the row stops appearing as "queued"
+        // on the Sync/Transfers screen. User device log 2026-05-24
+        // ysh-sku-447 "The Lady of Longpoint".
+        if (ep.downloadUrl.startsWith(BACKUP_URL_PREFIX)) {
+            DebugLogger.w(
+                TAG,
+                "doWork(${ep.providerId}:${ep.externalId}) — downloadUrl is " +
+                    "${ep.downloadUrl} (backup-ghost row); refusing to enqueue as a CDN " +
+                    "download. Pin from Library to restore via RestoreEpisodeWorker.",
+            )
+            return Result.failure()
+        }
+
         DebugLogger.i(TAG, "download start: ${ep.providerId}/${ep.externalId} \"${ep.title}\" url=${ep.downloadUrl}")
         return runCatching {
             val out = downloader.fileFor(ep.providerId, ep.externalId, ep.title)
@@ -126,5 +151,6 @@ class DownloadEpisodeWorker @AssistedInject constructor(
         // After 8 attempts (initial + 7 retries) with 5-min exponential
         // backoff, give up. A hard error after that span is durable.
         internal const val MAX_RETRY_ATTEMPTS = 8
+        private const val BACKUP_URL_PREFIX = "backup://"
     }
 }

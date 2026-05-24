@@ -52,6 +52,14 @@ class DownloadReconciler @Inject constructor(
         if (rows.isEmpty()) return 0
         var kicked = 0
         for (row in rows) {
+            // v0.1.75 skip: backup-mirror ghost rows (downloadUrl =
+            // "backup://<id>") have intentionally null filePath — they
+            // point at the NAS copy, not a CDN URL. allUndownloaded()
+            // filters on filePath IS NULL so ghosts land in here, but
+            // they are NOT stuck-mid-download. If we ever kick one,
+            // DownloadEpisodeWorker hands the backup:// URL to OkHttp
+            // and crashes (user log 2026-05-24, ysh-sku-447).
+            if (row.downloadUrl.startsWith(BACKUP_URL_PREFIX)) continue
             val file = downloader.fileFor(row.providerId, row.externalId, row.title)
             if (!file.exists() || file.length() == 0L) continue
             DebugLogger.i(

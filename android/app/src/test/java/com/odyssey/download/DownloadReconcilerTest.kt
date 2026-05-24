@@ -309,6 +309,80 @@ class DownloadReconcilerTest {
         assertEquals("YSH rows are out of scope for this AIO-targeted cleaner", 0, removed)
     }
 
+    // ---- backup:// row skip (regression for user log 2026-05-24) -------
+
+    @Test
+    fun `reconcile skips backup-ghost rows even if a stale file lingers at the canonical path`() = runBlocking {
+        // Pre-v0.1.75: allUndownloaded() returns every row with
+        // filePath IS NULL, which INCLUDES backup-ghost rows. If a
+        // stale file lingered at downloader.fileFor(...) (a previous
+        // download cycle whose delete() failed, a partial-restore
+        // crash, manual file management, etc.), the reconciler kicked
+        // a DownloadEpisodeWorker for the ghost. The worker then
+        // crashed on the backup:// URL and burned ~10h of retries —
+        // see device log 2026-05-24, ysh-sku-447 "The Lady of Longpoint".
+        //
+        // v0.1.75 guard: skip rows whose downloadUrl starts with
+        // "backup://". Those rows are intentional NAS pointers, not
+        // stuck downloads.
+        val ep = yshRow(
+            externalId = "ysh-sku-447",
+            title = "The Lady of Longpoint",
+            filePath = null,
+        ).copy(
+            downloadUrl = "backup://ysh-sku-447",
+            sourceUrl = "backup://ysh-sku-447",
+            archivedAt = 1_700_000_000_000L,
+        )
+        db.episodes().upsert(ep)
+        // Stale file at the canonical path — pre-fix this would have
+        // triggered kickDownload.
+        val onDisk = downloader.fileFor(ep.providerId, ep.externalId, ep.title)
+        onDisk.parentFile?.mkdirs()
+        onDisk.writeBytes(ByteArray(1024) { 0x42 })
+
+        val kicked = reconciler.reconcile(allowMetered = false)
+
+        assertEquals("backup-ghost rows must not be treated as stuck downloads", 0, kicked)
+        assertEquals(
+            "scheduler.kickDownload must NOT be called for a backup-ghost row",
+            0, recorder.kicks.size,
+        )
+    }
+
+    @Test
+    fun `reconcile still kicks legitimately stuck rows when a backup-ghost row sits alongside`() = runBlocking {
+        // Defense against an overly broad skip: a real stuck row
+        // (CDN downloadUrl, filePath=null, complete file on disk)
+        // must still get kicked even if a backup-ghost row is in the
+        // same allUndownloaded() snapshot.
+        val ghost = yshRow(
+            externalId = "ysh-sku-447",
+            title = "The Lady of Longpoint",
+            filePath = null,
+        ).copy(downloadUrl = "backup://ysh-sku-447", archivedAt = 1L)
+        db.episodes().upsert(ghost)
+
+        val stuck = yshRow(
+            externalId = "ysh-sku-559",
+            title = "Child of Privilege",
+            filePath = null,
+        )
+        db.episodes().upsert(stuck)
+        val stuckFile = downloader.fileFor(stuck.providerId, stuck.externalId, stuck.title)
+        stuckFile.parentFile?.mkdirs()
+        stuckFile.writeBytes(ByteArray(2048) { 0x77 })
+
+        val kicked = reconciler.reconcile(allowMetered = false)
+
+        assertEquals("the stuck row gets kicked, the ghost row doesn't", 1, kicked)
+        assertEquals(1, recorder.kicks.size)
+        assertEquals(
+            "kick targets the legitimately stuck row, not the ghost",
+            "ysh-sku-559", recorder.kicks[0].externalId,
+        )
+    }
+
     // ----- helpers --------------------------------------------------------
 
     private fun yshRow(externalId: String, title: String, filePath: String?) = LocalEpisodeEntity(

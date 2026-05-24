@@ -34,6 +34,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -308,6 +309,72 @@ class DownloadEpisodeWorkerTest {
             "exhausted retries must fail, not retry forever",
             ListenableWorker.Result.failure(),
             result,
+        )
+    }
+
+    // ---- backup:// URL guard (regression for user log 2026-05-24) ------
+    //
+    // Device log that motivated the v0.1.75 fix:
+    //   I/DownloadEpisodeWorker  download start: ysh/ysh-sku-447
+    //     "The Lady of Longpoint" url=backup://ysh-sku-447
+    //   W/DownloadEpisodeWorker  download failed (will retry, attempt=3):
+    //     java.lang.IllegalArgumentException:
+    //       Expected URL scheme 'http' or 'https' but was 'backup'
+    //
+    // A backup-mirror ghost row (downloadUrl="backup://<id>",
+    // filePath=null — set by RetentionWorker.convertToBackupGhost or
+    // BrowseNasScreen.mirrorServerEpisodes) reached the download
+    // pipeline. Pre-v0.1.75 the worker handed the URL to OkHttp,
+    // ate the scheme-parse exception in runCatching, and returned
+    // Result.retry() — burning ~10h of exponential backoff before
+    // MAX_RETRY_ATTEMPTS gave up. Row stayed "queued" on Sync/Transfers
+    // the whole time.
+    //
+    // v0.1.75 guard: detect backup:// URLs after the row lookup and
+    // return Result.failure() immediately. The WorkManager entry
+    // drops, the row stays a ghost (correct — pin from Library uses
+    // the RestoreEpisodeWorker path instead).
+
+    @Test
+    fun `backup-- URL fails-fast with Result_failure -- no 10h retry burn`() = runBlocking {
+        val externalId = "ysh-sku-447"
+        episodes.upsert(stubYshRow(externalId, "backup://$externalId"))
+
+        val worker = buildWorker("ysh", externalId, runAttempt = 0)
+        val result = worker.doWork()
+
+        assertEquals(
+            "backup:// URLs are never HTTP — must fail-fast, not retry",
+            ListenableWorker.Result.failure(),
+            result,
+        )
+        // Row stays as a ghost intentionally — the user can re-pin
+        // from Library to restore via RestoreEpisodeWorker. We don't
+        // self-heal here because the row IS in the correct state
+        // already (it's a NAS pointer, not a stuck download).
+        val row = episodes.byKey("ysh", externalId)!!
+        assertNull(row.filePath)
+        assertTrue(row.downloadUrl.startsWith("backup://"))
+    }
+
+    @Test
+    fun `backup-- URL fail-fast holds at every runAttemptCount -- guard runs before retry decision`() = runBlocking {
+        // The guard sits before the runCatching block, so it bypasses
+        // the runAttemptCount cap entirely. Even at attempt 0 OR at
+        // MAX_RETRY_ATTEMPTS, the result is Result.failure(). Without
+        // this property the worker could end up retrying for a single
+        // attempt before fail-fast — pointless waste.
+        val externalId = "ysh-sku-447"
+        episodes.upsert(stubYshRow(externalId, "backup://$externalId"))
+
+        val workerAtMax = buildWorker(
+            "ysh", externalId,
+            runAttempt = DownloadEpisodeWorker.MAX_RETRY_ATTEMPTS,
+        )
+        assertEquals(
+            "runAttemptCount must not influence the backup:// guard",
+            ListenableWorker.Result.failure(),
+            workerAtMax.doWork(),
         )
     }
 
