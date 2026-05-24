@@ -3,6 +3,17 @@ services:
     build: .
     container_name: odyssey-archive
     restart: unless-stopped
+    # Tell Docker NOT to load its `docker-default` AppArmor profile for
+    # this container. Unprivileged LXCs on the Proxmox host can't manage
+    # AppArmor profiles, so Docker's boot-time container-restore step
+    # fails on apparmor_parser → containers don't auto-restart after a
+    # host reboot, even with `restart: unless-stopped`. Setting
+    # `lxc.apparmor.profile: unconfined` on the LXC config disables
+    # confinement OF the container but does NOT let Docker load
+    # profiles from inside the LXC; this per-service flag is the actual
+    # fix. See feedback_apparmor_blocks_docker_in_ct121.md.
+    security_opt:
+      - apparmor=unconfined
     environment:
       ODYSSEY_AUTH_TOKEN: ${ODYSSEY_AUTH_TOKEN:?set ODYSSEY_AUTH_TOKEN in .env or run scripts/up.sh}
       ODYSSEY_DATA_DIR: /data
