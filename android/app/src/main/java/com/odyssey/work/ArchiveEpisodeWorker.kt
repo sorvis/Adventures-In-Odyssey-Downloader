@@ -86,8 +86,24 @@ class ArchiveEpisodeWorker @AssistedInject constructor(
 
         val file = File(path)
         if (!file.exists()) {
-            DebugLogger.w("ArchiveWorker", "doWork($resolvedProvider:$resolvedExternalId) — file gone from disk: $path")
-            return Result.failure()
+            // v0.1.74 self-heal: the row says it's downloaded but the
+            // file is gone (user cleanup, OS purge, partial-restore
+            // crash). Without this clear-step the row sits forever on
+            // the Sync screen as "queued" because
+            // observeUnarchivedDownloaded() still returns it
+            // (filePath != null && archivedAt == null) and WorkManager
+            // has long since dropped the failed entry. Reset the
+            // download state so the row falls off the queued list;
+            // user can re-download to pick it back up if they want it.
+            DebugLogger.w(
+                "ArchiveWorker",
+                "doWork($resolvedProvider:$resolvedExternalId) — file gone from disk: $path; " +
+                    "clearing download state so the row stops looping as 'queued'",
+            )
+            episodes.markUndownloadedByKey(resolvedProvider, resolvedExternalId)
+            // Success rather than failure: nothing more for this worker
+            // run to do, and there's no retry that could help.
+            return Result.success()
         }
         // AIO uses the bundled catalog to resolve album phone-side.
         // YSH carries album metadata on the row itself (from the

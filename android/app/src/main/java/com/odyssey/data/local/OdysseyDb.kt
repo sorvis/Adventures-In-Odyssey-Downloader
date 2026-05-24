@@ -162,6 +162,19 @@ interface EpisodeDao {
     @Query("UPDATE local_episodes SET filePath = NULL, fileSize = 0, downloadedAt = NULL WHERE externalId = :id AND providerId = 'aio'")
     suspend fun markUndownloaded(id: Long)
 
+    /**
+     * Provider-aware version of markUndownloaded (v0.1.74). Used by
+     * ArchiveEpisodeWorker's self-heal path: when the on-disk file
+     * is gone, the worker clears filePath/fileSize/downloadedAt on
+     * the row so it falls off `observeUnarchivedDownloaded` and stops
+     * appearing as a forever-"queued" entry on the Sync screen.
+     * Without this, the row sits with `filePath != null && file gone
+     * && archivedAt == null` and the UI shows a stuck-queued upload
+     * the worker has long since given up on.
+     */
+    @Query("UPDATE local_episodes SET filePath = NULL, fileSize = 0, downloadedAt = NULL WHERE providerId = :providerId AND externalId = :externalId")
+    suspend fun markUndownloadedByKey(providerId: String, externalId: String)
+
     @Query("UPDATE local_episodes SET archivedAt = :ts WHERE externalId = :id AND providerId = 'aio'")
     suspend fun markArchived(id: Long, ts: Long)
 

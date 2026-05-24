@@ -145,17 +145,68 @@ class ArchiveEpisodeWorkerTest {
     }
 
     @Test
-    fun `doWork -- file gone from disk returns failure`() = runBlocking {
-        // The on-disk file was deleted (user cleanup, retention pruned
-        // the file but not the row, etc.) between download and archive.
-        // Worker fails — it has no bytes to upload.
+    fun `doWork -- file gone from disk self-heals filePath and returns success (v0_1_74)`() = runBlocking {
+        // User report 2026-05-24: "Sync screen shows 3 YSH uploads stuck
+        // queued forever." Root cause: ArchiveEpisodeWorker used to
+        // return failure() when the on-disk file was missing.
+        // WorkManager dropped the entry, but the DB row still had
+        // filePath != null AND archivedAt == null, so
+        // observeUnarchivedDownloaded kept returning it → the Sync
+        // screen kept showing it as "queued" with nothing actually
+        // queued. v0.1.74 self-heals: clear filePath/fileSize/
+        // downloadedAt and return success. The row falls off the
+        // queued list; user can re-download if they want it again.
         settings.setNas(server.url("/").toString().trimEnd('/'), "tok")
         episodes.upsert(makeRow(
             externalId = "103",
             filePath = "/data/odyssey/this-path-does-not-exist.mp3",
         ))
-        val worker = buildWorker(episodeId = 103L)
-        assertTrue(worker.doWork() is ListenableWorker.Result.Failure)
+        val result = buildWorker(episodeId = 103L).doWork()
+        assertTrue(
+            "self-heal: success, not failure (nothing more to retry)",
+            result is ListenableWorker.Result.Success,
+        )
+        val row = episodes.byKey("aio", "103")!!
+        assertNull("filePath cleared so the row no longer appears in unarchivedDownloaded", row.filePath)
+        assertEquals("fileSize zeroed", 0L, row.fileSize)
+        assertNull("downloadedAt cleared", row.downloadedAt)
+        assertNull("archivedAt stays null — no upload happened", row.archivedAt)
+        // Confirm the row no longer surfaces as "queued for upload".
+        val pending = episodes.unarchivedDownloaded()
+        assertTrue("row must NOT appear in unarchivedDownloaded after self-heal",
+            pending.none { it.externalId == "103" })
+    }
+
+    @Test
+    fun `doWork -- self-heal works for YSH rows via v2 key path`() = runBlocking {
+        // Same self-heal contract for YSH (the actual case the user hit).
+        // YSH externalIds are non-numeric so this also pins that
+        // markUndownloadedByKey routes correctly.
+        settings.setNas(server.url("/").toString().trimEnd('/'), "tok")
+        episodes.upsert(LocalEpisodeEntity(
+            providerId = "ysh",
+            externalId = "ysh-sku-242",
+            title = "Miracles Greater than Magic",
+            airDate = null, description = null,
+            sourceUrl = "https://yourstoryhour.org/x",
+            downloadUrl = "https://s3/x.mp3",
+            filePath = "/data/odyssey/ysh/this-is-gone.mp3",
+            fileSize = 0L, durationMs = 0L,
+            downloadedAt = 1L, archivedAt = null,
+        ))
+        val worker = TestListenableWorkerBuilder.from(ctx, ArchiveEpisodeWorker::class.java)
+            .setInputData(
+                workDataOf(
+                    ArchiveEpisodeWorker.KEY_PROVIDER_ID to "ysh",
+                    ArchiveEpisodeWorker.KEY_EXTERNAL_ID to "ysh-sku-242",
+                ),
+            )
+            .setWorkerFactory(testWorkerFactory())
+            .build() as ArchiveEpisodeWorker
+        val result = worker.doWork()
+        assertTrue(result is ListenableWorker.Result.Success)
+        val row = episodes.byKey("ysh", "ysh-sku-242")!!
+        assertNull("YSH filePath cleared on self-heal", row.filePath)
     }
 
     // ---- upload outcomes -------------------------------------------------

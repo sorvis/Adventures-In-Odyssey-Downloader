@@ -174,6 +174,7 @@ class DownloadedVmTest {
         override suspend fun upsert(e: LocalEpisodeEntity) {}
         override suspend fun markDownloaded(id: Long, path: String, size: Long, ts: Long) {}
         override suspend fun markUndownloaded(id: Long) {}
+        override suspend fun markUndownloadedByKey(providerId: String, externalId: String) {}
         override suspend fun markArchived(id: Long, ts: Long) {}
         override suspend fun markUnarchived(id: Long) {}
         override suspend fun markArchivedByKey(providerId: String, externalId: String, ts: Long) {}
