@@ -79,6 +79,7 @@ class AlbumDetailVm @Inject constructor(
     private val scheduler: WorkScheduler,
     private val settings: SettingsRepo,
     private val restores: RestoreProgressTracker,
+    private val albumQueue: com.odyssey.player.AlbumQueueController,
 ) : ViewModel() {
 
     /**
@@ -162,6 +163,11 @@ class AlbumDetailVm @Inject constructor(
             DebugLogger.w("AlbumDetailVm", "play() — no local row for ${row.catalogEp.name}")
             return
         }
+        // v0.1.76 prime auto-advance queue: include every row with a
+        // playable local entity (DOWNLOADED or STREAMABLE), preserving
+        // catalog order so "next" matches what the user sees on screen.
+        // UNAVAILABLE rows are skipped — they'd just dead-end the queue.
+        primeQueue(local.episodeId)
         // Album detail already has a high-quality catalog thumbnail —
         // pass it through to the player so MiniPlayer + NowPlayingScreen
         // get the right per-episode art on lockscreen.
@@ -195,6 +201,81 @@ class AlbumDetailVm @Inject constructor(
                 DebugLogger.e("AlbumDetailVm", "play threw", t)
             }
         }
+    }
+
+    /**
+     * Snapshot of how many rows in the album are pin-from-backup
+     * candidates: archivedAt != null AND filePath == null. Drives the
+     * header "Download N from backup" button — disabled when zero.
+     */
+    val pinAllCandidateCount: kotlinx.coroutines.flow.StateFlow<Int> = album
+        .map { a ->
+            a?.episodes?.count { row ->
+                val local = row.localEpisode as? LocalEpisodeEntity ?: return@count false
+                local.archivedAt != null && local.filePath == null
+            } ?: 0
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
+
+    /**
+     * Bulk pin offline: iterate every row in this album whose local
+     * entity is on backup but not on the phone (archivedAt != null
+     * && filePath == null) and enqueue a RestoreEpisodeWorker for
+     * each. Per-row progress bars piggy-back on the existing
+     * pendingRestores + RestoreProgressTracker plumbing, so the user
+     * sees N rows light up at once. Silent kickoff — no confirmation
+     * dialog; user can cancel individual rows from the Sync screen.
+     */
+    fun pinAllFromBackup() = viewModelScope.launch {
+        val a = album.value ?: return@launch
+        val candidates: List<LocalEpisodeEntity> = a.episodes.mapNotNull { row ->
+            val local = row.localEpisode as? LocalEpisodeEntity ?: return@mapNotNull null
+            local.takeIf { it.archivedAt != null && it.filePath == null }
+        }
+        if (candidates.isEmpty()) {
+            DebugLogger.i("AlbumDetailVm", "pinAllFromBackup — nothing to do")
+            return@launch
+        }
+        val allowMetered = settings.flow.first().allowMeteredDownloads
+        DebugLogger.i(
+            "AlbumDetailVm",
+            "pinAllFromBackup — enqueueing ${candidates.size} restore(s) allowMetered=$allowMetered",
+        )
+        pendingRestores.value = pendingRestores.value + candidates.map { it.episodeId }.toSet()
+        for (local in candidates) {
+            scheduler.enqueueRestore(
+                episodeId = local.episodeId,
+                title = local.title,
+                airDate = local.airDate,
+                album = null, // server-side enrichment handles album
+                description = local.description,
+                durationSecs = local.durationMs / 1000,
+                allowMetered = allowMetered,
+            )
+        }
+    }
+
+    /**
+     * Build + install the auto-advance queue for this album. Includes
+     * every row whose local entity exists (DOWNLOADED or STREAMABLE);
+     * UNAVAILABLE rows are filtered because the worker has no URL to
+     * play. Order is catalog-order (matches `a.episodes`).
+     */
+    private fun primeQueue(startEpisodeId: Long) {
+        val a = album.value ?: return
+        val entries = a.episodes.mapNotNull { row ->
+            val local = row.localEpisode as? LocalEpisodeEntity ?: return@mapNotNull null
+            com.odyssey.player.AlbumQueueEntry(
+                episodeId = local.episodeId,
+                providerId = local.providerId,
+                externalId = local.externalId,
+            )
+        }
+        albumQueue.setQueue(entries)
+        DebugLogger.d(
+            "AlbumDetailVm",
+            "primed queue size=${entries.size} start=$startEpisodeId album=\"${a.album.name}\"",
+        )
     }
 
     /**
@@ -234,6 +315,7 @@ fun AlbumDetailScreen(
     val album by vm.album.collectAsState()
     val completedIds by vm.completedIds.collectAsState()
     val restoreStatus by vm.restoreStatus.collectAsState()
+    val pinAllCount by vm.pinAllCandidateCount.collectAsState()
     var downloadedOnly by remember { mutableStateOf(false) }
     var hideListened by remember { mutableStateOf(false) }
 
@@ -268,6 +350,24 @@ fun AlbumDetailScreen(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             item { AlbumDetailHeader(a) }
+            if (pinAllCount > 0) {
+                // v0.1.76: bulk-restore from backup. Visible only when
+                // the album has at least one row that's on backup but
+                // not on the phone — keeps the button out of the way
+                // when there's nothing to do. Silent kickoff; per-row
+                // progress bars (driven by restoreStatus) light up
+                // immediately for every queued row.
+                item {
+                    Button(
+                        onClick = { vm.pinAllFromBackup() },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("album-pin-all-from-backup"),
+                    ) {
+                        Text("Download all from backup ($pinAllCount)")
+                    }
+                }
+            }
             item {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Show only what I have", modifier = Modifier.weight(1f))

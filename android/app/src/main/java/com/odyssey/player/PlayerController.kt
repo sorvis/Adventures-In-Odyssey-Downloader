@@ -14,6 +14,7 @@ import com.odyssey.data.local.PlaybackDao
 import com.odyssey.data.local.PlaybackPositionEntity
 import com.odyssey.debug.DebugLogger
 import com.odyssey.show.ProviderRegistry
+import dagger.Lazy
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
@@ -38,6 +39,11 @@ class PlayerController @Inject constructor(
     private val playback: PlaybackDao,
     private val recovery: PlaybackRecovery,
     private val providers: ProviderRegistry,
+    // Lazy because AutoAdvanceController depends on EpisodePlayer (= this
+    // class via PlayerModule binding). Direct injection would deadlock
+    // Hilt's eager-construction cycle; Lazy.get() is called only when
+    // STATE_ENDED fires, by which point both singletons exist.
+    private val autoAdvance: Lazy<AutoAdvanceController>,
 ) : EpisodePlayer {
     private var controller: MediaController? = null
     private var saveJob: Job? = null
@@ -245,6 +251,25 @@ class PlayerController @Inject constructor(
                     else -> "UNKNOWN($playbackState)"
                 }
                 DebugLogger.i("ExoPlayer", "playbackState → $name")
+                // v0.1.76 auto-advance within album: when the current
+                // track finishes naturally, ask AlbumQueueController for
+                // the next entry and play it. STATE_ENDED also fires
+                // when the user manually skips past the end (rare in
+                // this app) — that's still a fine trigger for autoplay.
+                // The queue silently no-ops when the just-ended track
+                // wasn't in any queue (Recent-tab plays, Now-Playing
+                // standalone, etc.), so no opt-out needed.
+                if (playbackState == Player.STATE_ENDED) {
+                    val endedId = c.currentMediaItem?.mediaId?.toLongOrNull()
+                    if (endedId != null) {
+                        CoroutineScope(Dispatchers.IO).launch {
+                            runCatching { autoAdvance.get().onTrackEnded(endedId) }
+                                .onFailure {
+                                    DebugLogger.e("PlayerController", "auto-advance threw", it)
+                                }
+                        }
+                    }
+                }
             }
 
             override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
