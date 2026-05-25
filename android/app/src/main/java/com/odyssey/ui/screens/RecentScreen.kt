@@ -3,10 +3,13 @@ package com.odyssey.ui.screens
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
@@ -498,6 +501,7 @@ fun RecentScreen(
 }
 
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 internal fun EpisodeRow(
     ep: LocalEpisodeEntity,
     played: Boolean,
@@ -671,9 +675,28 @@ internal fun EpisodeRow(
             // trash icon would otherwise destroy the local mp3.
             var confirmDelete by remember { mutableStateOf(false) }
 
+            // v0.1.77: when a row near the bottom of the list is
+            // expanded, the new panel renders below the viewport and
+            // the user has to manually scroll to see the description /
+            // Play button. BringIntoViewRequester walks the parent
+            // chain (LazyColumn is the nearest scrollable container)
+            // and tells it to bring the bounds of this Column fully
+            // into view. Fires once per expand transition.
+            val bringIntoView = remember { BringIntoViewRequester() }
+            LaunchedEffect(expanded) {
+                if (expanded) {
+                    runCatching { bringIntoView.bringIntoView() }
+                        .onFailure {
+                            // Layout may not have measured yet; not fatal.
+                            DebugLogger.d("EpisodeRow", "bringIntoView declined: ${it.message}")
+                        }
+                }
+            }
+
             Column(
                 modifier = Modifier
                     .testTag("episode-row-expanded")
+                    .bringIntoViewRequester(bringIntoView)
                     .padding(horizontal = 16.dp, vertical = 8.dp),
             ) {
                 // Trash icon at the top-left of the expanded panel —

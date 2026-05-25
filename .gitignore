@@ -13,3 +13,4 @@ android/.kotlin/
 android/build/
 android/app/build/
 android/local.properties
+tmp_icons/

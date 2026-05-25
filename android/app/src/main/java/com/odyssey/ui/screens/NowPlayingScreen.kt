@@ -3,7 +3,9 @@ package com.odyssey.ui.screens
 import android.net.Uri
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -215,17 +217,58 @@ fun NowPlayingScreen(
             )
 
             // Description capped to 2 lines so transport always fits
-            // without scroll. The full text lives on the row's expand
-            // panel for users who want to read all of it.
+            // without scroll. v0.1.77: when the text actually overflows
+            // (didOverflowHeight from onTextLayout), surface a
+            // "Show more" link that pops a scrollable dialog with the
+            // full text — users were missing meaningful description
+            // text after the ellipsis.
             if (vm.description.isNotBlank()) {
+                var descOverflowed by remember(vm.description) { mutableStateOf(false) }
+                var showFullDescription by remember { mutableStateOf(false) }
                 Text(
                     text = vm.description,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.testTag("now-playing-description"),
+                    onTextLayout = { layout -> descOverflowed = layout.hasVisualOverflow },
+                    modifier = Modifier
+                        .let { if (descOverflowed) it.clickable { showFullDescription = true } else it }
+                        .testTag("now-playing-description"),
                 )
+                if (descOverflowed) {
+                    TextButton(
+                        onClick = { showFullDescription = true },
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
+                        modifier = Modifier.testTag("now-playing-description-more"),
+                    ) {
+                        Text("Show more", style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+                if (showFullDescription) {
+                    AlertDialog(
+                        onDismissRequest = { showFullDescription = false },
+                        title = { Text(vm.title.ifBlank { "Episode" }) },
+                        text = {
+                            // Dialog body scrolls if the description is
+                            // genuinely long — covers oneplace's short
+                            // blurbs AND the richer AIO-app descriptions
+                            // we'll land in v0.1.78.
+                            Column(
+                                modifier = Modifier.verticalScroll(rememberScrollState()),
+                            ) {
+                                Text(
+                                    text = vm.description,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    modifier = Modifier.testTag("now-playing-description-full"),
+                                )
+                            }
+                        },
+                        confirmButton = {
+                            TextButton(onClick = { showFullDescription = false }) { Text("Close") }
+                        },
+                    )
+                }
             }
 
             // Seek bar + position/remaining row.
