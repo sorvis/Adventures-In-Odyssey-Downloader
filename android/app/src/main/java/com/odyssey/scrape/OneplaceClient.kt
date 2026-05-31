@@ -38,24 +38,79 @@ class OneplaceClient @Inject constructor(
 
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
-    // bare assignment: episodeId=1278294
-    private val bootstrapRe = Regex("""episodeId[=:"\s]+(\d{6,})""")
+    /**
+     * Listen-page bootstrap regexes, tried in order. Each one extracts
+     * a `(\d{6,})` group. The FIRST match in the page wins per pattern;
+     * the FIRST pattern that finds anything wins overall.
+     *
+     * The original primary `episodeId[=:"\s]+(\d{6,})` still leads
+     * because oneplace's current HTML emits both `salemMeta.episodeId=N`
+     * and `window.initData.episodeId=N` in inline JS — both match. The
+     * fallback patterns guard against the next shape oneplace ships
+     * (data-attr, JSON blob, named JS object) without needing a code
+     * release every time they rearrange the page. If ALL miss,
+     * `latestEpisodeId` returns null and AioOneplaceProvider's empty-
+     * result diagnostic surfaces the miss in the in-app debug log.
+     */
+    private val episodeIdPatterns: List<Regex> = listOf(
+        Regex("""episodeId[=:"\s]+(\d{6,})"""),         // bare JS assignment: salemMeta.episodeId=1278298
+        Regex("""data-eid\s*=\s*["'](\d{6,})["']"""),    // HTML data-eid="1278298"
+        Regex(""""episodeId"\s*:\s*(\d{6,})"""),         // JSON: "episodeId": 1278298
+        Regex(""""eid"\s*:\s*(\d{6,})"""),               // JSON: "eid": 1278298
+    )
 
-    /** Returns the most recent episode ID currently displayed for the show at `listenUrl`. */
-    suspend fun latestEpisodeId(listenUrl: String): Long? = runCatching {
+    /**
+     * Listen-page showId regexes, tried in order. The bootstrap page
+     * carries this in at least two spots today (verified 2026-05-31):
+     *   `window.salemMeta.showId=`777``
+     *   `window.salemMeta.zetaUniqueId=`777``
+     * Auto-discovering it means providers no longer hard-depend on the
+     * `AIO_SHOW_ID = 777L` constant — if oneplace renumbers the show,
+     * the new id flows through bootstrap automatically.
+     */
+    private val showIdPatterns: List<Regex> = listOf(
+        Regex("""salemMeta\.showId\s*=\s*[`'"]?(\d+)"""),
+        Regex("""zetaUniqueId\s*=\s*[`'"]?(\d+)"""),
+        Regex("""initData\.showId\s*=\s*[`'"]?(\d+)"""),
+        Regex(""""showId"\s*:\s*(\d+)"""),
+    )
+
+    /**
+     * Single-fetch bootstrap: returns BOTH the latest episodeId and the
+     * showId (if discoverable) from one HTML GET. Callers that need
+     * both should prefer this over calling [latestEpisodeId] twice.
+     *
+     * Returns null only when the bootstrap regex array entirely missed
+     * — the network call succeeded but oneplace's HTML doesn't expose
+     * any pattern we recognize. That's the signal to ship a new regex.
+     */
+    suspend fun bootstrap(listenUrl: String): OneplaceBootstrap? = runCatching {
         val body = get(listenUrl)
-        bootstrapRe.find(body)?.groupValues?.get(1)?.toLong()
+        val eid = firstMatch(body, episodeIdPatterns) ?: return@runCatching null
+        val showId = firstMatch(body, showIdPatterns)
+        OneplaceBootstrap(latestEpisodeId = eid, showId = showId)
     }.onFailure { t ->
-        // Silent null on this path used to hide a class of "DailyCheckWorker
-        // returns 0 episodes for no apparent reason" mysteries: HTML schema
-        // change, network blip, regex miss. We can't use DebugLogger here
-        // because this file is in the pure-JVM compile set (scripts/
-        // run-jvm-tests.sh) and DebugLogger pulls in android.util.Log.
         // stderr is routed to logcat on Android (tag "System.err") and
-        // shows up in `adb logcat`; not as nice as the in-app debug screen
-        // but a strict improvement over the silent null.
-        System.err.println("[OneplaceClient] latestEpisodeId($listenUrl) failed: ${t.message}")
+        // surfaces in adb. Can't use DebugLogger from this file — it's
+        // in the pure-JVM compile set; DebugLogger imports android.util.Log.
+        System.err.println("[OneplaceClient] bootstrap($listenUrl) failed: ${t.message}")
     }.getOrNull()
+
+    /**
+     * Returns the most recent episode ID currently displayed for the
+     * show at `listenUrl`. Thin convenience over [bootstrap] so existing
+     * call sites that only need the eid don't have to unpack the pair.
+     */
+    suspend fun latestEpisodeId(listenUrl: String): Long? =
+        bootstrap(listenUrl)?.latestEpisodeId
+
+    /** Apply each regex in order; return the first numeric capture that parses. */
+    private fun firstMatch(body: String, patterns: List<Regex>): Long? {
+        for (re in patterns) {
+            re.find(body)?.groupValues?.getOrNull(1)?.toLongOrNull()?.let { return it }
+        }
+        return null
+    }
 
     /** Episodes immediately preceding `cursor`, newest-first; up to `pageSize`. */
     suspend fun episodesBefore(cursor: Long, pageSize: Int = 20): List<OneplaceEpisode> {
@@ -99,8 +154,16 @@ class OneplaceClient @Inject constructor(
         maxFetch: Int = 100,
         showId: Long? = null,
     ): List<OneplaceEpisode> {
-        val latest = latestEpisodeId(listenUrl) ?: return emptyList()
+        val boot = bootstrap(listenUrl) ?: return emptyList()
+        val latest = boot.latestEpisodeId
         if (latest == lastSeen) return emptyList()
+        // Prefer the showId discovered on the listen page itself (via
+        // `salemMeta.showId=`777`` and friends) over the caller's hint
+        // — if oneplace ever renumbers the show, the new id flows
+        // through bootstrap and the caller's stale constant is bypassed.
+        // Fall back to the caller's hint when bootstrap couldn't extract
+        // one (e.g. on a future HTML shape we don't yet match).
+        val effectiveShowId = boot.showId ?: showId
 
         // Phase 1: Probe forward from `latest` to find a cursor that
         // yields target-show episodes. Without showId filter, ANY non-
@@ -134,7 +197,7 @@ class OneplaceClient @Inject constructor(
         var firstHit: List<OneplaceEpisode>? = null
         while (probesRemaining-- > 0) {
             val page = episodesBefore(cursor, pageSize = 20)
-            val targetHits = if (showId == null) page else page.filter { it.showId == showId }
+            val targetHits = if (effectiveShowId == null) page else page.filter { it.showId == effectiveShowId }
             if (targetHits.isNotEmpty()) {
                 firstHit = page
                 break
@@ -150,7 +213,7 @@ class OneplaceClient @Inject constructor(
         val out = mutableListOf<OneplaceEpisode>()
         var page: List<OneplaceEpisode> = firstHit
         while (true) {
-            val targetItems = if (showId == null) page else page.filter { it.showId == showId }
+            val targetItems = if (effectiveShowId == null) page else page.filter { it.showId == effectiveShowId }
             for (ep in targetItems) {
                 if (ep.episodeId == lastSeen) return out
                 // Dedup defensively — pages can re-yield the same id
@@ -191,6 +254,17 @@ class OneplaceClient @Inject constructor(
         }
     }
 }
+
+/**
+ * What [OneplaceClient.bootstrap] extracts from a listen-page HTML in
+ * one HTTP GET. [showId] is nullable because the bootstrap regex array
+ * may fail to find a show-identity assignment on a future HTML shape;
+ * the caller falls back to its own hint constant in that case.
+ */
+data class OneplaceBootstrap(
+    val latestEpisodeId: Long,
+    val showId: Long?,
+)
 
 @Serializable
 data class OneplaceEpisode(

@@ -59,6 +59,96 @@ class OneplaceClientTest {
         assertNull(client.latestEpisodeId(listenUrl))
     }
 
+    // ----- bootstrap — single GET extracts both eid AND showId -----
+
+    @Test
+    fun `bootstrap extracts both episodeId and showId from the live listen page`() = runTest {
+        server.enqueue(html(fixture("/oneplace/listen.html")))
+        val boot = client.bootstrap(listenUrl)
+        assertNotNull(boot)
+        assertEquals(1278294L, boot!!.latestEpisodeId)
+        // window.salemMeta.showId=`777` lives in the fixture as captured
+        // from live traffic; auto-discovering it removes the AIO=777
+        // hardcoded constant as a single point of failure.
+        assertEquals(777L, boot.showId)
+    }
+
+    @Test
+    fun `bootstrap discovers showId even when only the zetaUniqueId pattern appears`() = runTest {
+        // Defensive: if oneplace ever drops the explicit salemMeta.showId
+        // assignment, the same id sits in salemMeta.zetaUniqueId. The
+        // fallback regex picks it up.
+        server.enqueue(html("""
+            <html><script>
+              window.salemMeta=window.salemMeta||{}
+              salemMeta.episodeId=1278400
+              window.salemMeta.zetaUniqueId=`663`
+            </script></html>
+        """.trimIndent()))
+        val boot = client.bootstrap(listenUrl)
+        assertEquals(1278400L, boot?.latestEpisodeId)
+        assertEquals(663L, boot?.showId)
+    }
+
+    @Test
+    fun `bootstrap returns null showId when no recognized show identity pattern matches`() = runTest {
+        // Bootstrap should still surface the eid even when showId is
+        // unknown — the caller's hint constant takes over from there.
+        server.enqueue(html("""<html><script>episodeId=1278500</script></html>"""))
+        val boot = client.bootstrap(listenUrl)
+        assertEquals(1278500L, boot?.latestEpisodeId)
+        assertNull("no showId pattern in HTML → null, caller uses its hint", boot?.showId)
+    }
+
+    @Test
+    fun `bootstrap matches alternate episodeId shapes (data-eid, json blobs)`() = runTest {
+        // Future-proofing: if oneplace stops emitting `episodeId=NNN` as
+        // a bare JS assignment, these other shapes are the next likely
+        // places it would surface. Without the fallback array, an HTML
+        // schema swap would silently empty the Recent tab.
+        server.enqueue(html("""<div data-eid="1278601" class="ep"></div>"""))
+        assertEquals(1278601L, client.bootstrap(listenUrl)?.latestEpisodeId)
+
+        server.enqueue(html("""<script>var data = {"eid": 1278602}</script>"""))
+        assertEquals(1278602L, client.bootstrap(listenUrl)?.latestEpisodeId)
+
+        server.enqueue(html("""<script>var data = {"episodeId": 1278603}</script>"""))
+        assertEquals(1278603L, client.bootstrap(listenUrl)?.latestEpisodeId)
+    }
+
+    @Test
+    fun `newSince uses bootstrap-discovered showId, ignoring the caller's stale hint`() = runTest {
+        // Scenario: oneplace renumbers AIO from showId 777 to 888 (or any
+        // other value). The app code still passes the constant 777L as a
+        // hint — but the page itself now says `salemMeta.showId=`888``.
+        // Bootstrap's discovered value MUST win, otherwise the probe
+        // would filter against the stale id and return empty even
+        // though the page is healthy.
+        server.enqueue(html("""<html><script>
+            salemMeta.episodeId=1300000
+            window.salemMeta.showId=`888`
+        </script></html>"""))
+        server.enqueue(json("""[
+            {"episodeId":1300010,"title":"new AIO","showId":888,
+             "downloadFileUrl":"https://x/a.mp3","url":"https://x/a"},
+            {"episodeId":1300005,"title":"older AIO","showId":888,
+             "downloadFileUrl":"https://x/b.mp3","url":"https://x/b"},
+            {"episodeId":1300003,"title":"jay sekulow leak","showId":663,
+             "downloadFileUrl":"https://x/c.mp3","url":"https://x/c"}
+        ]"""))
+        server.enqueue(json("[]"))
+
+        // Caller passes the OLD hint (777). Bootstrap discovers 888 and
+        // overrides. Result: only the showId=888 items survive the filter.
+        val results = client.newSince(listenUrl, lastSeen = 0L, maxFetch = 50, showId = 777L)
+
+        assertEquals("filtered to discovered showId=888, not the caller's hint=777", 2, results.size)
+        assertEquals(
+            listOf(1300010L, 1300005L),
+            results.map { it.episodeId },
+        )
+    }
+
     // ----- episodesBefore / JSON deserialization -----
 
     @Test
