@@ -426,6 +426,7 @@ class DownloadEpisodeWorkerTest {
                 scheduler = scheduler,
                 settings = settings,
                 progressTracker = tracker,
+                concurrencyGate = DownloadConcurrencyGate(),
             )
         }
     }

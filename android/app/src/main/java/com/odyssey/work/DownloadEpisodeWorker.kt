@@ -13,6 +13,7 @@ import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 
 @HiltWorker
@@ -24,6 +25,7 @@ class DownloadEpisodeWorker @AssistedInject constructor(
     private val scheduler: WorkScheduler,
     private val settings: SettingsRepo,
     private val progressTracker: DownloadProgressTracker,
+    private val concurrencyGate: DownloadConcurrencyGate,
 ) : CoroutineWorker(ctx, params) {
 
     override suspend fun doWork(): Result {
@@ -76,9 +78,19 @@ class DownloadEpisodeWorker @AssistedInject constructor(
             // user-visible row id is `(providerId, externalId)` either
             // way, this is purely a tracker map key.
             val progressKey = ep.externalId.toLongOrNull() ?: ep.externalId.hashCode().toLong()
-            val size = withContext(Dispatchers.IO) {
-                downloader.download(ep.downloadUrl, out) { bytesRead, totalBytes ->
-                    progressTracker.update(progressKey, bytesRead, totalBytes)
+            // Gate byte-moving on a process-wide semaphore. WorkManager
+            // may have enqueued dozens of workers (the launch-time
+            // DownloadReconciler kicks every stuck row at once); we want
+            // at most DownloadConcurrencyGate.MAX_CONCURRENT actually
+            // talking to CDNs. Blocked workers sit cheap inside withPermit
+            // — no socket open, no OkHttp call dispatched — instead of
+            // competing for bandwidth and tripping the synchronized-abort
+            // pattern that took out 12 parallel downloads on 2026-05-31.
+            val size = concurrencyGate.semaphore.withPermit {
+                withContext(Dispatchers.IO) {
+                    downloader.download(ep.downloadUrl, out) { bytesRead, totalBytes ->
+                        progressTracker.update(progressKey, bytesRead, totalBytes)
+                    }
                 }
             }
             progressTracker.clear(progressKey)

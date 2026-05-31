@@ -2,6 +2,7 @@ package com.odyssey.download
 
 import com.odyssey.data.local.EpisodeDao
 import com.odyssey.debug.DebugLogger
+import com.odyssey.player.looksLikeMp3
 import com.odyssey.work.ArchiveEnqueuer
 import com.odyssey.work.DownloadEnqueuer
 import kotlinx.coroutines.flow.first
@@ -62,6 +63,27 @@ class DownloadReconciler @Inject constructor(
             if (row.downloadUrl.startsWith(BACKUP_URL_PREFIX)) continue
             val file = downloader.fileFor(row.providerId, row.externalId, row.title)
             if (!file.exists() || file.length() == 0L) continue
+            // Validate the partial actually looks like the start of an
+            // MP3 before resuming. A prior worker (or a CDN error
+            // response saved with audio/* content-type) can leave an
+            // HTML error page or stub on disk at the canonical path.
+            // The 2026-05-31 device log showed three different YSH rows
+            // with on-disk files of EXACTLY 1,309,414 bytes — clearly
+            // identical error pages cached from zcast.swncdn.com — and
+            // the reconciler dutifully sent `Range: bytes=1309414-` for
+            // each, so the worker appended real MP3 bytes onto an HTML
+            // prefix and ExoPlayer couldn't find the frame sync. Sniff
+            // first; if the first three bytes aren't ID3 or MPEG sync,
+            // delete the file and let the worker start fresh from byte 0.
+            if (!fileLooksLikeMp3(file)) {
+                DebugLogger.w(
+                    TAG,
+                    "partial ${row.providerId}/${row.externalId} (${file.length()}B) " +
+                        "doesn't start with MP3 magic — deleting so kicked worker " +
+                        "restarts from byte 0 instead of resuming onto junk",
+                )
+                file.delete()
+            }
             DebugLogger.i(
                 TAG,
                 "kick stuck download ${row.providerId}/${row.externalId} " +
@@ -129,6 +151,24 @@ class DownloadReconciler @Inject constructor(
         }
         DebugLogger.i(TAG, "cross-show cleanup done — removed ${contaminated.size} row(s)")
         return contaminated.size
+    }
+
+    /**
+     * Read the first three bytes of [file] and check them against the
+     * MP3 magic-byte sniff. Pure I/O wrapper around [looksLikeMp3] —
+     * extracted for clarity and so a read failure (deleted between
+     * exists() and inputStream(), permission flip, etc.) reports false
+     * rather than tearing down the reconcile loop with an exception.
+     */
+    private fun fileLooksLikeMp3(file: File): Boolean = runCatching {
+        file.inputStream().use { stream ->
+            val firstBytes = ByteArray(3)
+            if (stream.read(firstBytes) < 3) return@use false
+            looksLikeMp3(firstBytes)
+        }
+    }.getOrElse { t ->
+        DebugLogger.w(TAG, "couldn't sniff ${file.name} for MP3 magic", t)
+        false
     }
 
     private companion object {

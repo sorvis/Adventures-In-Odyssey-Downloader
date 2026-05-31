@@ -11,6 +11,7 @@ import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -79,9 +80,12 @@ class DownloadReconcilerTest {
         val ep = yshRow(externalId = "ysh-sku-559", title = "Child of Privilege", filePath = null)
         db.episodes().upsert(ep)
         // Pretend the previous worker wrote the complete file before dying.
+        // Real partials start with ID3 magic (or an MPEG frame sync) since
+        // the worker downloads from byte 0 with a real audio response; the
+        // sniff has to recognize those as "trust this prefix, resume".
         val onDisk = downloader.fileFor(ep.providerId, ep.externalId, ep.title)
         onDisk.parentFile?.mkdirs()
-        onDisk.writeBytes(ByteArray(21_366_117 / 1000) { 0x55 })   // 1/1000 scale stand-in
+        onDisk.writeBytes(mp3PrefixedBytes(21_366))
         assertTrue("test pre-condition: file must exist on disk", onDisk.exists())
         assertTrue("test pre-condition: file must be non-empty", onDisk.length() > 0)
 
@@ -89,6 +93,10 @@ class DownloadReconcilerTest {
 
         assertEquals("exactly one stuck row was kicked", 1, kicked)
         assertEquals("recorder saw exactly one kick call", 1, recorder.kicks.size)
+        assertTrue(
+            "valid MP3 partial must be preserved on disk for resume — not deleted",
+            onDisk.exists() && onDisk.length() > 0,
+        )
         assertEquals(
             "kick targets the right episode",
             "ysh" to "ysh-sku-559",
@@ -157,7 +165,7 @@ class DownloadReconcilerTest {
         db.episodes().upsert(alreadyDone)
         downloader.fileFor(stuck.providerId, stuck.externalId, stuck.title)
             .apply { parentFile?.mkdirs() }
-            .writeBytes(ByteArray(1024) { 0x11 })
+            .writeBytes(mp3PrefixedBytes(1024))
 
         val kicked = reconciler.reconcile(allowMetered = true)
 
@@ -371,7 +379,7 @@ class DownloadReconcilerTest {
         db.episodes().upsert(stuck)
         val stuckFile = downloader.fileFor(stuck.providerId, stuck.externalId, stuck.title)
         stuckFile.parentFile?.mkdirs()
-        stuckFile.writeBytes(ByteArray(2048) { 0x77 })
+        stuckFile.writeBytes(mp3PrefixedBytes(2048))
 
         val kicked = reconciler.reconcile(allowMetered = false)
 
@@ -383,7 +391,83 @@ class DownloadReconcilerTest {
         )
     }
 
+    // ---- HTML / junk partial deletion (regression for 2026-05-31) ------
+
+    @Test
+    fun `reconcile deletes a non-MP3 partial before kicking so the worker restarts at byte 0`() = runBlocking {
+        // Reproduces the 2026-05-31 device-log scenario: three different
+        // YSH rows had on-disk files of EXACTLY 1,309,414 bytes — clearly
+        // cached HTML error pages from zcast.swncdn.com. Pre-fix, the
+        // reconciler kicked the worker which then sent
+        // `Range: bytes=1309414-` and appended the real MP3 onto the
+        // HTML prefix; ExoPlayer couldn't find frame sync in the resulting
+        // blob. The sniff is: first 3 bytes are ID3 tag or MPEG sync ↔
+        // real partial; anything else ↔ junk, delete it.
+        val ep = yshRow(externalId = "ysh-sku-159", title = "The Charming Prince", filePath = null)
+        db.episodes().upsert(ep)
+        val onDisk = downloader.fileFor(ep.providerId, ep.externalId, ep.title)
+        onDisk.parentFile?.mkdirs()
+        // Simulate an HTML 404 page saved with the .mp3 extension.
+        onDisk.writeBytes("<!doctype html><html><body>404 Not Found</body></html>".toByteArray())
+
+        val kicked = reconciler.reconcile(allowMetered = false)
+
+        assertEquals("kick still happens — the row is still genuinely stuck", 1, kicked)
+        assertEquals(1, recorder.kicks.size)
+        assertFalse(
+            "junk partial must be deleted before the kicked worker runs, so it " +
+                "starts from byte 0 instead of resuming onto an HTML prefix",
+            onDisk.exists(),
+        )
+    }
+
+    @Test
+    fun `reconcile deletes a tiny non-MP3 stub regardless of size`() = runBlocking {
+        // Even a one-byte stub (0xAB) shouldn't pass the sniff. Guards
+        // against the variant where the server returned a near-empty
+        // body but with content-type: audio/mpeg.
+        val ep = yshRow(externalId = "ysh-sku-560", title = "Woman of China", filePath = null)
+        db.episodes().upsert(ep)
+        val onDisk = downloader.fileFor(ep.providerId, ep.externalId, ep.title)
+        onDisk.parentFile?.mkdirs()
+        onDisk.writeBytes(byteArrayOf(0xAB.toByte()))
+
+        reconciler.reconcile(allowMetered = false)
+
+        assertFalse("one-byte junk stub deleted", onDisk.exists())
+    }
+
+    @Test
+    fun `reconcile keeps an MPEG-sync-prefixed partial (no ID3 tag) and still kicks`() = runBlocking {
+        // Some MP3s lead with a raw MPEG frame sync (0xFF + top-3-bits
+        // set) rather than an ID3v2 tag. The sniff has to accept both.
+        val ep = yshRow(externalId = "ysh-sku-2745", title = "The 14 Dollar Horse", filePath = null)
+        db.episodes().upsert(ep)
+        val onDisk = downloader.fileFor(ep.providerId, ep.externalId, ep.title)
+        onDisk.parentFile?.mkdirs()
+        // 0xFF, 0xFB, 0x90 — valid MPEG-1 Layer III header
+        onDisk.writeBytes(byteArrayOf(0xFF.toByte(), 0xFB.toByte(), 0x90.toByte()) + ByteArray(2048) { 0x33 })
+
+        val kicked = reconciler.reconcile(allowMetered = false)
+
+        assertEquals(1, kicked)
+        assertTrue("MPEG-sync-prefixed partial kept", onDisk.exists() && onDisk.length() > 0)
+    }
+
     // ----- helpers --------------------------------------------------------
+
+    /**
+     * Build a [size]-byte buffer that the MP3 sniff will accept: 3-byte
+     * "ID3" magic + filler. Models a legitimate worker-interrupted partial
+     * download mid-flight.
+     */
+    private fun mp3PrefixedBytes(size: Int): ByteArray {
+        require(size >= 3) { "size must be at least 3 to fit the ID3 magic prefix" }
+        val out = ByteArray(size)
+        out[0] = 0x49; out[1] = 0x44; out[2] = 0x33   // "ID3"
+        for (i in 3 until size) out[i] = 0x55.toByte()
+        return out
+    }
 
     private fun yshRow(externalId: String, title: String, filePath: String?) = LocalEpisodeEntity(
         providerId = "ysh",

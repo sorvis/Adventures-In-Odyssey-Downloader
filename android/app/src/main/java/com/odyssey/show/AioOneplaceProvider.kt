@@ -1,6 +1,7 @@
 package com.odyssey.show
 
 import com.odyssey.catalog.AioCatalogRepo
+import com.odyssey.debug.DebugLogger
 import com.odyssey.scrape.OneplaceClient
 import com.odyssey.scrape.OneplaceEpisode
 import javax.inject.Inject
@@ -54,13 +55,51 @@ class AioOneplaceProvider @Inject constructor(
         // The post-filter stays as a defense-in-depth — newSince's
         // showId param is optional and a future regression could lose
         // the wiring; isAio() catches any stray that slips through.
-        return oneplace.newSince(listenUrl, lastSeen, maxFetch, showId = AIO_SHOW_ID)
+        val result = oneplace.newSince(listenUrl, lastSeen, maxFetch, showId = AIO_SHOW_ID)
             .filter { isAio(it) }
             .map { it.toProvider(catalog) }
+        if (result.isEmpty()) logEmptyResultDiagnostic(lastSeen)
+        return result
+    }
+
+    /**
+     * When `newSince` returns empty, log WHY — bootstrap regex miss
+     * vs probe exhaustion vs genuine "no new episodes". OneplaceClient
+     * itself can't use [DebugLogger] (it ships in the pure-JVM compile
+     * set; DebugLogger pulls in `android.util.Log`), so the diagnostic
+     * lives here in the Android-side provider. One extra HTTP hit per
+     * empty result is cheap insurance against the next time oneplace
+     * changes its HTML and the Recent screen silently empties.
+     */
+    private suspend fun logEmptyResultDiagnostic(lastSeen: Long) {
+        val latest = runCatching { oneplace.latestEpisodeId(listenUrl) }.getOrNull()
+        when {
+            latest == null -> DebugLogger.w(
+                TAG,
+                "newSince(lastSeen=$lastSeen) returned 0 — latestEpisodeId($listenUrl) " +
+                    "is null. Either the network is down or the bootstrap regex no " +
+                    "longer matches oneplace.com's HTML (it inlines `episodeId=NNNNNNN` " +
+                    "in JS; a markup or var-name change breaks discovery).",
+            )
+            latest == lastSeen -> DebugLogger.i(
+                TAG,
+                "newSince(lastSeen=$lastSeen) returned 0 — latestEpisodeId=$latest " +
+                    "matches lastSeen exactly, so no new AIO broadcast since the last check.",
+            )
+            else -> DebugLogger.w(
+                TAG,
+                "newSince(lastSeen=$lastSeen) returned 0 — latestEpisodeId=$latest. " +
+                    "Bootstrap succeeded, so the forward-probe (cap=50) exhausted " +
+                    "without finding an AIO seed (showId=$AIO_SHOW_ID). Either AIO " +
+                    "hasn't published recently and the cursor sits in a deep " +
+                    "Sekulow/FOTF stretch, or related-episodes is mis-tagging show ids.",
+            )
+        }
     }
 
     companion object {
         const val ID = "aio"
+        private const val TAG = "AioOneplaceProvider"
         const val LISTEN_URL = "https://www.oneplace.com/ministries/adventures-in-odyssey/listen/"
         // oneplace's numeric identity for Adventures in Odyssey.
         // Confirmed live 2026-05-17 by GETting /api/related-episodes
