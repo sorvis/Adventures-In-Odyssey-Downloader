@@ -102,11 +102,34 @@ class OneplaceClient @Inject constructor(
         val latest = latestEpisodeId(listenUrl) ?: return emptyList()
         if (latest == lastSeen) return emptyList()
 
-        // Phase 1: Probe forward from latest+1 to find a cursor that
+        // Phase 1: Probe forward from `latest` to find a cursor that
         // yields target-show episodes. Without showId filter, ANY non-
         // empty response wins (old behavior). With showId set, the
         // probe also has to see at least one matching item.
-        var cursor = latest + 1
+        //
+        // Cursor starts at `latest` (not `latest + 1`) — verified live
+        // 2026-05-31 via scripts/probe-oneplace.sh:
+        //
+        //   - Bootstrap regex on /ministries/<slug>/ extracts an
+        //     ANCHOR eid (e.g. 1278298 for AIO), not the show's actual
+        //     newest episodeId (which was 1278423 on the same day).
+        //   - `/api/related-episodes?eid=<anchor>` returns the show's
+        //     N most recent episodes regardless of whether the anchor
+        //     is itself one of them. So querying the seed directly
+        //     hits the AIO content immediately.
+        //   - The old `latest + 1` skipped past the anchor into a gap
+        //     (eid 1278299 → []) and then into other shows
+        //     (1278300+ → showId=1055). Forward-probing 50 from there
+        //     never reached AIO again and newSince returned [].
+        //
+        // The +1 was correct when the API was a global newest-first
+        // feed that excluded its seed eid. Today it's per-show-context
+        // and the anchor is the right entry point. If a future oneplace
+        // change reverts to "seed is the true newest and is excluded
+        // from the response," we lose at most ONE episode (the seed
+        // itself) on the first refresh of a fresh install — acceptable
+        // degradation vs the all-or-nothing miss of the +1 strategy.
+        var cursor = latest
         var probesRemaining = GAP_PROBE_CAP
         var firstHit: List<OneplaceEpisode>? = null
         while (probesRemaining-- > 0) {

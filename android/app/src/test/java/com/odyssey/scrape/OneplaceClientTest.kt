@@ -283,6 +283,66 @@ class OneplaceClientTest {
     }
 
     @Test
+    fun `newSince probes seed eid directly when bootstrap is an anchor not the real latest (2026-05-31 regression)`() = runTest {
+        // User report 2026-05-31: AIO Recent tab silently empty on every
+        // fresh install. scripts/probe-oneplace.sh exposed the shift:
+        //
+        //   - Listen page bootstraps `episodeId=1278298` — an anchor /
+        //     featured pointer, NOT the show's actual newest broadcast.
+        //   - Live AIO episodes were 1278415–1278423 (May 25–29).
+        //   - `/api/related-episodes?eid=1278298` returns the show's 5
+        //     most recent AIO episodes (none of them ARE 1278298).
+        //   - `?eid=1278299` (the old `cursor = latest + 1`) returns [];
+        //     `?eid=1278300+` returns OTHER shows. Forward-probing 50 from
+        //     +1 walked into non-AIO territory and newSince returned [].
+        //
+        // The fix is to start the cursor at `latest` (not `latest + 1`).
+        // For an anchor seed, the API maps it to "the show's recent
+        // episodes" and the very first probe hits AIO content.
+        //
+        // Fixture mirrors the live observation: anchor eid 1278298 with
+        // an API response containing 5 AIO episodes whose ids are all
+        // GREATER than the seed (1278423 → 1278415). The empty pages
+        // that follow (cursor=1278299, 1278300, …) only appear if the
+        // fix regresses — with the fix, Phase 2 terminates immediately
+        // because page.last().episodeId = 1278415 returns [].
+        server.enqueue(html("""<html><body><script>episodeId=1278298</script></body></html>"""))
+        val anchorPage = """[
+            {"episodeId":1278423,"title":"Gone . . .","subTitle":"May 29, 2026",
+             "downloadFileUrl":"https://cdn.example/1278423.mp3","url":"https://example/1278423",
+             "showId":777,"durationSeconds":1500},
+            {"episodeId":1278422,"title":"The Fifth House on the Left, Part 2 of 2","subTitle":"May 28, 2026",
+             "downloadFileUrl":"https://cdn.example/1278422.mp3","url":"https://example/1278422",
+             "showId":777,"durationSeconds":1500},
+            {"episodeId":1278420,"title":"The Fifth House on the Left, Part 1 of 2","subTitle":"May 27, 2026",
+             "downloadFileUrl":"https://cdn.example/1278420.mp3","url":"https://example/1278420",
+             "showId":777,"durationSeconds":1500},
+            {"episodeId":1278417,"title":"It Happened at Four Corners","subTitle":"May 26, 2026",
+             "downloadFileUrl":"https://cdn.example/1278417.mp3","url":"https://example/1278417",
+             "showId":777,"durationSeconds":1500},
+            {"episodeId":1278415,"title":"The War Hero","subTitle":"May 25, 2026",
+             "downloadFileUrl":"https://cdn.example/1278415.mp3","url":"https://example/1278415",
+             "showId":777,"durationSeconds":1500}
+        ]"""
+        server.enqueue(json(anchorPage))    // cursor=1278298 → 5 AIO (seed not in results)
+        server.enqueue(json("[]"))          // walk-back tail (cursor=1278415)
+
+        val results = client.newSince(listenUrl, lastSeen = 0L, maxFetch = 50, showId = 777L)
+
+        assertEquals("expected 5 AIO episodes returned by the anchor seed", 5, results.size)
+        assertEquals(
+            "results are ordered newest-first matching the API page",
+            listOf(1278423L, 1278422L, 1278420L, 1278417L, 1278415L),
+            results.map { it.episodeId },
+        )
+        // The seed (1278298) must NOT appear in results — the API
+        // doesn't return it and we don't fabricate it. (If the bootstrap
+        // eid ever advances to the true latest, we'll lose at most one
+        // episode per anchor cycle — acceptable.)
+        assertTrue("seed eid is never echoed in the result set", results.none { it.episodeId == 1278298L })
+    }
+
+    @Test
     fun `newSince does not keep probing once it has found content (archive tail stop)`() = runTest {
         // Once we've successfully read a page, a subsequent [] means
         // we've walked off the end of the show's archive — not a gap
