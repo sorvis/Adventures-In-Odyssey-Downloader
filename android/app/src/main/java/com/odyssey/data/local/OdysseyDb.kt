@@ -348,6 +348,15 @@ interface PlaybackDao {
     fun observeMostRecent(): Flow<PlaybackPositionEntity?>
 
     /**
+     * Drives the inline "Recently played" strip on the Recent screen.
+     * Newest first; caller passes a small [limit] (default 5 + 1 to
+     * absorb the Continue-listening exclusion). DB does the sort + cap
+     * so no client-side list slicing.
+     */
+    @Query("SELECT * FROM playback_positions ORDER BY updatedAt DESC LIMIT :limit")
+    fun observeRecentlyPlayed(limit: Int): Flow<List<PlaybackPositionEntity>>
+
+    /**
      * Completed-ids stream. AIO-only legacy shape — coerces externalId
      * to Long (always works for AIO; YSH externalIds aren't numeric and
      * are filtered out by the WHERE clause).

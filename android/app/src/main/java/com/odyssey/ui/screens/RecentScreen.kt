@@ -142,6 +142,32 @@ class RecentVm @Inject constructor(
         if (r == null) null else eps.firstOrNull { it.episodeId == r.episodeId }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
+    /**
+     * Inline "Recently played" strip for the Recent screen. Drawn from
+     * the unfiltered `episodes.observeAll()` source on purpose — the
+     * user's listening history spans both providers and is intentionally
+     * NOT scoped to the active show dropdown.
+     *
+     * Capped at [MAX_RECENTLY_PLAYED] entries; the strip pulls one extra
+     * row from the DB so excluding the Continue-listening row still
+     * leaves the target count visible.
+     */
+    val recentlyPlayed = combine(
+        episodes.observeAll(),
+        playback.observeRecentlyPlayed(MAX_RECENTLY_PLAYED + 1),
+        resume,
+    ) { eps, plays, resumePos ->
+        recentlyPlayedFor(
+            episodes = eps,
+            positions = plays,
+            excludeEpisodeId = resumePos?.episodeId,
+            maxItems = MAX_RECENTLY_PLAYED,
+            episodeId = LocalEpisodeEntity::episodeId,
+            positionEpisodeId = PlaybackPositionEntity::episodeId,
+            updatedAt = PlaybackPositionEntity::updatedAt,
+        )
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
     val showMeteredWarning = MutableStateFlow(false)
 
     fun checkNow() {
@@ -321,6 +347,16 @@ class RecentVm @Inject constructor(
      * Delete the local copy of an episode. Row falls back to streamable
      * (filePath becomes null in DB); on-disk file is removed.
      */
+    companion object {
+        /**
+         * How many entries the inline "Recently played" strip on the
+         * Recent screen shows. Five fits one screen on a typical phone
+         * without burying the main daily-check list; raise this if the
+         * design moves to a dedicated screen later.
+         */
+        const val MAX_RECENTLY_PLAYED = 5
+    }
+
     fun delete(ep: LocalEpisodeEntity) {
         val path = ep.filePath ?: return
         DebugLogger.i("RecentVm", "delete(${ep.episodeId}) path=$path")
@@ -341,6 +377,7 @@ fun RecentScreen(
     val items by vm.items.collectAsState()
     val resume by vm.resume.collectAsState()
     val resumeEp by vm.resumeEpisode.collectAsState()
+    val recentlyPlayed by vm.recentlyPlayed.collectAsState()
     val completedIds by vm.completedIds.collectAsState()
     val positions by vm.positions.collectAsState()
     val showWarning by vm.showMeteredWarning.collectAsState()
@@ -464,10 +501,92 @@ fun RecentScreen(
                     }
                 }
             }
+            // Inline "Recently played" strip. Appears between the
+            // Continue-listening card and the main daily-check list when
+            // the user has actually played something other than the
+            // single most-recent (which already lives in the card above).
+            // Cross-show by design — the user explicitly asked for this
+            // to span providers ("maybe there's a couple different
+            // ones"), so it ignores the active-show dropdown filter.
+            if (recentlyPlayed.isNotEmpty()) {
+                item {
+                    Text(
+                        text = "Recently played",
+                        style = MaterialTheme.typography.titleSmall,
+                        modifier = Modifier
+                            .padding(horizontal = 16.dp, vertical = 8.dp)
+                            .testTag("recently-played-header"),
+                    )
+                }
+                items(recentlyPlayed, key = { "rp-${it.episodeId}" }) { ep ->
+                    val pos = positions[ep.episodeId]
+                    val now = remember(pos?.updatedAt) { System.currentTimeMillis() }
+                    ElevatedCard(
+                        onClick = { vm.play(ep) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 2.dp)
+                            .testTag("recently-played-row"),
+                    ) {
+                        ListItem(
+                            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                            leadingContent = {
+                                AsyncImage(
+                                    model = vm.catalog.match(ep.title)?.thumbnailUrl
+                                        ?: ep.imageUrl
+                                        ?: vm.yshAlbumArtworkFor(ep),
+                                    contentDescription = null,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier
+                                        .size(40.dp)
+                                        .clip(RoundedCornerShape(4.dp)),
+                                )
+                            },
+                            headlineContent = {
+                                Text(
+                                    text = vm.catalog.match(ep.title)?.displayName ?: ep.title,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            },
+                            supportingContent = {
+                                // Three states: in-progress with known
+                                // duration → "X min left"; completed →
+                                // "✓ played"; just-started/unknown → bare
+                                // position so the user still sees SOMEthing.
+                                val label = pos?.let {
+                                    formatRemaining(it.positionMs, it.durationMs)
+                                        ?: it.completedAt?.let { "✓ played" }
+                                        ?: formatResumeSubtitle(it.positionMs, it.durationMs)
+                                } ?: ""
+                                Text(
+                                    text = label,
+                                    style = MaterialTheme.typography.labelSmall,
+                                )
+                            },
+                            trailingContent = {
+                                pos?.updatedAt?.let { ts ->
+                                    Text(
+                                        text = formatRelativePlayedAt(ts, now),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        modifier = Modifier.testTag("recently-played-when"),
+                                    )
+                                }
+                            },
+                        )
+                    }
+                }
+            }
+
             val completedSet = completedIds.toSet()
-            // Dedup: don't show the resume episode again in the main list —
-            // it's already represented in the Continue listening card above.
-            val mainList = dedupResume(items, resumeEp?.episodeId) { it.episodeId }
+            // Dedup: don't show the resume episode again in the main list
+            // (Continue listening card) NOR any row from the Recently
+            // played strip just above. excludeIds is the union of both.
+            val excludeIds = buildSet<Long> {
+                resumeEp?.episodeId?.let { add(it) }
+                recentlyPlayed.forEach { add(it.episodeId) }
+            }
+            val mainList = items.filterNot { it.episodeId in excludeIds }
             items(mainList, key = { it.episodeId }) { ep ->
                 ElevatedCard(
                     modifier = Modifier

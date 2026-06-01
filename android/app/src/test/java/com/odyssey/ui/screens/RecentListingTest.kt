@@ -273,4 +273,168 @@ class RecentListingTest {
         // parseable airDate so this case doesn't happen in practice.
         assertEquals(listOf("265", "267", "266"), result.map { it.externalId })
     }
+
+    // ---- recentlyPlayedFor --------------------------------------------
+
+    private data class Pos(val episodeId: Long, val updatedAt: Long)
+
+    private fun recentlyPlayed(
+        eps: List<Ep>,
+        positions: List<Pos>,
+        exclude: Long? = null,
+        max: Int = 5,
+    ): List<Ep> = recentlyPlayedFor(
+        episodes = eps,
+        positions = positions,
+        excludeEpisodeId = exclude,
+        maxItems = max,
+        episodeId = Ep::episodeId,
+        positionEpisodeId = Pos::episodeId,
+        updatedAt = Pos::updatedAt,
+    )
+
+    @Test
+    fun `recentlyPlayedFor orders by updatedAt DESC across all episodes`() {
+        // Positions arrive newest-first from the DAO query, but the
+        // helper re-sorts defensively in case a caller passes them
+        // ungrouped. Verify the strip would draw newest-touched-first
+        // regardless of input order.
+        val eps = listOf(Ep(1, "a"), Ep(2, "b"), Ep(3, "c"))
+        val positions = listOf(
+            Pos(episodeId = 2, updatedAt = 100L),
+            Pos(episodeId = 3, updatedAt = 300L),
+            Pos(episodeId = 1, updatedAt = 200L),
+        )
+        val result = recentlyPlayed(eps, positions)
+        assertEquals(listOf(3L, 1L, 2L), result.map { it.episodeId })
+    }
+
+    @Test
+    fun `recentlyPlayedFor excludes the Continue listening episode so the strip does not duplicate the card`() {
+        // The most-recent row already lives in the Continue listening
+        // ElevatedCard above the strip — if we showed it here too, the
+        // user would see the same item twice on a single screen.
+        val eps = listOf(Ep(10, "x"), Ep(20, "y"), Ep(30, "z"))
+        val positions = listOf(
+            Pos(episodeId = 10, updatedAt = 500L),  // newest → shown in Continue listening
+            Pos(episodeId = 20, updatedAt = 400L),
+            Pos(episodeId = 30, updatedAt = 300L),
+        )
+        val result = recentlyPlayed(eps, positions, exclude = 10L)
+        assertEquals("excluded episode must not appear", listOf(20L, 30L), result.map { it.episodeId })
+    }
+
+    @Test
+    fun `recentlyPlayedFor caps the result at maxItems`() {
+        val eps = (1L..10L).map { Ep(it, "ep$it") }
+        val positions = (1L..10L).map { Pos(episodeId = it, updatedAt = it * 100L) }
+        val result = recentlyPlayed(eps, positions, max = 3)
+        assertEquals(3, result.size)
+        // Newest three (updatedAt 1000, 900, 800).
+        assertEquals(listOf(10L, 9L, 8L), result.map { it.episodeId })
+    }
+
+    @Test
+    fun `recentlyPlayedFor skips positions whose episode is no longer in the catalog`() {
+        // A position can outlive its episode row (manual DB delete,
+        // cross-show contamination cleanup, etc.). The helper must
+        // tolerate that without throwing or returning a partially-formed
+        // row — silently drop it.
+        val eps = listOf(Ep(1, "a"), Ep(3, "c"))  // ep 2 was deleted
+        val positions = listOf(
+            Pos(episodeId = 1, updatedAt = 300L),
+            Pos(episodeId = 2, updatedAt = 200L),   // orphan
+            Pos(episodeId = 3, updatedAt = 100L),
+        )
+        val result = recentlyPlayed(eps, positions)
+        assertEquals(listOf(1L, 3L), result.map { it.episodeId })
+    }
+
+    @Test
+    fun `recentlyPlayedFor returns empty list when no positions exist (fresh install)`() {
+        val eps = listOf(Ep(1, "a"), Ep(2, "b"))
+        val result = recentlyPlayed(eps, positions = emptyList())
+        assertTrue("no plays → empty strip → UI hides the section entirely", result.isEmpty())
+    }
+
+    @Test
+    fun `recentlyPlayedFor returns empty list when maxItems is zero or negative`() {
+        // Defensive — the UI caller passes a const but a future caller
+        // might fence the section off behind a feature flag by setting
+        // max=0 and expect a clean no-op.
+        val eps = listOf(Ep(1, "a"))
+        val positions = listOf(Pos(1, 100L))
+        assertTrue(recentlyPlayed(eps, positions, max = 0).isEmpty())
+        assertTrue(recentlyPlayed(eps, positions, max = -1).isEmpty())
+    }
+
+    @Test
+    fun `recentlyPlayedFor deduplicates if the same episode appears twice in positions`() {
+        // Shouldn't happen with the (providerId, externalId) primary key
+        // on the table, but be defensive — if it ever does, the strip
+        // should still show the episode once.
+        val eps = listOf(Ep(1, "a"), Ep(2, "b"))
+        val positions = listOf(
+            Pos(episodeId = 1, updatedAt = 300L),
+            Pos(episodeId = 1, updatedAt = 200L),  // hypothetical duplicate
+            Pos(episodeId = 2, updatedAt = 100L),
+        )
+        val result = recentlyPlayed(eps, positions)
+        assertEquals(listOf(1L, 2L), result.map { it.episodeId })
+    }
+
+    // ---- formatRelativePlayedAt ---------------------------------------
+
+    @Test
+    fun `formatRelativePlayedAt bucket -- just now under one minute`() {
+        val now = 1_700_000_000_000L
+        assertEquals("just now", formatRelativePlayedAt(updatedAtMs = now - 30_000L, nowMs = now))
+        assertEquals("just now", formatRelativePlayedAt(updatedAtMs = now - 59_000L, nowMs = now))
+    }
+
+    @Test
+    fun `formatRelativePlayedAt bucket -- minutes under one hour`() {
+        val now = 1_700_000_000_000L
+        assertEquals("1m ago", formatRelativePlayedAt(updatedAtMs = now - 60_000L, nowMs = now))
+        assertEquals("45m ago", formatRelativePlayedAt(updatedAtMs = now - 45L * 60_000L, nowMs = now))
+        assertEquals("59m ago", formatRelativePlayedAt(updatedAtMs = now - 59L * 60_000L, nowMs = now))
+    }
+
+    @Test
+    fun `formatRelativePlayedAt bucket -- hours under one day`() {
+        val now = 1_700_000_000_000L
+        assertEquals("1h ago", formatRelativePlayedAt(updatedAtMs = now - 60L * 60_000L, nowMs = now))
+        assertEquals("23h ago", formatRelativePlayedAt(updatedAtMs = now - 23L * 3_600_000L, nowMs = now))
+    }
+
+    @Test
+    fun `formatRelativePlayedAt bucket -- days under one week`() {
+        val now = 1_700_000_000_000L
+        assertEquals("1d ago", formatRelativePlayedAt(updatedAtMs = now - 24L * 3_600_000L, nowMs = now))
+        assertEquals("6d ago", formatRelativePlayedAt(updatedAtMs = now - 6L * 24L * 3_600_000L, nowMs = now))
+    }
+
+    @Test
+    fun `formatRelativePlayedAt bucket -- absolute date beyond one week`() {
+        // 8 days back from a known anchor — verify we switched to the
+        // "MMM d" absolute format. Exact text depends on the anchor; just
+        // assert it stopped being "Nd ago" and looks like a calendar date.
+        val now = 1_700_000_000_000L  // 2023-11-14 ~22:13 UTC
+        val eightDaysBack = now - 8L * 24L * 3_600_000L
+        val result = formatRelativePlayedAt(eightDaysBack, now)
+        assertTrue(
+            "expected 'Nov 6' or 'Nov 7' depending on TZ, got '$result'",
+            result.matches(Regex("^[A-Z][a-z]{2} \\d{1,2}$")),
+        )
+    }
+
+    @Test
+    fun `formatRelativePlayedAt returns empty string for future timestamps (clock skew)`() {
+        // If the position's updatedAt is in the future relative to now
+        // (clock skew, test-injected weirdness), don't render a
+        // nonsensical "-3m ago"; render nothing and let the UI hide
+        // the chip.
+        val now = 1_700_000_000_000L
+        assertEquals("", formatRelativePlayedAt(updatedAtMs = now + 60_000L, nowMs = now))
+    }
 }
