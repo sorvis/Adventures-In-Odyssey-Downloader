@@ -178,6 +178,7 @@ class PlayerController @Inject constructor(
         title: String,
         artworkUrl: String?,
         providerId: String,
+        description: String?,
     ) {
         DebugLogger.i("PlayerController", "playStream($episodeId) url=$streamUrl")
         val c = try {
@@ -212,6 +213,8 @@ class PlayerController @Inject constructor(
                     .setTitle(title)
                     .setArtist(providers.artistFor(providerId))
                     .apply {
+                        description?.takeIf { it.isNotBlank() }
+                            ?.let { setDescription(it) }
                         artworkUrl?.takeIf { it.isNotBlank() }
                             ?.let { setArtworkUri(android.net.Uri.parse(it)) }
                     }

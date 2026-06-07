@@ -503,7 +503,7 @@ class RecentVmTest {
             _state.value = com.odyssey.player.PlayerStateSnapshot(ep.episodeId, isPlaying = true)
         }
 
-        override suspend fun playStream(episodeId: Long, streamUrl: String, title: String, artworkUrl: String?, providerId: String) {
+        override suspend fun playStream(episodeId: Long, streamUrl: String, title: String, artworkUrl: String?, providerId: String, description: String?) {
             playStreamCalls += StreamCall(episodeId, streamUrl, title)
             if (throwOnStream) error("simulated playStream failure")
             _state.value = com.odyssey.player.PlayerStateSnapshot(episodeId, isPlaying = true)

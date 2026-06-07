@@ -133,7 +133,7 @@ class BrowseVm @Inject constructor(
             // ExoPlayer DataSource auth handled at the OkHttp factory layer in
             // production; for now we pass the bare URL and assume the token
             // is appended via interceptor (TODO).
-            player.playStream(ep.episode_id, it.url, ep.title)
+            player.playStream(ep.episode_id, it.url, ep.title, description = ep.description)
         }
     }
 

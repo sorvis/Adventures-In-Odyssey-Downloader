@@ -36,6 +36,13 @@ interface EpisodePlayer {
          * DownloadedScreen) keep working unchanged.
          */
         providerId: String = "aio",
+        /**
+         * Episode synopsis surfaced by NowPlayingScreen. Optional —
+         * not every call site has it (NAS browse rows that haven't
+         * been mirrored to LocalEpisode yet may lack one); when null
+         * or blank the player screen just hides the description block.
+         */
+        description: String? = null,
     )
 
     /**

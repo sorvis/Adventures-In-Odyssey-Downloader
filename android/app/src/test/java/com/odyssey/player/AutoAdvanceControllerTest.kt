@@ -196,6 +196,7 @@ class AutoAdvanceControllerTest {
             title: String,
             artworkUrl: String?,
             providerId: String,
+            description: String?,
         ) {
             calls += Call.PlayStream(episodeId, streamUrl, title, artworkUrl, providerId)
         }

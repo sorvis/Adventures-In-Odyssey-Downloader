@@ -130,7 +130,7 @@ class DownloadedVm @Inject constructor(
             try {
                 when (src) {
                     is PlaySource.Local -> player.playLocal(ep, artwork)
-                    is PlaySource.Stream -> player.playStream(ep.episodeId, ep.downloadUrl, ep.title, artwork)
+                    is PlaySource.Stream -> player.playStream(ep.episodeId, ep.downloadUrl, ep.title, artwork, description = ep.description)
                 }
             } catch (t: Throwable) {
                 DebugLogger.e("DownloadedVm", "play(${ep.episodeId}) — dispatch threw", t)

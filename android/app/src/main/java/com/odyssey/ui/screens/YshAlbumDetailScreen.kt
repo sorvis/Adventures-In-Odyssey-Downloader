@@ -125,6 +125,7 @@ class YshAlbumDetailVm @Inject constructor(
                     title = local.title,
                     artworkUrl = row.albumImageUrl ?: local.albumImageUrl,
                     providerId = "ysh",
+                    description = local.description,
                 )
             }
         }

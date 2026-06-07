@@ -258,14 +258,14 @@ class RecentVm @Inject constructor(
                             return@launch
                         }
                         DebugLogger.i("RecentVm", "play(${ep.episodeId}) — stream from NAS")
-                        player.playStream(ep.episodeId, audio.url, ep.title, artwork)
+                        player.playStream(ep.episodeId, audio.url, ep.title, artwork, description = ep.description)
                     }
                     // Public CDN — oneplace stream URL, no auth.
                     else -> {
                         DebugLogger.i("RecentVm", "play(${ep.episodeId}) — stream from CDN")
                         when (val src = playSourceFor(ep.filePath, ep.downloadUrl)) {
                             is PlaySource.Local -> player.playLocal(ep, artwork)
-                            is PlaySource.Stream -> player.playStream(ep.episodeId, src.url, ep.title, artwork)
+                            is PlaySource.Stream -> player.playStream(ep.episodeId, src.url, ep.title, artwork, description = ep.description)
                         }
                     }
                 }

@@ -189,12 +189,12 @@ class AlbumDetailVm @Inject constructor(
                             DebugLogger.w("AlbumDetailVm", "play(${local.episodeId}) — backup URL but NAS not configured")
                             return@launch
                         }
-                        player.playStream(local.episodeId, audio.url, local.title, artwork)
+                        player.playStream(local.episodeId, audio.url, local.title, artwork, description = local.description)
                     }
                     // Oneplace download URL — public, no auth needed.
                     else -> when (playSourceFor(local.filePath, local.downloadUrl)) {
                         is PlaySource.Local -> player.playLocal(local, artwork)
-                        is PlaySource.Stream -> player.playStream(local.episodeId, local.downloadUrl, local.title, artwork)
+                        is PlaySource.Stream -> player.playStream(local.episodeId, local.downloadUrl, local.title, artwork, description = local.description)
                     }
                 }
             } catch (t: Throwable) {

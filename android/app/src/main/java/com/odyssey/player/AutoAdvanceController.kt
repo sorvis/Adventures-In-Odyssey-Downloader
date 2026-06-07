@@ -69,6 +69,7 @@ class AutoAdvanceController @Inject constructor(
                     title = row.title,
                     artworkUrl = row.imageUrl,
                     providerId = row.providerId,
+                    description = row.description,
                 )
             }
             else -> {
@@ -78,6 +79,7 @@ class AutoAdvanceController @Inject constructor(
                     title = row.title,
                     artworkUrl = row.imageUrl,
                     providerId = row.providerId,
+                    description = row.description,
                 )
             }
         }
