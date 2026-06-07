@@ -14,7 +14,12 @@ CREATE TABLE IF NOT EXISTS episodes (
     file_size      INTEGER NOT NULL,
     sha256         TEXT,
     source_url     TEXT,
-    archived_at    TEXT NOT NULL DEFAULT (datetime('now'))
+    archived_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    -- Stamped by scripts/whisper_titles.py whenever a row has been
+    -- whisper-checked (regardless of whether the check produced a
+    -- title change). NULL = never validated; lets re-runs skip rows
+    -- that are already confirmed.
+    title_validated_at TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_episodes_air_date ON episodes(air_date);
@@ -57,6 +62,11 @@ def _migrate_schema(c: sqlite3.Connection) -> None:
         c.execute("ALTER TABLE episodes ADD COLUMN provider_id TEXT NOT NULL DEFAULT 'aio'")
     if "external_id" not in cols:
         c.execute("ALTER TABLE episodes ADD COLUMN external_id TEXT")
+    if "title_validated_at" not in cols:
+        # New column for scripts/whisper_titles.py. Nullable on
+        # legacy rows; populated as the whisper-titles pipeline
+        # walks the archive.
+        c.execute("ALTER TABLE episodes ADD COLUMN title_validated_at TEXT")
     # Backfill external_id for any pre-migration row that's still
     # NULL — stringify the legacy episode_id. Cheap; runs only when
     # there are unmigrated rows.

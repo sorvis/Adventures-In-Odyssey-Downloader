@@ -11,6 +11,16 @@ from ..scrape_aio import enrich_album
 router = APIRouter(prefix="/episodes", dependencies=[Depends(require_token)])
 
 
+class EpisodePatch(BaseModel):
+    """PATCH body — title and/or album. Both optional; at least one
+    must be present or the call 400s. Used by the whisper-title
+    validation pipeline (scripts/whisper_titles.py) to commit
+    title corrections derived from end-of-episode announcer credits.
+    """
+    title: str | None = None
+    album: str | None = None
+
+
 class EpisodeOut(BaseModel):
     episode_id: int
     title: str
@@ -21,9 +31,28 @@ class EpisodeOut(BaseModel):
     file_size: int
     sha256: str | None
     archived_at: str
+    title_validated_at: str | None = None
+    # Surfaced so scripts/whisper_titles.py can dispatch by provider:
+    # AIO announces the title in the closing seconds, YSH at the start.
+    provider_id: str | None = None
+    external_id: str | None = None
 
 
 def _row_to_out(r) -> EpisodeOut:
+    # Older sqlite Row objects from pre-migration DBs don't expose the
+    # new column via __getitem__; fall back to None.
+    try:
+        validated = r["title_validated_at"]
+    except (IndexError, KeyError):
+        validated = None
+    try:
+        provider = r["provider_id"]
+    except (IndexError, KeyError):
+        provider = None
+    try:
+        external = r["external_id"]
+    except (IndexError, KeyError):
+        external = None
     return EpisodeOut(
         episode_id=r["episode_id"],
         title=r["title"],
@@ -34,6 +63,9 @@ def _row_to_out(r) -> EpisodeOut:
         file_size=r["file_size"],
         sha256=r["sha256"],
         archived_at=r["archived_at"],
+        title_validated_at=validated,
+        provider_id=provider,
+        external_id=external,
     )
 
 
@@ -178,3 +210,92 @@ def get_audio(episode_id: int, range: str | None = Header(default=None)):
     if not row:
         raise HTTPException(404, "not found")
     return stream_file(Path(row["file_path"]), range)
+
+
+@router.patch("/{episode_id}", response_model=EpisodeOut)
+def patch_episode(episode_id: int, body: EpisodePatch):
+    if body.title is None and body.album is None:
+        raise HTTPException(400, "PATCH body must include title and/or album")
+    with db.connect() as c:
+        row = c.execute(
+            "SELECT * FROM episodes WHERE episode_id = ?", (episode_id,)
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "not found")
+
+        new_title = body.title if body.title is not None else row["title"]
+        new_album = body.album if body.album is not None else row["album"]
+
+        # When the title (or album) changes we relocate the audio file
+        # to the canonical path under the new naming. episode_path is
+        # the same helper the create flow uses, so the layout stays
+        # consistent across import vs. correction paths. We rename
+        # in-place ONLY when the canonical path actually differs —
+        # avoids a no-op rename round-trip when the caller PATCHes
+        # the album alone but title→path is unchanged.
+        old_path = Path(row["file_path"])
+        new_path = episode_path(episode_id, new_title, new_album)
+        moved = False
+        if new_path != old_path and old_path.exists():
+            new_path.parent.mkdir(parents=True, exist_ok=True)
+            old_path.replace(new_path)
+            moved = True
+
+        # PATCH lands a title/album change → that change came from a
+        # human or from the whisper-titles pipeline. Either way we
+        # stamp title_validated_at so subsequent validate runs can
+        # skip this row.
+        c.execute(
+            "UPDATE episodes SET title = ?, album = ?, file_path = ?, "
+            "title_validated_at = datetime('now') WHERE episode_id = ?",
+            (new_title, new_album, str(new_path) if moved else row["file_path"], episode_id),
+        )
+        updated = c.execute(
+            "SELECT * FROM episodes WHERE episode_id = ?", (episode_id,)
+        ).fetchone()
+    return _row_to_out(updated)
+
+
+@router.put("/{episode_id}/title-validated", response_model=EpisodeOut)
+def mark_title_validated(episode_id: int):
+    """Stamp `title_validated_at = now` without touching title/album.
+    Called by scripts/whisper_titles.py for every episode whose tail
+    transcription succeeded, regardless of whether the catalog match
+    proposed a change — so a re-run can skip already-verified rows.
+    Idempotent: re-stamping refreshes the timestamp.
+    """
+    with db.connect() as c:
+        row = c.execute(
+            "SELECT 1 FROM episodes WHERE episode_id = ?", (episode_id,)
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "not found")
+        c.execute(
+            "UPDATE episodes SET title_validated_at = datetime('now') "
+            "WHERE episode_id = ?",
+            (episode_id,),
+        )
+        updated = c.execute(
+            "SELECT * FROM episodes WHERE episode_id = ?", (episode_id,)
+        ).fetchone()
+    return _row_to_out(updated)
+
+
+@router.delete("/{episode_id}", status_code=204)
+def delete_episode(episode_id: int):
+    """Drop the DB row AND its on-disk audio. Used by the dedup pass
+    in scripts/whisper_titles.py — when whisper transcription confirms
+    that two episode_ids point at the same recording, the worse copy
+    (older / smaller / unverified) is removed via this endpoint.
+    Idempotent: 404 only if the row is genuinely absent; a row whose
+    audio was already gone still succeeds (file deletion is best-effort).
+    """
+    with db.connect() as c:
+        row = c.execute(
+            "SELECT file_path FROM episodes WHERE episode_id = ?", (episode_id,)
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "not found")
+        Path(row["file_path"]).unlink(missing_ok=True)
+        c.execute("DELETE FROM episodes WHERE episode_id = ?", (episode_id,))
+    return Response(status_code=204)

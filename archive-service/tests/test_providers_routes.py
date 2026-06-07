@@ -209,10 +209,12 @@ def test_legacy_route_still_works_after_new_route_added(client, auth_headers, fa
     r = client.post("/episodes", headers=auth_headers, files=files, data=data)
     assert r.status_code == 201
     body = r.json()
-    # Legacy shape — episode_id still present, no provider_id field
-    # in the response (EpisodeOut, not EpisodeOutV2).
+    # Legacy shape — episode_id still present. provider_id is now
+    # surfaced on EpisodeOut too (added so scripts/whisper_titles.py
+    # can dispatch tail-vs-head extraction per provider); the legacy
+    # POST handler defaults it to "aio".
     assert body["episode_id"] == 1
-    assert "provider_id" not in body
+    assert body["provider_id"] == "aio"
 
     # And the new provider route can see the same row.
     r2 = client.get("/providers/aio/episodes/1", headers=auth_headers)

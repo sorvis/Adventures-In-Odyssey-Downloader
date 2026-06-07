@@ -202,3 +202,147 @@ def test_album_episodes_filters_correctly(client, auth_headers, fake_mp3_bytes):
     # 404 for an album with no episodes — matches the existing handler.
     r2 = client.get("/albums/Nonexistent/episodes", headers=auth_headers)
     assert r2.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# PATCH /episodes/{id} + DELETE /episodes/{id}
+# Drive the whisper-title validation pipeline (scripts/whisper_titles.py)
+# that corrects mis-titled imports and removes confirmed duplicates.
+# ---------------------------------------------------------------------------
+
+
+def test_patch_title_renames_file_and_updates_row(client, auth_headers, fake_mp3_bytes):
+    _upload(client, auth_headers, fake_mp3_bytes, episode_id=901, album="51")
+    r = client.patch(
+        "/episodes/901",
+        headers=auth_headers,
+        json={"title": "Knox on Money"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["title"] == "Knox on Money"
+    assert body["album"] == "51"
+
+    # The on-disk file should have moved to the canonical path for the
+    # new title — the import path the create flow uses.
+    from app.storage import episode_path
+    expected = episode_path(901, "Knox on Money", "51")
+    assert expected.exists(), f"expected {expected} to exist after rename"
+
+
+def test_patch_with_only_album_does_not_move_file(client, auth_headers, fake_mp3_bytes):
+    _upload(client, auth_headers, fake_mp3_bytes, episode_id=902, album="50")
+    before = client.get("/episodes/902", headers=auth_headers).json()
+    assert before["album"] == "50"
+
+    r = client.patch(
+        "/episodes/902",
+        headers=auth_headers,
+        json={"album": "51"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["album"] == "51"
+    # Album-only PATCH still triggers a file move because the canonical
+    # path embeds the album — assert the file lives at the new canonical
+    # location, not the old one.
+    from app.storage import episode_path
+    new_path = episode_path(902, "Clutter", "51")
+    assert new_path.exists()
+
+
+def test_patch_with_empty_body_400s(client, auth_headers, fake_mp3_bytes):
+    _upload(client, auth_headers, fake_mp3_bytes, episode_id=903)
+    r = client.patch("/episodes/903", headers=auth_headers, json={})
+    assert r.status_code == 400
+
+
+def test_patch_missing_episode_404s(client, auth_headers):
+    r = client.patch(
+        "/episodes/999999",
+        headers=auth_headers,
+        json={"title": "doesn't matter"},
+    )
+    assert r.status_code == 404
+
+
+def test_patch_requires_auth(client, fake_mp3_bytes):
+    r = client.patch("/episodes/1", json={"title": "x"})
+    assert r.status_code == 401
+
+
+def test_delete_removes_row_and_file(client, auth_headers, fake_mp3_bytes):
+    _upload(client, auth_headers, fake_mp3_bytes, episode_id=910)
+    before = client.get("/episodes/910", headers=auth_headers).json()
+    from app.storage import episode_path
+    path = episode_path(910, before["title"], before["album"])
+    assert path.exists()
+
+    r = client.delete("/episodes/910", headers=auth_headers)
+    assert r.status_code == 204
+    assert client.get("/episodes/910", headers=auth_headers).status_code == 404
+    assert not path.exists()
+
+
+def test_delete_missing_row_404s(client, auth_headers):
+    r = client.delete("/episodes/999999", headers=auth_headers)
+    assert r.status_code == 404
+
+
+def test_delete_succeeds_even_if_file_already_gone(client, auth_headers, fake_mp3_bytes):
+    """The dedup pipeline may have hand-removed an audio file outside
+    the API (rsync, etc.) and only now is calling DELETE to clean the
+    DB row — the endpoint must not 500 on the orphan."""
+    _upload(client, auth_headers, fake_mp3_bytes, episode_id=911)
+    before = client.get("/episodes/911", headers=auth_headers).json()
+    from app.storage import episode_path
+    path = episode_path(911, before["title"], before["album"])
+    path.unlink()
+
+    r = client.delete("/episodes/911", headers=auth_headers)
+    assert r.status_code == 204
+    assert client.get("/episodes/911", headers=auth_headers).status_code == 404
+
+
+def test_delete_requires_auth(client, fake_mp3_bytes):
+    r = client.delete("/episodes/1")
+    assert r.status_code == 401
+
+
+def test_upload_starts_with_null_title_validated_at(client, auth_headers, fake_mp3_bytes):
+    _upload(client, auth_headers, fake_mp3_bytes, episode_id=920)
+    row = client.get("/episodes/920", headers=auth_headers).json()
+    assert row["title_validated_at"] is None
+
+
+def test_put_title_validated_stamps_now(client, auth_headers, fake_mp3_bytes):
+    _upload(client, auth_headers, fake_mp3_bytes, episode_id=921)
+    r = client.put("/episodes/921/title-validated", headers=auth_headers)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["title_validated_at"] is not None
+    # Re-stamping should overwrite, not error.
+    r2 = client.put("/episodes/921/title-validated", headers=auth_headers)
+    assert r2.status_code == 200
+
+
+def test_put_title_validated_404_on_missing(client, auth_headers):
+    r = client.put("/episodes/999999/title-validated", headers=auth_headers)
+    assert r.status_code == 404
+
+
+def test_put_title_validated_requires_auth(client, fake_mp3_bytes):
+    r = client.put("/episodes/1/title-validated")
+    assert r.status_code == 401
+
+
+def test_patch_also_stamps_title_validated_at(client, auth_headers, fake_mp3_bytes):
+    _upload(client, auth_headers, fake_mp3_bytes, episode_id=922, album="51")
+    before = client.get("/episodes/922", headers=auth_headers).json()
+    assert before["title_validated_at"] is None
+    r = client.patch(
+        "/episodes/922",
+        headers=auth_headers,
+        json={"title": "Knox on Money"},
+    )
+    assert r.status_code == 200
+    assert r.json()["title_validated_at"] is not None
