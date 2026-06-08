@@ -54,6 +54,7 @@ Examples:
 from __future__ import annotations
 import argparse
 import difflib
+import itertools
 import json
 import os
 import re
@@ -461,6 +462,152 @@ class WhisperxConfig:
     compute_type: str = "float16"
 
 
+def transcribe_batch(
+    clips: dict[str, Path],
+    cfg: WhisperxConfig,
+) -> dict[str, str]:
+    """Transcribe many clips in ONE whisperx invocation.
+
+    The whisperx large-v3 model takes ~30s to load and a few seconds
+    to transcribe per clip. Calling whisperx per clip burns the load
+    cost N times; batching N clips into one call amortizes it once.
+
+    Pipeline:
+      1. Stage clips into a flat tmpdir.
+      2. tar.gz → scp to pve → pct push to CT 112 → tar -x.
+      3. Single `whisperx file1.mp3 file2.mp3 ...` invocation.
+      4. tar -c the JSON output dir → pct pull → tar -x locally.
+      5. Parse each `<name>.json` and return {name: transcript_text}.
+
+    Returns dict from clip name (the key in `clips`) to joined
+    transcript text. Empty string for clips whisperx skipped or
+    returned no segments for.
+    """
+    if not clips:
+        return {}
+    pid = os.getpid()
+    pve_in_tar = f"/tmp/whisper-batch-in-{pid}.tar.gz"
+    pve_out_tar = f"/tmp/whisper-batch-out-{pid}.tar.gz"
+    ct_in_tar = f"/tmp/whisper-batch-in-{pid}.tar.gz"
+    ct_in_dir = f"/tmp/whisper-batch-in-{pid}"
+    ct_out_dir = f"/tmp/whisper-batch-out-{pid}"
+    ct_out_tar = f"/tmp/whisper-batch-out-{pid}.tar.gz"
+
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+        # 1. Stage clips under a flat dir; tar it up.
+        stage = td / "batch"
+        stage.mkdir()
+        for name, src in clips.items():
+            (stage / f"{name}.mp3").write_bytes(src.read_bytes())
+        local_tar = td / "batch.tar.gz"
+        subprocess.run(
+            ["tar", "-C", str(td), "-czf", str(local_tar), "batch"],
+            check=True, capture_output=True,
+        )
+        # 2. Ship to pve, then into the LXC, then untar.
+        _scp(local_tar, cfg.pve, pve_in_tar)
+        push = _ssh(
+            cfg.pve,
+            f"pct push {cfg.ct} {shlex.quote(pve_in_tar)} {shlex.quote(ct_in_tar)}"
+        )
+        if push.returncode != 0:
+            raise RuntimeError(
+                f"pct push failed: {push.stderr.decode(errors='replace')[-500:]}"
+            )
+        untar = _ssh(
+            cfg.pve,
+            f"pct exec {cfg.ct} -- bash -c "
+            + shlex.quote(
+                f"rm -rf {ct_in_dir} && mkdir -p {ct_in_dir} && "
+                f"tar -C {ct_in_dir} --strip-components=1 -xzf {ct_in_tar}"
+            ),
+        )
+        if untar.returncode != 0:
+            raise RuntimeError(
+                f"tar -x in CT failed: {untar.stderr.decode(errors='replace')[-500:]}"
+            )
+
+        # 3. Run whisperx on all clips in the input dir, one process.
+        # Globbing with `*.mp3` keeps the command short even for big batches.
+        wx_cmd = (
+            f"rm -rf {ct_out_dir} && mkdir -p {ct_out_dir} && cd {ct_in_dir} && "
+            f"{shlex.quote(cfg.bin)} *.mp3 "
+            f"--model {cfg.model} --device {cfg.device} "
+            f"--compute_type {cfg.compute_type} "
+            f"--output_format json --output_dir {ct_out_dir}"
+        )
+        wx = _ssh(
+            cfg.pve,
+            f"pct exec {cfg.ct} -- bash -c {shlex.quote(wx_cmd)}",
+        )
+        if wx.returncode != 0:
+            raise RuntimeError(
+                f"whisperx batch failed (rc={wx.returncode}): "
+                f"{wx.stderr.decode(errors='replace')[-1500:]}"
+            )
+
+        # 4. tar.gz the output dir, pull back to the dev machine, untar.
+        tar_out = _ssh(
+            cfg.pve,
+            f"pct exec {cfg.ct} -- bash -c "
+            + shlex.quote(f"tar -C {ct_out_dir} -czf {ct_out_tar} .")
+        )
+        if tar_out.returncode != 0:
+            raise RuntimeError(
+                f"tar output failed: {tar_out.stderr.decode(errors='replace')[-500:]}"
+            )
+        pull = _ssh(
+            cfg.pve,
+            f"pct pull {cfg.ct} {ct_out_tar} {pve_out_tar}"
+        )
+        if pull.returncode != 0:
+            raise RuntimeError(
+                f"pct pull failed: {pull.stderr.decode(errors='replace')[-500:]}"
+            )
+        local_out_tar = td / "out.tar.gz"
+        subprocess.run(
+            ["scp", "-q", "-o", "BatchMode=yes",
+             f"{cfg.pve}:{pve_out_tar}", str(local_out_tar)],
+            check=True,
+        )
+        out_dir = td / "out"
+        out_dir.mkdir()
+        subprocess.run(
+            ["tar", "-C", str(out_dir), "-xzf", str(local_out_tar)],
+            check=True, capture_output=True,
+        )
+
+        # 5. Parse JSONs.
+        results: dict[str, str] = {}
+        for name in clips:
+            jp = out_dir / f"{name}.json"
+            if not jp.exists():
+                results[name] = ""
+                continue
+            try:
+                data = json.loads(jp.read_text())
+            except json.JSONDecodeError:
+                results[name] = ""
+                continue
+            text = " ".join(
+                (s.get("text") or "").strip()
+                for s in data.get("segments", [])
+            ).strip()
+            results[name] = text
+
+        # 6. Best-effort remote cleanup.
+        _ssh(
+            cfg.pve,
+            f"rm -f {shlex.quote(pve_in_tar)} {shlex.quote(pve_out_tar)}; "
+            f"pct exec {cfg.ct} -- bash -c "
+            + shlex.quote(
+                f"rm -rf {ct_in_tar} {ct_out_tar} {ct_in_dir} {ct_out_dir}"
+            ),
+        )
+        return results
+
+
 def transcribe_clip(
     audio: Path,
     cfg: WhisperxConfig,
@@ -580,110 +727,187 @@ def cmd_validate(args: argparse.Namespace) -> int:
         ep.get("provider_id") == "ysh" for ep in ep_list
     ) else []
 
+    # Plan up front: which episodes to process, which segments to clip
+    # for each. Skipping already-validated rows here so the batches
+    # don't waste GPU on confirmed ones.
+    queue: list[dict] = []
     skipped_already_validated = 0
     for ep in ep_list:
-        if args.limit and total_listed >= args.limit:
+        if args.limit and len(queue) >= args.limit:
             break
-        eid = ep["episode_id"]
-        title = ep["title"]
-        album = ep.get("album")
-        provider = (ep.get("provider_id") or "aio").lower()
-        # Skip rows already whisper-validated unless --revalidate.
         if ep.get("title_validated_at") and not args.revalidate:
             skipped_already_validated += 1
             continue
-        total_listed += 1
-        # Dispatch by provider: AIO credits the title at the END
-        # (tail extraction); YSH announces "I call my story <title>"
-        # in the first minute (head extraction). YSH episodes that
-        # use a dramatic cold-open ("Hast thou considered my servant
-        # Job…") skip the credit phrase in head territory — for those
-        # we fall back to a tail probe too and keep the higher score.
-        sys.stderr.write(f"[validate] {provider:>3}/{eid:>7} \"{title}\" ")
-        sys.stderr.flush()
-        with tempfile.TemporaryDirectory() as td:
-            full = Path(td) / f"{eid}.mp3"
-            try:
-                client.download_audio(eid, full)
-            except Exception as exc:
-                sys.stderr.write(f"download ERR: {exc}\n")
-                out.append(ReportEntry(eid, title, album, "", None, None, 0.0, str(exc)))
-                continue
-
-            if provider == "ysh":
-                # Head probe.
-                try:
-                    head_t = transcribe_clip(full, cfg, args.head_secs, mode="head")
-                except Exception as exc:
-                    sys.stderr.write(f"head ERR: {exc}\n")
-                    out.append(ReportEntry(eid, title, album, "", None, None, 0.0, str(exc)))
-                    continue
-                head_match, head_score = best_ysh_match(head_t, ysh_candidates)
-                # Skip the tail probe when the head is already strong
-                # (score >= YSH_TAIL_FALLBACK_THRESHOLD) — saves GPU.
-                if head_score >= YSH_TAIL_FALLBACK_THRESHOLD:
-                    transcript = head_t
-                    best_title = head_match
-                    best_album = None
-                    score = head_score
-                    sys.stderr.write(f"(head {args.head_secs}s) ")
-                else:
-                    # Head missed → try tail rescue. Catches the dramatic
-                    # cold-open subset (Job-quote intros etc.) that hide
-                    # the title-reveal at the close instead.
-                    try:
-                        tail_t = transcribe_clip(full, cfg, args.tail_secs, mode="tail")
-                    except Exception:
-                        tail_t = ""
-                    tail_match, tail_score = best_ysh_match(tail_t, ysh_candidates)
-                    if tail_score > head_score:
-                        transcript = tail_t
-                        best_title = tail_match
-                        score = tail_score
-                        sys.stderr.write(f"(tail {args.tail_secs}s) ")
-                    else:
-                        transcript = head_t
-                        best_title = head_match
-                        score = head_score
-                        sys.stderr.write(f"(head→tail tied) ")
-                    best_album = None
-            else:
-                # AIO: tail only — credit is always at the close.
-                try:
-                    transcript = transcribe_clip(full, cfg, args.tail_secs, mode="tail")
-                except Exception as exc:
-                    sys.stderr.write(f"tail ERR: {exc}\n")
-                    out.append(ReportEntry(eid, title, album, "", None, None, 0.0, str(exc)))
-                    continue
-                match_entry, score = best_catalog_match(transcript, catalog)
-                best_title = match_entry.title if match_entry else None
-                best_album = match_entry.album if match_entry else None
-                sys.stderr.write(f"(tail {args.tail_secs}s) ")
-        sys.stderr.write(
-            f"-> \"{best_title or '(none)'}\" ({score:.2f})\n"
-        )
-        out.append(
-            ReportEntry(
-                episode_id=eid,
-                current_title=title,
-                current_album=album,
-                transcript=transcript,
-                best_title=best_title,
-                best_album=best_album,
-                confidence=score,
-            )
-        )
-        # Stamp the row as validated (best-effort — old server pre-
-        # migration returns 404, which we tolerate).
-        client.mark_validated(eid)
+        queue.append(ep)
     if skipped_already_validated:
         sys.stderr.write(
-            f"[validate] skipped {skipped_already_validated} already-validated "
+            f"[validate] skipping {skipped_already_validated} already-validated "
             f"row(s); pass --revalidate to re-check\n"
         )
+
+    # Process in batches so one whisperx model load amortizes across
+    # all clips in the batch. AIO episodes contribute one clip (tail);
+    # YSH episodes contribute two (head + tail) so the per-episode
+    # if-head-missed fallback collapses into a single batch round-trip.
+    sys.stderr.write(
+        f"[validate] {len(queue)} episode(s) to process "
+        f"in batches of {args.batch_size}\n"
+    )
+
+    for batch_idx, batch in enumerate(_chunked(queue, args.batch_size), start=1):
+        sys.stderr.write(
+            f"[batch {batch_idx:>3}/{(len(queue) + args.batch_size - 1) // args.batch_size}] "
+            f"{len(batch)} episode(s) "
+        )
+        sys.stderr.flush()
+        out.extend(_process_batch(
+            batch, client, cfg, catalog, ysh_candidates,
+            tail_secs=args.tail_secs, head_secs=args.head_secs,
+        ))
     args.out.write_text(json.dumps([asdict(e) for e in out], indent=2))
     sys.stderr.write(f"[validate] wrote {len(out)} entries → {args.out}\n")
     return 0
+
+
+def _chunked(seq, size):
+    """Yield successive chunks of `seq` with at most `size` items."""
+    it = iter(seq)
+    while True:
+        chunk = list(itertools.islice(it, size))
+        if not chunk:
+            return
+        yield chunk
+
+
+def _process_batch(
+    batch: list[dict],
+    client: "ArchiveClient",
+    cfg: WhisperxConfig,
+    catalog: list[CatalogEpisode],
+    ysh_candidates: list[str],
+    *,
+    tail_secs: int,
+    head_secs: int,
+) -> list[ReportEntry]:
+    """One whisperx batch: download → clip → tar → ship → transcribe →
+    score → return entries. Each entry stamps title_validated_at on
+    the server best-effort."""
+    rows: list[ReportEntry] = []
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+        # 1. Download audios + ffmpeg-clip per planned segment.
+        # clip_name → (Path on local disk, ep_dict, segment_type).
+        clips: dict[str, Path] = {}
+        plans: dict[str, tuple[dict, str]] = {}
+        download_errors: list[ReportEntry] = []
+        for ep in batch:
+            eid = ep["episode_id"]
+            provider = (ep.get("provider_id") or "aio").lower()
+            full = td / f"{eid}.mp3"
+            try:
+                client.download_audio(eid, full)
+            except Exception as exc:
+                download_errors.append(ReportEntry(
+                    eid, ep["title"], ep.get("album"), "",
+                    None, None, 0.0, f"download: {exc}",
+                ))
+                continue
+            try:
+                if provider == "ysh":
+                    # Both head + tail every time; the batch makes
+                    # the extra clip ~free vs. the model-load cost.
+                    h = td / f"ep{eid}-head.mp3"
+                    t = td / f"ep{eid}-tail.mp3"
+                    _ffmpeg_head(full, h, head_secs)
+                    _ffmpeg_tail(full, t, tail_secs)
+                    clips[f"ep{eid}-head"] = h
+                    plans[f"ep{eid}-head"] = (ep, "head")
+                    clips[f"ep{eid}-tail"] = t
+                    plans[f"ep{eid}-tail"] = (ep, "tail")
+                else:
+                    t = td / f"ep{eid}-tail.mp3"
+                    _ffmpeg_tail(full, t, tail_secs)
+                    clips[f"ep{eid}-tail"] = t
+                    plans[f"ep{eid}-tail"] = (ep, "tail")
+            except subprocess.CalledProcessError as exc:
+                download_errors.append(ReportEntry(
+                    eid, ep["title"], ep.get("album"), "",
+                    None, None, 0.0, f"ffmpeg: {exc}",
+                ))
+                continue
+
+        if not clips:
+            sys.stderr.write("  (all downloads failed)\n")
+            return download_errors
+
+        # 2. One whisperx call for the whole batch.
+        try:
+            sys.stderr.write(f"({len(clips)} clip(s)) … ")
+            sys.stderr.flush()
+            transcripts = transcribe_batch(clips, cfg)
+        except Exception as exc:
+            sys.stderr.write(f"BATCH ERR: {exc}\n")
+            for ep in batch:
+                rows.append(ReportEntry(
+                    ep["episode_id"], ep["title"], ep.get("album"), "",
+                    None, None, 0.0, f"whisperx batch: {exc}",
+                ))
+            return rows + download_errors
+
+        # 3. Score per episode. For YSH, score head + tail and keep
+        # the higher confidence (with its corresponding transcript).
+        by_ep: dict[int, dict] = {}
+        for clip_name, transcript in transcripts.items():
+            ep, segment = plans[clip_name]
+            eid = ep["episode_id"]
+            provider = (ep.get("provider_id") or "aio").lower()
+            if provider == "ysh":
+                title, score = best_ysh_match(transcript, ysh_candidates)
+                album = None
+            else:
+                entry, score = best_catalog_match(transcript, catalog)
+                title = entry.title if entry else None
+                album = entry.album if entry else None
+            prev = by_ep.get(eid)
+            cand = {
+                "transcript": transcript,
+                "best_title": title,
+                "best_album": album,
+                "confidence": score,
+                "segment": segment,
+            }
+            if prev is None or cand["confidence"] > prev["confidence"]:
+                by_ep[eid] = cand
+
+        # 4. Emit ReportEntry per episode, log winner.
+        for ep in batch:
+            eid = ep["episode_id"]
+            if eid not in by_ep:
+                # Download error — already in download_errors.
+                continue
+            r = by_ep[eid]
+            sys.stderr.write(
+                f"  {(ep.get('provider_id') or 'aio'):>3}/{eid:>7} "
+                f"\"{ep['title']}\" "
+                f"({r['segment']}) -> "
+                f"\"{r['best_title'] or '(none)'}\" "
+                f"({r['confidence']:.2f})\n"
+            )
+            rows.append(ReportEntry(
+                episode_id=eid,
+                current_title=ep["title"],
+                current_album=ep.get("album"),
+                transcript=r["transcript"],
+                best_title=r["best_title"],
+                best_album=r["best_album"],
+                confidence=r["confidence"],
+            ))
+            # Best-effort validation stamp on the server.
+            try:
+                client.mark_validated(eid)
+            except Exception as exc:
+                sys.stderr.write(f"    (mark_validated: {exc})\n")
+    return rows + download_errors
 
 
 def cmd_plan(args: argparse.Namespace) -> int:
@@ -873,6 +1097,12 @@ def _parse() -> argparse.Namespace:
     v.add_argument("--revalidate", action="store_true",
                    help="re-validate rows whose title_validated_at is "
                         "already set (default: skip them)")
+    v.add_argument("--batch-size", type=int, default=25,
+                   help="episodes per whisperx invocation. The large-v3 "
+                        "model takes ~30s to load on CT 112's GPU; "
+                        "batching amortizes that cost across all clips "
+                        "in the batch. Larger = faster end-to-end but a "
+                        "single failure loses the whole batch.")
     v.set_defaults(func=cmd_validate)
 
     p = sub.add_parser(

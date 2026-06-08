@@ -19,12 +19,39 @@ from pydantic import BaseModel
 
 from .. import db
 from ..auth import require_token
+from ..config import YSH_CATALOG_PATH
 from ..range_stream import stream_file
 from ..scrape_aio import enrich_album
+from ..scrape_ysh import build_indexes, load_catalog
 from ..storage import episode_path_for, sha256_file
 
 
 router = APIRouter(prefix="/providers/{provider}", dependencies=[Depends(require_token)])
+
+
+_YSH_SKU_INDEX_CACHE: dict | None = None
+
+
+def _enrich_ysh_album(external_id: str) -> str | None:
+    """Look up the YSH album for a sku via the persisted catalog.
+    Returns None when the catalog isn't present (fresh install before
+    `scripts/refresh-ysh-catalog.sh`) or the sku isn't listed (catalog
+    drift). Cached at module level — the catalog file changes only on
+    explicit refresh."""
+    global _YSH_SKU_INDEX_CACHE
+    if _YSH_SKU_INDEX_CACHE is None:
+        catalog = load_catalog(YSH_CATALOG_PATH)
+        if catalog is None:
+            return None
+        _, _, _YSH_SKU_INDEX_CACHE = build_indexes(catalog)
+    if not external_id.startswith("ysh-sku-"):
+        return None
+    try:
+        sku = int(external_id.removeprefix("ysh-sku-"))
+    except ValueError:
+        return None
+    match = _YSH_SKU_INDEX_CACHE.get(sku)
+    return match.album_title if match else None
 
 
 class EpisodeOutV2(BaseModel):
@@ -93,10 +120,17 @@ async def create_episode(
 
     # AIO clients can opt in to server-side album enrichment by
     # omitting the album field — the catalog scraper fills it in.
-    # YSH clients always send album directly (they have richer
-    # metadata than the AIO catalog) and skip enrichment.
-    if not album and provider == "aio":
-        album = enrich_album(title)
+    # YSH clients used to be expected to send album directly, but in
+    # practice a chunk of the Android upload paths leave it null
+    # (which then strands the row in /audio/ysh/unsorted/ and the
+    # Unsorted bucket). Look up via the YSH catalog by sku_id as the
+    # backstop — same mechanism `app.backfill_ysh_albums` uses to clean
+    # up rows that landed before this code path existed.
+    if not album:
+        if provider == "aio":
+            album = enrich_album(title)
+        elif provider == "ysh":
+            album = _enrich_ysh_album(external_id)
 
     out_path = episode_path_for(provider, external_id, title, album)
     out_path.parent.mkdir(parents=True, exist_ok=True)
