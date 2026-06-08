@@ -433,6 +433,46 @@ def _ffmpeg_head(src: Path, dst: Path, secs: int) -> None:
     subprocess.run(cmd, check=True, capture_output=True)
 
 
+def _ffprobe_ok(path: Path) -> bool:
+    """Validate that a clip is parseable by ffprobe — guards the batch
+    pipeline against malformed clips that would otherwise make
+    whisperx abort the entire batch on startup.
+
+    Real-world failure mode (seen 2026-06-08 on ep313-tail.mp3):
+      [mp3 @ ...] Format mp3 detected only with low score of 1, misdetection possible!
+      [mp3 @ ...] Invalid frame size (313): Could not seek to 795.
+      Error opening input file ep313-tail.mp3.
+      Error opening input files: Invalid argument
+
+    `-c copy` ffmpeg extraction is happy to remux a borderline-corrupt
+    source into a borderline-corrupt clip, but the downstream
+    whisperx ffmpeg refuses it AND takes the whole batch down. So we
+    ffprobe each clip after extraction; failures get excluded from
+    the batch and reported as per-episode errors instead of nuking
+    50 episodes of work.
+
+    Returns True iff ffprobe reports a positive duration without
+    erroring.
+    """
+    try:
+        result = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+    if result.returncode != 0:
+        return False
+    dur = result.stdout.strip()
+    if not dur or dur in ("N/A", "0", "0.000000"):
+        return False
+    try:
+        return float(dur) > 0
+    except ValueError:
+        return False
+
+
 def _ssh(pve: str, cmd: str, *, capture: bool = True,
          input_bytes: bytes | None = None) -> subprocess.CompletedProcess:
     return subprocess.run(
@@ -820,21 +860,38 @@ def _process_batch(
                     t = td / f"ep{eid}-tail.mp3"
                     _ffmpeg_head(full, h, head_secs)
                     _ffmpeg_tail(full, t, tail_secs)
-                    clips[f"ep{eid}-head"] = h
-                    plans[f"ep{eid}-head"] = (ep, "head")
-                    clips[f"ep{eid}-tail"] = t
-                    plans[f"ep{eid}-tail"] = (ep, "tail")
+                    pairs = [
+                        (f"ep{eid}-head", h, "head"),
+                        (f"ep{eid}-tail", t, "tail"),
+                    ]
                 else:
                     t = td / f"ep{eid}-tail.mp3"
                     _ffmpeg_tail(full, t, tail_secs)
-                    clips[f"ep{eid}-tail"] = t
-                    plans[f"ep{eid}-tail"] = (ep, "tail")
+                    pairs = [(f"ep{eid}-tail", t, "tail")]
             except subprocess.CalledProcessError as exc:
                 download_errors.append(ReportEntry(
                     eid, ep["title"], ep.get("album"), "",
                     None, None, 0.0, f"ffmpeg: {exc}",
                 ))
                 continue
+
+            # ffprobe each extracted clip before batching it. A
+            # malformed clip would make whisperx abort the whole
+            # batch on startup ("Error opening input files: Invalid
+            # argument") — losing N-1 episodes of correct work. Bad
+            # clips here become per-episode errors and the rest of
+            # the batch proceeds normally.
+            bad = [name for name, p, _ in pairs if not _ffprobe_ok(p)]
+            if bad:
+                download_errors.append(ReportEntry(
+                    eid, ep["title"], ep.get("album"), "",
+                    None, None, 0.0,
+                    f"ffprobe rejected clip(s): {bad}",
+                ))
+                continue
+            for name, p, segment in pairs:
+                clips[name] = p
+                plans[name] = (ep, segment)
 
         if not clips:
             sys.stderr.write("  (all downloads failed)\n")
