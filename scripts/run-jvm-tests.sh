@@ -27,6 +27,26 @@ KOTLIN_URL="https://github.com/JetBrains/kotlin/releases/download/v${KOTLIN_VERS
 
 step() { printf '\n\033[1;34m==>\033[0m %s\n' "$*"; }
 
+# Run a noisy command quietly: stash stdout+stderr in $RUN_LOG, only
+# surface it on failure. Keeps the default run terse enough to read
+# without piping through tail/head; if a step blows up the full log
+# spills out automatically. Pass --verbose to disable.
+RUN_LOG="${TOOLS:-/tmp}/last-step.log"
+VERBOSE=0
+for a in "$@"; do [[ "$a" == "--verbose" || "$a" == "-v" ]] && VERBOSE=1; done
+quietly() {
+  if (( VERBOSE )); then
+    "$@"
+  else
+    : > "$RUN_LOG"
+    if ! "$@" >>"$RUN_LOG" 2>&1; then
+      echo "--- step failed; full log follows ---" >&2
+      cat "$RUN_LOG" >&2
+      return 1
+    fi
+  fi
+}
+
 # ---------- 1. JDK ----------
 if [[ ! -x "$JDK_DIR/bin/java" ]]; then
   step "Downloading JDK ${JDK_VERSION} (~200MB extracted)"
@@ -109,10 +129,11 @@ rm -rf "$BUILD"
 mkdir -p "$BUILD/main" "$BUILD/test"
 
 step "Compiling production sources"
-kotlinc \
+quietly kotlinc \
   -Xplugin="$SERIALIZATION_PLUGIN" \
   -cp "$CP_LIBS" \
   -d "$BUILD/main" \
+  -nowarn \
   android/app/src/main/java/com/odyssey/scrape/OneplaceClient.kt \
   android/app/src/main/java/com/odyssey/player/PlaySource.kt \
   android/app/src/main/java/com/odyssey/player/PlaybackFormat.kt \
@@ -130,10 +151,11 @@ kotlinc \
   android/app/src/main/java/com/odyssey/qr/ServerQrCodec.kt
 
 step "Compiling test sources"
-kotlinc \
+quietly kotlinc \
   -Xplugin="$SERIALIZATION_PLUGIN" \
   -cp "$CP_LIBS:$BUILD/main" \
   -d "$BUILD/test" \
+  -nowarn \
   android/app/src/test/java/com/odyssey/scrape/OneplaceClientTest.kt \
   android/app/src/test/java/com/odyssey/app/AndroidManifestTest.kt \
   android/app/src/test/java/com/odyssey/player/PlaySourceTest.kt \
@@ -163,6 +185,8 @@ mkdir -p "$COVERAGE_DIR"
 JACOCO_EXEC="$COVERAGE_DIR/jacoco.exec"
 
 step "Running tests (JaCoCo coverage on)"
+JUNIT_LOG="${TOOLS}/junit-out.log"
+set +e
 java \
   -javaagent:"$JACOCO_AGENT"=destfile="$JACOCO_EXEC" \
   -Dodyssey.manifest="$MANIFEST_PATH" \
@@ -182,16 +206,27 @@ java \
   com.odyssey.debug.DebugLogTest \
   com.odyssey.download.DownloadProgressTest \
   com.odyssey.download.TransferRowTest \
-  com.odyssey.qr.ServerQrCodecTest
+  com.odyssey.qr.ServerQrCodecTest \
+  >"$JUNIT_LOG" 2>&1
+JUNIT_RC=$?
+set -e
+if (( JUNIT_RC != 0 )); then
+  echo "--- junit failed; full log follows ---" >&2
+  cat "$JUNIT_LOG" >&2
+  exit "$JUNIT_RC"
+fi
+# On success, just surface the JUnit summary line ("OK (188 tests)")
+# and any in-test diagnostic warnings the OneplaceClient prints. The
+# 188-character dot string is the noise to skip.
+grep -E '^(OK|Time:|FAILURES)' "$JUNIT_LOG" || true
 
 # ---------- 6. Coverage report ----------
 step "Generating JaCoCo report"
-java -jar "$JACOCO_CLI" report "$JACOCO_EXEC" \
+quietly java -jar "$JACOCO_CLI" report "$JACOCO_EXEC" \
   --classfiles "$BUILD/main" \
   --sourcefiles android/app/src/main/java \
   --xml "$COVERAGE_DIR/jacoco.xml" \
-  --html "$COVERAGE_DIR/html" \
-  >/dev/null
+  --html "$COVERAGE_DIR/html"
 
 # Pull the top-level LINE counter out of the XML report. The first <counter
 # type="LINE"…> child of the root <report> element is the project total.

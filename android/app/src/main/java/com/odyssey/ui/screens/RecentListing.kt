@@ -77,12 +77,10 @@ fun parseAirDateMillis(airDate: String?): Long {
  * caller passes an unordered list, since the visual order is what users
  * see.
  *
- * Cross-show on purpose: this list reflects the user's listening history,
- * which spans whatever they've actually tapped — the main Recent list's
- * provider filter (AIO vs YSH) deliberately does NOT apply here. The
- * user explicitly asked for this in the 2026-05-31 design conversation
- * ("maybe there's a couple different ones") — they want to bounce
- * between shows from this strip.
+ * Callers that want a per-show strip (Recent screen does this since
+ * 2026-06-14) pre-filter the [episodes] list by providerId before
+ * passing it in. The helper itself stays provider-agnostic so the same
+ * code path can power a cross-show strip later without a behavior fork.
  *
  * Generic over T + the position type so the pure-JVM unit test doesn't
  * need to drag in Room.

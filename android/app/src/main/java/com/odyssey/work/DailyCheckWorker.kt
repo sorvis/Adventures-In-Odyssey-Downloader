@@ -37,6 +37,7 @@ class DailyCheckWorker @AssistedInject constructor(
     private val episodes: EpisodeDao,
     private val settings: SettingsRepo,
     private val scheduler: DownloadEnqueuer,
+    private val playedThroughSweep: PlayedThroughSweep,
 ) : CoroutineWorker(ctx, params) {
 
     override suspend fun doWork(): Result = runCatching {
@@ -173,12 +174,22 @@ class DailyCheckWorker @AssistedInject constructor(
             settings.setLastSeen(ep.externalId.toLong())
         }
         settings.setLastRun(System.currentTimeMillis())
+
+        // Make room for the new ones: ghost any already-archived row
+        // the user has effectively finished (≤ 1 min remaining). Tighter
+        // than the 95%-played "✓ played" rule on purpose — short remainders
+        // on long episodes can still be worth finishing. Only runs when
+        // we actually ingested something, per user spec: "when downloading
+        // new episodes ... it should delete that episode to make room."
+        val sweptCount = if (newCount > 0) playedThroughSweep.sweep() else 0
         DebugLogger.i(
             "DailyCheckWorker",
             "doWork done — fetched=${fetched.size} " +
                 "alreadyExisting=${fetched.size - newCount} " +
                 "promotedFromBackupGhost=$promotedCount " +
-                "newRows=$newCount, publishing outputData[$KEY_NEW_COUNT]=$newCount",
+                "newRows=$newCount " +
+                "playedThroughGhosted=$sweptCount, " +
+                "publishing outputData[$KEY_NEW_COUNT]=$newCount",
         )
         // Publish the new-row count via WorkInfo.outputData. The UI
         // collects from the SAME WorkInfo flow it already uses for the

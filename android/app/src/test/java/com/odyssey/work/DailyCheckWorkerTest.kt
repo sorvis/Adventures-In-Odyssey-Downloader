@@ -10,6 +10,8 @@ import androidx.work.testing.TestListenableWorkerBuilder
 import com.odyssey.app.SettingsRepo
 import com.odyssey.data.local.EpisodeDao
 import com.odyssey.data.local.OdysseyDb
+import com.odyssey.data.local.PlaybackDao
+import com.odyssey.download.EpisodeDownloader
 import com.odyssey.scrape.OneplaceClient
 import com.odyssey.show.AioOneplaceProvider
 import com.odyssey.show.ProviderEpisode
@@ -55,8 +57,11 @@ class DailyCheckWorkerTest {
     private lateinit var aioProvider: AioOneplaceProvider
     private lateinit var db: OdysseyDb
     private lateinit var episodes: EpisodeDao
+    private lateinit var playback: PlaybackDao
     private lateinit var settings: SettingsRepo
     private lateinit var enqueuer: RecordingEnqueuer
+    private lateinit var downloader: EpisodeDownloader
+    private lateinit var sweep: PlayedThroughSweep
 
     /**
      * Providers passed to the worker. Default is just AIO (matches the
@@ -80,7 +85,10 @@ class DailyCheckWorkerTest {
         providers = setOf(aioProvider)
         db = Room.inMemoryDatabaseBuilder(ctx, OdysseyDb::class.java).allowMainThreadQueries().build()
         episodes = db.episodes()
+        playback = db.playback()
         settings = SettingsRepo(ctx)
+        downloader = EpisodeDownloader(ctx, OkHttpClient())
+        sweep = PlayedThroughSweep(episodes, playback, downloader)
         // Robolectric reuses the Application across tests, so DataStore
         // file persists. clearAllForTest() wipes everything so each
         // @Test starts from defaults (enabledProviders = {"aio"},
@@ -521,6 +529,123 @@ class DailyCheckWorkerTest {
     }
 
     @Test
+    fun `ingesting new episodes ghosts already-archived rows that are within 1 min of the end`() = runBlocking {
+        // User spec 2026-06-14: when downloading new episodes, a local
+        // file the user has effectively finished AND is backed up to
+        // NAS should be deleted to make room. "Effectively finished" =
+        // ≤1 min remaining. Tighter than the existing 95% played rule.
+        //
+        // Seed two downloaded+archived rows on the phone:
+        //   500 — 24:30 / 25:00 (30 s left)  → ghost on sweep
+        //   501 — 20:00 / 25:00 (5 min left) → keep
+        // Then a fresh oneplace fetch ingests new episodes; the sweep
+        // should fire and prune 500 only.
+        val tmpRoot = java.io.File(ctx.cacheDir, "sweep-test").apply { mkdirs() }
+        val keepFile = java.io.File(tmpRoot, "501.mp3").apply { writeText("keep") }
+        val pruneFile = java.io.File(tmpRoot, "500.mp3").apply { writeText("prune") }
+        for ((eid, file) in listOf("500" to pruneFile, "501" to keepFile)) {
+            episodes.upsert(
+                com.odyssey.data.local.LocalEpisodeEntity(
+                    providerId = "aio",
+                    externalId = eid,
+                    title = "ep $eid",
+                    airDate = "May 1, 2026",
+                    description = null,
+                    sourceUrl = "https://oneplace/$eid",
+                    downloadUrl = "https://zcast/$eid.mp3",
+                    filePath = file.absolutePath,
+                    fileSize = file.length(),
+                    durationMs = 25 * 60_000L,
+                    downloadedAt = 1L,
+                    archivedAt = 100L,
+                ),
+            )
+        }
+        // Position rows: 500 at 24:30 (30 s left), 501 at 20:00 (5 min left).
+        playback.upsert(
+            com.odyssey.data.local.PlaybackPositionEntity(
+                providerId = "aio", externalId = "500",
+                positionMs = 24 * 60_000L + 30_000L,
+                durationMs = 25 * 60_000L,
+                updatedAt = 1L, completedAt = null,
+            ),
+        )
+        playback.upsert(
+            com.odyssey.data.local.PlaybackPositionEntity(
+                providerId = "aio", externalId = "501",
+                positionMs = 20 * 60_000L,
+                durationMs = 25 * 60_000L,
+                updatedAt = 1L, completedAt = null,
+            ),
+        )
+
+        server.enqueue(html(loadFixture("/oneplace/listen.html")))
+        server.enqueue(json(loadFixture("/oneplace/api_page1.json")))
+        server.enqueue(json(loadFixture("/oneplace/api_page2.json")))
+
+        val worker = buildWorker()
+        val result = worker.doWork()
+        assertTrue("expected Result.Success, got $result", result is ListenableWorker.Result.Success)
+
+        // 500 (30 s left) is the played-through one — file gone, row
+        // converted to a backup-mirror ghost. archivedAt preserved so
+        // Recent still streams from NAS on tap.
+        val swept = episodes.byKey("aio", "500")!!
+        assertEquals("filePath cleared", null, swept.filePath)
+        assertEquals("fileSize cleared", 0L, swept.fileSize)
+        assertTrue("downloadUrl rewritten as backup://", swept.downloadUrl.startsWith("backup://"))
+        assertEquals("archivedAt preserved so the row still streams from NAS", 100L, swept.archivedAt)
+        assertFalse("on-disk file is gone — freed for the new download", pruneFile.exists())
+
+        // 501 (5 min left) still has meaningful unheard tail — keep it.
+        val kept = episodes.byKey("aio", "501")!!
+        assertEquals(keepFile.absolutePath, kept.filePath)
+        assertTrue("on-disk file is still present", keepFile.exists())
+    }
+
+    @Test
+    fun `idle refresh with no new episodes does NOT touch played-through rows`() = runBlocking {
+        // User spec ties the prune to "when downloading new episodes."
+        // A pull-to-refresh that finds nothing new must not churn the
+        // local catalog — otherwise the user could lose a played-through
+        // file unexpectedly on a no-op refresh.
+        val tmpRoot = java.io.File(ctx.cacheDir, "sweep-noop").apply { mkdirs() }
+        val file = java.io.File(tmpRoot, "777.mp3").apply { writeText("payload") }
+        episodes.upsert(
+            com.odyssey.data.local.LocalEpisodeEntity(
+                providerId = "aio",
+                externalId = "777",
+                title = "finished but no new ingests",
+                airDate = "May 1, 2026",
+                description = null,
+                sourceUrl = "https://oneplace/777",
+                downloadUrl = "https://zcast/777.mp3",
+                filePath = file.absolutePath,
+                fileSize = file.length(),
+                durationMs = 25 * 60_000L,
+                downloadedAt = 1L,
+                archivedAt = 100L,
+            ),
+        )
+        playback.upsert(
+            com.odyssey.data.local.PlaybackPositionEntity(
+                providerId = "aio", externalId = "777",
+                positionMs = 25 * 60_000L,    // 0 s left — definitely played through
+                durationMs = 25 * 60_000L,
+                updatedAt = 1L, completedAt = 1L,
+            ),
+        )
+
+        // newSince returns empty → newCount=0 → sweep should not run.
+        server.enqueue(html("<html>no bootstrap here</html>"))
+        buildWorker().doWork()
+
+        val row = episodes.byKey("aio", "777")!!
+        assertEquals("filePath untouched on no-op refresh", file.absolutePath, row.filePath)
+        assertTrue("on-disk file untouched on no-op refresh", file.exists())
+    }
+
+    @Test
     fun `upstream error returns retry not failure`() = runBlocking {
         // Server replies with 500 — the listen-page request should fail,
         // newSince() catches and returns empty list. But we want the
@@ -562,6 +687,7 @@ class DailyCheckWorkerTest {
                 episodes = episodes,
                 settings = settings,
                 scheduler = enqueuer,
+                playedThroughSweep = sweep,
             )
         }
     }

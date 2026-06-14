@@ -143,10 +143,12 @@ class RecentVm @Inject constructor(
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     /**
-     * Inline "Recently played" strip for the Recent screen. Drawn from
-     * the unfiltered `episodes.observeAll()` source on purpose — the
-     * user's listening history spans both providers and is intentionally
-     * NOT scoped to the active show dropdown.
+     * Inline "Recently played" strip for the Recent screen. Filtered to
+     * the currently-active show — flipping the dropdown to YSH shouldn't
+     * surface AIO plays here (user report 2026-06-14: "ysh is mixed with
+     * aio"). The strip is meant as a quick way back into recent listens
+     * inside the show you're currently browsing, NOT a cross-provider
+     * history view.
      *
      * Capped at [MAX_RECENTLY_PLAYED] entries; the strip pulls one extra
      * row from the DB so excluding the Continue-listening row still
@@ -156,9 +158,10 @@ class RecentVm @Inject constructor(
         episodes.observeAll(),
         playback.observeRecentlyPlayed(MAX_RECENTLY_PLAYED + 1),
         resume,
-    ) { eps, plays, resumePos ->
+        settings.activeShow,
+    ) { eps, plays, resumePos, active ->
         recentlyPlayedFor(
-            episodes = eps,
+            episodes = eps.filter { it.providerId == active },
             positions = plays,
             excludeEpisodeId = resumePos?.episodeId,
             maxItems = MAX_RECENTLY_PLAYED,
@@ -505,9 +508,9 @@ fun RecentScreen(
             // Continue-listening card and the main daily-check list when
             // the user has actually played something other than the
             // single most-recent (which already lives in the card above).
-            // Cross-show by design — the user explicitly asked for this
-            // to span providers ("maybe there's a couple different
-            // ones"), so it ignores the active-show dropdown filter.
+            // Scoped to the active show — the VM filters `eps` by
+            // `providerId == settings.activeShow` so flipping the
+            // dropdown to YSH never surfaces AIO plays here.
             if (recentlyPlayed.isNotEmpty()) {
                 item {
                     Text(

@@ -15,8 +15,10 @@ import com.odyssey.show.ShowProvider
 import com.odyssey.show.YshCatalog
 import com.odyssey.show.YshFreeStreamProvider
 import com.odyssey.show.YshOneplaceProvider
+import com.odyssey.download.EpisodeDownloader
 import com.odyssey.work.DailyCheckWorker
 import com.odyssey.work.DownloadEnqueuer
+import com.odyssey.work.PlayedThroughSweep
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
@@ -346,6 +348,11 @@ class YshHappyPathEndToEndTest {
                 episodes = episodes,
                 settings = settings,
                 scheduler = enqueuer,
+                playedThroughSweep = PlayedThroughSweep(
+                    episodes,
+                    db.playback(),
+                    EpisodeDownloader(ctx, OkHttpClient()),
+                ),
             )
         }
         return TestListenableWorkerBuilder.from(ctx, DailyCheckWorker::class.java)
