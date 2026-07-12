@@ -28,8 +28,8 @@ android {
         applicationId = "com.odyssey"
         minSdk = 26
         targetSdk = 35
-        versionCode = 84
-        versionName = "0.1.83"
+        versionCode = 85
+        versionName = "0.1.84"
     }
     signingConfigs {
         if (keystorePropsFile.exists()) {
