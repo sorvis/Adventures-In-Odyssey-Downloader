@@ -115,6 +115,11 @@ class DownloadedVmTest {
             archiveProgress = com.odyssey.download.ArchiveProgressTracker(),
             catalog = catalog,
             mirror = mirror,
+            yshCatalog = com.odyssey.show.YshCatalog(ctx, okhttp3.OkHttpClient()),
+            albumResolver = com.odyssey.ui.AlbumNavResolver(
+                catalog,
+                com.odyssey.show.YshCatalog(ctx, okhttp3.OkHttpClient()),
+            ),
         )
     }
 
@@ -188,6 +193,8 @@ class DownloadedVmTest {
         override suspend fun unarchivedDownloaded(): List<LocalEpisodeEntity> = emptyList()
         override fun observeYshAlbumSummaries(): Flow<List<com.odyssey.data.local.YshAlbumSummary>> = flowOf(emptyList())
         override fun observeYshAlbumTracks(albumName: String): Flow<List<LocalEpisodeEntity>> = flowOf(emptyList())
+        override suspend fun yshRowsMissingAlbum(): List<LocalEpisodeEntity> = emptyList()
+        override suspend fun setAlbumInfo(providerId: String, externalId: String, albumName: String?, albumImageUrl: String?, albumTrackOrder: Int?) {}
     }
 
     private class NoopPlaybackDao : PlaybackDao {

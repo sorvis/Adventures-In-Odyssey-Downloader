@@ -4,7 +4,9 @@ import android.content.Context
 import androidx.hilt.work.HiltWorker
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
+import com.odyssey.data.local.EpisodeDao
 import com.odyssey.show.YshCatalog
+import com.odyssey.show.backfillYshAlbums
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 
@@ -23,11 +25,17 @@ class YshCatalogRefreshWorker @AssistedInject constructor(
     @Assisted ctx: Context,
     @Assisted params: WorkerParameters,
     private val catalog: YshCatalog,
+    private val episodes: EpisodeDao,
 ) : CoroutineWorker(ctx, params) {
 
     override suspend fun doWork(): Result =
         catalog.refresh().fold(
-            onSuccess = { Result.success() },
+            onSuccess = {
+                // A fresh index may now cover rows that had no album at
+                // ingest (older builds, or the catalog gained the sku).
+                catalog.state.value?.let { backfillYshAlbums(episodes, it) }
+                Result.success()
+            },
             onFailure = { Result.retry() },
         )
 }

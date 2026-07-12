@@ -59,6 +59,14 @@ class YshFreeStreamProvider @Inject constructor(
                     sourceUrl = "$SITE_ORIGIN/free-streaming/album/${a.slug}",
                     durationSeconds = t.lengthSeconds ?: DEFAULT_DURATION_S,
                     imageUrl = absolutize(a.primaryImage),
+                    // Free-streaming carries album name + cover inline, so
+                    // day-1 rows (before the deep catalog refresh) still
+                    // know their album. The wire has no per-track order, so
+                    // albumTrackOrder stays null and detail-sort falls back
+                    // to title (the catalog backfill fills it in later).
+                    albumName = a.product,
+                    albumImageUrl = absolutize(a.primaryImage),
+                    albumTrackOrder = null,
                 )
                 if (out.size >= maxFetch) return out
             }

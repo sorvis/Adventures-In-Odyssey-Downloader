@@ -12,6 +12,7 @@ import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -80,7 +81,15 @@ class RecentVm @Inject constructor(
     val catalog: AioCatalogRepo,
     private val yshCatalog: com.odyssey.show.YshCatalog,
     private val nas: com.odyssey.nas.NasClient,
+    private val albumResolver: com.odyssey.ui.AlbumNavResolver,
 ) : ViewModel() {
+
+    /**
+     * Album an episode belongs to, for the row's "Go to album" button.
+     * Null when none resolves — the row then hides the affordance.
+     */
+    fun albumTargetFor(ep: LocalEpisodeEntity): com.odyssey.ui.AlbumNavTarget? =
+        albumResolver.targetFor(ep)
 
     /**
      * Fallback artwork URL for YSH rows whose [LocalEpisodeEntity.imageUrl]
@@ -375,6 +384,7 @@ class RecentVm @Inject constructor(
 @Composable
 fun RecentScreen(
     onNavigateToSettings: () -> Unit = {},
+    onOpenAlbum: (com.odyssey.ui.AlbumNavTarget) -> Unit = {},
     vm: RecentVm = hiltViewModel(),
 ) {
     val items by vm.items.collectAsState()
@@ -607,6 +617,8 @@ fun RecentScreen(
                         isCurrentlyPlaying = playerState.currentEpisodeId == ep.episodeId &&
                                 playerState.isPlaying,
                         fallbackArtwork = vm.yshAlbumArtworkFor(ep),
+                        albumNavName = vm.albumTargetFor(ep)?.albumName,
+                        onGoToAlbum = vm.albumTargetFor(ep)?.let { t -> { onOpenAlbum(t) } },
                         onToggleExpand = {
                             expandedIds = if (ep.episodeId in expandedIds) expandedIds - ep.episodeId
                                           else expandedIds + ep.episodeId
@@ -651,6 +663,14 @@ internal fun EpisodeRow(
      * the caller resolves this via `vm.yshAlbumArtworkFor(ep)`.
      */
     fallbackArtwork: String? = null,
+    /**
+     * Album name this episode belongs to, resolved by the caller via
+     * `AlbumNavResolver`. When non-null (together with [onGoToAlbum]),
+     * the expanded panel shows a "Go to album" button. Null hides it —
+     * e.g. an AIO oneplace title with no catalog match.
+     */
+    albumNavName: String? = null,
+    onGoToAlbum: (() -> Unit)? = null,
 ) {
     // Catalog enrichment overrides oneplace's data when we have a match:
     //   - Title becomes the canonical "#NNN: Title" (e.g. "#657: Clutter")
@@ -876,6 +896,23 @@ internal fun EpisodeRow(
                         ) {
                             Text("Download for offline")
                         }
+                    }
+                }
+                // Jump to this episode's album. Shown only when the
+                // caller resolved an album for the row.
+                if (albumNavName != null && onGoToAlbum != null) {
+                    TextButton(
+                        onClick = onGoToAlbum,
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
+                        modifier = Modifier.testTag("episode-row-go-to-album"),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Album,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text("Go to album: $albumNavName", maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
             }

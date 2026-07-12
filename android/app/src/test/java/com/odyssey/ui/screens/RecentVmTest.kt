@@ -463,6 +463,13 @@ class RecentVmTest {
             SettingsRepo(ApplicationProvider.getApplicationContext()),
             okhttp3.OkHttpClient(),
         ),
+        albumResolver = com.odyssey.ui.AlbumNavResolver(
+            AioCatalogRepo(ApplicationProvider.getApplicationContext()),
+            com.odyssey.show.YshCatalog(
+                ApplicationProvider.getApplicationContext(),
+                okhttp3.OkHttpClient(),
+            ),
+        ),
     )
 
     private fun makeEp(
@@ -540,6 +547,8 @@ class RecentVmTest {
         override suspend fun unarchivedDownloaded(): List<LocalEpisodeEntity> = emptyList()
         override fun observeYshAlbumSummaries(): Flow<List<com.odyssey.data.local.YshAlbumSummary>> = flowOf(emptyList())
         override fun observeYshAlbumTracks(albumName: String): Flow<List<LocalEpisodeEntity>> = flowOf(emptyList())
+        override suspend fun yshRowsMissingAlbum(): List<LocalEpisodeEntity> = emptyList()
+        override suspend fun setAlbumInfo(providerId: String, externalId: String, albumName: String?, albumImageUrl: String?, albumTrackOrder: Int?) {}
     }
 
     private class NoopPlaybackDao : PlaybackDao {

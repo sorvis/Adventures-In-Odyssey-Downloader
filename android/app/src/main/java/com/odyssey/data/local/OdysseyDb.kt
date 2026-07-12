@@ -318,6 +318,31 @@ interface EpisodeDao {
     ORDER BY albumTrackOrder ASC, title ASC
     """)
     fun observeYshAlbumTracks(albumName: String): Flow<List<LocalEpisodeEntity>>
+
+    /**
+     * YSH rows that never got their album metadata persisted — rows
+     * ingested before album-at-ingest landed (v0.1.84), which is why
+     * some episodes had no album to jump to. `YshAlbumBackfill` fills
+     * these from the loaded catalog by skuId on catalog load/refresh.
+     */
+    @Query("SELECT * FROM local_episodes WHERE providerId = 'ysh' AND albumName IS NULL")
+    suspend fun yshRowsMissingAlbum(): List<LocalEpisodeEntity>
+
+    /** Persist album identity onto a single row (used by the backfill). */
+    @Query("""
+      UPDATE local_episodes
+         SET albumName       = :albumName,
+             albumImageUrl   = :albumImageUrl,
+             albumTrackOrder = :albumTrackOrder
+       WHERE providerId = :providerId AND externalId = :externalId
+    """)
+    suspend fun setAlbumInfo(
+        providerId: String,
+        externalId: String,
+        albumName: String?,
+        albumImageUrl: String?,
+        albumTrackOrder: Int?,
+    )
 }
 
 /**

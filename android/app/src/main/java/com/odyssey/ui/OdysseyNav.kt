@@ -76,6 +76,18 @@ fun OdysseyNav(
     // Sub-routes (album/{key}, now-playing, debug) shouldn't deselect the parent tab.
     val tabRoute = tabs.firstOrNull { currentRoute.startsWith(it.route) }?.route ?: currentRoute
 
+    // Jump to an episode's album from the now-playing screen or an
+    // expanded episode row. Route family is provider-specific; the album
+    // name is percent-encoded exactly like the album lists do (Uri.encode,
+    // never URLEncoder — see the YSH note below).
+    val openAlbum: (AlbumNavTarget) -> Unit = { target ->
+        val encoded = android.net.Uri.encode(target.albumName)
+        when (target.providerId) {
+            "ysh" -> nav.navigate("ysh-album/$encoded")
+            else -> nav.navigate("album/$encoded")
+        }
+    }
+
     // The full Now-Playing screen IS the player surface — when the user
     // is already there, hiding the mini-bar AND the bottom tabs gives
     // the player the full screen for transport controls. The down-arrow
@@ -113,13 +125,16 @@ fun OdysseyNav(
         Box(modifier = Modifier.fillMaxSize().padding(padding)) {
             NavHost(nav, startDestination = Tab.Recent.route) {
                 composable(Tab.Recent.route) {
-                    RecentScreen(onNavigateToSettings = {
-                        nav.navigate(Tab.Settings.route) {
-                            popUpTo(nav.graph.startDestinationId) { saveState = true }
-                            launchSingleTop = true
-                            restoreState = true
-                        }
-                    })
+                    RecentScreen(
+                        onNavigateToSettings = {
+                            nav.navigate(Tab.Settings.route) {
+                                popUpTo(nav.graph.startDestinationId) { saveState = true }
+                                launchSingleTop = true
+                                restoreState = true
+                            }
+                        },
+                        onOpenAlbum = openAlbum,
+                    )
                 }
                 composable(Tab.Albums.route) {
                     // Albums tab adapts to the active show. AIO uses
@@ -181,6 +196,7 @@ fun OdysseyNav(
                                 restoreState = true
                             }
                         },
+                        onOpenAlbum = openAlbum,
                     )
                 }
                 composable(Tab.Backup.route) {
@@ -200,7 +216,10 @@ fun OdysseyNav(
                     YshUnmatchedTitlesScreen(onBack = { nav.popBackStack() })
                 }
                 composable(ROUTE_NOW_PLAYING) {
-                    NowPlayingScreen(onBack = { nav.popBackStack() })
+                    NowPlayingScreen(
+                        onBack = { nav.popBackStack() },
+                        onOpenAlbum = openAlbum,
+                    )
                 }
                 composable(ROUTE_DEBUG) {
                     DebugScreen(onBack = { nav.popBackStack() })

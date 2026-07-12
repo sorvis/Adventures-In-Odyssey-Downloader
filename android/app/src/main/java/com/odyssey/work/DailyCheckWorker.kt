@@ -134,6 +134,9 @@ class DailyCheckWorker @AssistedInject constructor(
                             downloadUrl = ep.downloadUrl,
                             durationMs = ep.durationSeconds * 1000,
                             imageUrl = ep.imageUrl,
+                            albumName = ep.albumName ?: current.albumName,
+                            albumImageUrl = ep.albumImageUrl ?: current.albumImageUrl,
+                            albumTrackOrder = ep.albumTrackOrder ?: current.albumTrackOrder,
                             // archivedAt stays — the NAS server still
                             // has the audio, so the album badge stays.
                         ),
@@ -159,6 +162,9 @@ class DailyCheckWorker @AssistedInject constructor(
                     downloadedAt = null,
                     archivedAt   = null,
                     imageUrl     = ep.imageUrl,
+                    albumName       = ep.albumName,
+                    albumImageUrl   = ep.albumImageUrl,
+                    albumTrackOrder = ep.albumTrackOrder,
                 )
             )
             // DownloadEnqueuer is now provider-aware — every newly

@@ -85,6 +85,9 @@ class YshOneplaceProvider @Inject constructor(
                 sourceUrl = ep.url,
                 durationSeconds = ep.durationSeconds,
                 imageUrl = match.albumImageUrl,
+                albumName = match.albumTitle,
+                albumImageUrl = match.albumImageUrl,
+                albumTrackOrder = match.orderIndex,
             )
         }
         return out

@@ -1,6 +1,8 @@
 package com.odyssey.show
 
+import com.odyssey.data.local.EpisodeDao
 import com.odyssey.data.local.LocalEpisodeEntity
+import com.odyssey.debug.DebugLogger
 
 /**
  * Per-track view shown on YshAlbumDetailScreen. Built by
@@ -63,7 +65,7 @@ fun joinYshAlbumDetail(
         }
         .toMap()
 
-    return catalog.tracks
+    val catalogRows = catalog.tracks
         .filter { it.albumTitle == albumName }
         .map { track ->
             val local = bySkuId[track.skuId]
@@ -81,7 +83,77 @@ fun joinYshAlbumDetail(
                 localRow = local,
             )
         }
+
+    // Robustness: a downloaded row whose stored albumName matches this
+    // album but whose skuId isn't among the catalog's tracks for it
+    // (catalog drift, or a free-stream sku the deep catalog dropped)
+    // would otherwise vanish from its own album. Surface those DB rows
+    // too so "Go to album" never lands on a screen missing the very
+    // episode the user came from.
+    val catalogSkuIds = catalogRows.mapTo(HashSet()) { it.skuId }
+    val orphanRows = dbRowsForAlbum
+        .filter { it.providerId == "ysh" && it.albumName == albumName }
+        .mapNotNull { row ->
+            val skuId = row.externalId.removePrefix("ysh-sku-").toLongOrNull() ?: return@mapNotNull null
+            if (skuId in catalogSkuIds) return@mapNotNull null
+            YshAlbumDetailRow(
+                skuId = skuId,
+                title = row.title,
+                orderIndex = row.albumTrackOrder ?: Int.MAX_VALUE,
+                albumImageUrl = row.albumImageUrl ?: row.imageUrl,
+                ownership = if (row.filePath != null) YshTrackOwnership.DOWNLOADED
+                            else YshTrackOwnership.STREAMABLE,
+                localRow = row,
+            )
+        }
+
+    return (catalogRows + orphanRows)
         .sortedWith(compareBy({ it.orderIndex }, { it.title }))
+}
+
+/**
+ * Resolve the album NAME for a YSH row. Prefers the album name
+ * persisted on the row at ingest (v0.1.84+); falls back to a catalog
+ * lookup by skuId for rows ingested before persistence landed. Returns
+ * null for non-YSH rows, malformed externalIds, or when neither the
+ * row nor the (possibly-unloaded) catalog can supply a name. This is
+ * the join key for navigating to `ysh-album/{albumName}`.
+ */
+fun yshAlbumNameForRow(
+    row: LocalEpisodeEntity,
+    catalog: YshCatalogIndex?,
+): String? {
+    if (row.providerId != "ysh") return null
+    row.albumName?.takeIf { it.isNotBlank() }?.let { return it }
+    if (catalog == null) return null
+    val skuId = row.externalId.removePrefix("ysh-sku-").toLongOrNull() ?: return null
+    return catalog.tracks.firstOrNull { it.skuId == skuId }?.albumTitle
+}
+
+/**
+ * Backfill album metadata onto YSH rows that predate album-at-ingest.
+ * For each row with a null albumName whose skuId is in [catalog], writes
+ * the album name / cover / track order. Idempotent — rows already
+ * carrying an albumName are skipped by the DAO query. Returns the number
+ * of rows updated. Run after catalog load and after each refresh.
+ */
+suspend fun backfillYshAlbums(dao: EpisodeDao, catalog: YshCatalogIndex): Int {
+    val bySkuId = catalog.tracks.associateBy { it.skuId }
+    var updated = 0
+    for (row in dao.yshRowsMissingAlbum()) {
+        val skuId = row.externalId.removePrefix("ysh-sku-").toLongOrNull() ?: continue
+        val track = bySkuId[skuId] ?: continue
+        dao.setAlbumInfo(
+            providerId = "ysh",
+            externalId = row.externalId,
+            albumName = track.albumTitle,
+            albumImageUrl = track.albumImageUrl,
+            albumTrackOrder = track.orderIndex,
+        )
+        updated++
+    }
+    if (updated > 0) DebugLogger.i("YshAlbumBackfill", "backfilled album on $updated YSH row(s)")
+    return updated
 }
 
 /**

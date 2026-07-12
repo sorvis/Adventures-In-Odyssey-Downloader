@@ -60,7 +60,17 @@ class DownloadedVm @Inject constructor(
     private val archiveProgress: com.odyssey.download.ArchiveProgressTracker,
     val catalog: AioCatalogRepo,
     private val mirror: NasMirror,
+    private val yshCatalog: com.odyssey.show.YshCatalog,
+    private val albumResolver: com.odyssey.ui.AlbumNavResolver,
 ) : ViewModel() {
+
+    /** YSH cover fallback when a Library row's own imageUrl is null. */
+    fun yshAlbumArtworkFor(ep: LocalEpisodeEntity): String? =
+        com.odyssey.show.yshAlbumImageUrlForRow(ep, yshCatalog.state.value)
+
+    /** Album an episode belongs to, for the row's "Go to album" button. */
+    fun albumTargetFor(ep: LocalEpisodeEntity): com.odyssey.ui.AlbumNavTarget? =
+        albumResolver.targetFor(ep)
 
     private val _isRefreshing = MutableStateFlow(false)
     val isRefreshing = _isRefreshing.asStateFlow()
@@ -171,6 +181,7 @@ class DownloadedVm @Inject constructor(
 @Composable
 fun DownloadedScreen(
     onOpenSettings: () -> Unit = {},
+    onOpenAlbum: (com.odyssey.ui.AlbumNavTarget) -> Unit = {},
     vm: DownloadedVm = hiltViewModel(),
 ) {
     val items by vm.items.collectAsState()
@@ -240,6 +251,9 @@ fun DownloadedScreen(
                                 playback = positions[ep.episodeId],
                                 isCurrentlyPlaying = playerState.currentEpisodeId == ep.episodeId &&
                                         playerState.isPlaying,
+                                fallbackArtwork = vm.yshAlbumArtworkFor(ep),
+                                albumNavName = vm.albumTargetFor(ep)?.albumName,
+                                onGoToAlbum = vm.albumTargetFor(ep)?.let { t -> { onOpenAlbum(t) } },
                                 onToggleExpand = {
                                     expandedIds = if (ep.episodeId in expandedIds) expandedIds - ep.episodeId
                                                   else expandedIds + ep.episodeId

@@ -26,15 +26,28 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.media3.session.MediaController
 import coil.compose.AsyncImage
+import com.odyssey.data.local.EpisodeDao
 import com.odyssey.player.PlayerController
 import com.odyssey.player.seekTargetMs
+import com.odyssey.show.YshCatalog
+import com.odyssey.ui.AlbumNavResolver
+import com.odyssey.ui.AlbumNavTarget
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 @HiltViewModel
-class NowPlayingVm @Inject constructor(private val player: PlayerController) : ViewModel() {
+class NowPlayingVm @Inject constructor(
+    private val player: PlayerController,
+    episodes: EpisodeDao,
+    albumResolver: AlbumNavResolver,
+    yshCatalog: YshCatalog,
+) : ViewModel() {
     var controller by mutableStateOf<MediaController?>(null); private set
     var positionMs by mutableStateOf(0L); private set
     var durationMs by mutableStateOf(0L); private set
@@ -42,6 +55,24 @@ class NowPlayingVm @Inject constructor(private val player: PlayerController) : V
     var title by mutableStateOf(""); private set
     var description by mutableStateOf(""); private set
     var artworkUri by mutableStateOf<Uri?>(null); private set
+
+    /** mediaId of the current item (= episodeId), null when nothing loaded. */
+    private val currentEpisodeId = MutableStateFlow<Long?>(null)
+
+    /**
+     * The album the currently-playing episode belongs to, or null when
+     * none resolves (no catalog match, or nothing playing). Drives the
+     * "Go to album" affordance. Reactive on the DB row set and the YSH
+     * catalog so it fills in once a late catalog refresh lands.
+     */
+    val albumTarget = combine(
+        currentEpisodeId,
+        episodes.observeAll(),
+        yshCatalog.state,
+    ) { id, eps, _ ->
+        val row = id?.let { eid -> eps.firstOrNull { it.episodeId == eid } } ?: return@combine null
+        albumResolver.targetFor(row)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     /** Has anything ever been loaded? Drives MiniPlayer visibility. */
     val hasContent: Boolean get() = title.isNotEmpty() || artworkUri != null
@@ -58,6 +89,7 @@ class NowPlayingVm @Inject constructor(private val player: PlayerController) : V
                 title = item?.mediaMetadata?.title?.toString().orEmpty()
                 description = item?.mediaMetadata?.description?.toString().orEmpty()
                 artworkUri = item?.mediaMetadata?.artworkUri
+                currentEpisodeId.value = item?.mediaId?.toLongOrNull()
                 delay(500)
             }
         }
@@ -146,10 +178,12 @@ fun MiniPlayerBar(
 @Composable
 fun NowPlayingScreen(
     onBack: () -> Unit = {},
+    onOpenAlbum: (AlbumNavTarget) -> Unit = {},
     vm: NowPlayingVm = hiltViewModel(),
 ) {
     var dragging by remember { mutableStateOf(false) }
     var dragFrac by remember { mutableStateOf(0f) }
+    val albumTarget by vm.albumTarget.collectAsState()
 
     val durationMs = vm.durationMs
     val knownDuration = durationMs > 0
@@ -215,6 +249,30 @@ fun NowPlayingScreen(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.testTag("now-playing-title"),
             )
+
+            // Jump to the album this episode belongs to. Hidden when no
+            // album resolves (AIO title with no catalog match, or a YSH
+            // row whose catalog entry hasn't loaded yet).
+            albumTarget?.let { target ->
+                TextButton(
+                    onClick = { onOpenAlbum(target) },
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                    modifier = Modifier.testTag("now-playing-go-to-album"),
+                ) {
+                    Icon(
+                        Icons.Default.Album,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = target.albumName,
+                        style = MaterialTheme.typography.labelMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
 
             // Description capped to 2 lines so transport always fits
             // without scroll. v0.1.77: when the text actually overflows

@@ -43,4 +43,16 @@ data class ProviderEpisode(
     val sourceUrl: String,
     val durationSeconds: Long,
     val imageUrl: String?,
+    /**
+     * Album this episode belongs to. AIO organizes albums via the
+     * bundled AioCatalogRepo (title-join) so its providers leave these
+     * null; the YSH providers populate all three so the row carries its
+     * album identity even when the deep yourstoryhour.org catalog isn't
+     * loaded (fresh installs) or later drops the sku. Persisted onto
+     * LocalEpisodeEntity.albumName/albumImageUrl/albumTrackOrder by
+     * DailyCheckWorker.
+     */
+    val albumName: String? = null,
+    val albumImageUrl: String? = null,
+    val albumTrackOrder: Int? = null,
 )

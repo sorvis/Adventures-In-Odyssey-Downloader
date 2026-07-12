@@ -189,6 +189,50 @@ class YshAlbumDetailTest {
         assertEquals(YshTrackOwnership.UNAVAILABLE, rows.single().ownership)
     }
 
+    @Test
+    fun `downloaded row whose album matches but sku is not in the catalog still surfaces`() {
+        // Robustness for the "some YSH have no album" fix: a row whose
+        // stored albumName matches this album but whose skuId the deep
+        // catalog dropped must not vanish from its own album — else
+        // "Go to album" lands on a screen missing the very episode.
+        val rows = joinYshAlbumDetail(
+            catalog = catalog(
+                track(skuId = 100, albumTitle = "A", title = "T1", orderIndex = 0),
+            ),
+            albumName = "A",
+            dbRowsForAlbum = listOf(
+                localRow(skuId = 100, filePath = "/data/t1.mp3"),      // in catalog
+                localRow(skuId = 900, filePath = "/data/orphan.mp3"),  // stored album "A", not in catalog
+            ),
+        )
+        assertEquals(2, rows.size)
+        val orphan = rows.single { it.skuId == 900L }
+        assertEquals(YshTrackOwnership.DOWNLOADED, orphan.ownership)
+        assertEquals("/data/orphan.mp3", orphan.localRow?.filePath)
+    }
+
+    @Test
+    fun `yshAlbumNameForRow prefers the album name stored on the row`() {
+        // Even with a catalog present, the row's own albumName wins so
+        // free-stream-only rows (absent from the deep catalog) resolve.
+        val row = localRow(skuId = 900).copy(albumName = "Stored Album")
+        assertEquals("Stored Album", yshAlbumNameForRow(row, catalog(track(skuId = 1, albumTitle = "X", title = "T", orderIndex = 0))))
+    }
+
+    @Test
+    fun `yshAlbumNameForRow falls back to the catalog by skuId when albumName is null`() {
+        val row = localRow(skuId = 100).copy(albumName = null)
+        val cat = catalog(track(skuId = 100, albumTitle = "Catalog Album", title = "T", orderIndex = 0))
+        assertEquals("Catalog Album", yshAlbumNameForRow(row, cat))
+    }
+
+    @Test
+    fun `yshAlbumNameForRow returns null for AIO rows and for unresolvable YSH rows`() {
+        assertNull(yshAlbumNameForRow(localRow(skuId = 1).copy(providerId = "aio", albumName = null), catalog()))
+        // YSH row, no stored album, sku not in catalog, catalog null → null
+        assertNull(yshAlbumNameForRow(localRow(skuId = 999).copy(albumName = null), catalog = null))
+    }
+
     // ----- helpers --------------------------------------------------------
 
     private fun catalog(vararg tracks: YshCatalogTrack) = YshCatalogIndex(

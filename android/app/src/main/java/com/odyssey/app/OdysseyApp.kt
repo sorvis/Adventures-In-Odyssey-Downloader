@@ -3,10 +3,12 @@ package com.odyssey.app
 import android.app.Application
 import androidx.hilt.work.HiltWorkerFactory
 import androidx.work.Configuration
+import com.odyssey.data.local.EpisodeDao
 import com.odyssey.download.DiskLayoutMigrator
 import com.odyssey.download.DownloadReconciler
 import com.odyssey.nas.NasMirror
 import com.odyssey.show.YshCatalog
+import com.odyssey.show.backfillYshAlbums
 import com.odyssey.work.WorkScheduler
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
@@ -25,6 +27,7 @@ class OdysseyApp : Application(), Configuration.Provider {
     @Inject lateinit var downloadReconciler: DownloadReconciler
     @Inject lateinit var settings: SettingsRepo
     @Inject lateinit var nasMirror: NasMirror
+    @Inject lateinit var episodes: EpisodeDao
 
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder().setWorkerFactory(workerFactory).build()
@@ -48,6 +51,12 @@ class OdysseyApp : Application(), Configuration.Provider {
             // unique-named); no-op when the cache is already warm.
             if (yshCatalog.state.value == null) {
                 workScheduler.runYshCatalogRefreshNow()
+            } else {
+                // Warm cache already loaded: backfill album metadata onto
+                // any pre-v0.1.84 YSH rows that were ingested without it,
+                // so "Go to album" resolves for episodes already on the
+                // phone. Fresh-refresh installs get this via the worker.
+                backfillYshAlbums(episodes, yshCatalog.state.value!!)
             }
             // Recover from "file is fully on disk but filePath is null
             // in DB" stuck states left by pre-v0.1.51 download workers
