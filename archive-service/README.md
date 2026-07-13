@@ -134,6 +134,52 @@ Idempotent — re-runs are safe. Doesn't run the catalog matcher
 sends), so files end up in `unsorted/` unless you pass `--album` per
 batch.
 
+## Diagnostics
+
+### Is the archive keeping up with oneplace?
+
+`scripts/check_archive_freshness.py` reports AIO episodes oneplace.com
+has aired that never reached the NAS — a hole somewhere in
+`oneplace → Android app → archive-service`. It's **read-only** (reports
+only; never re-ingests). Re-broadcasts are de-aliased through
+`aio_catalog.json` (oneplace assigns a fresh episodeId on every re-air,
+but the app files it under the canonical AIO catalog #), so genuine
+back-catalog gaps surface without every re-broadcast flagging a false
+positive.
+
+```bash
+# Wrapper — resolves the NAS bearer token from $ODYSSEY_NAS_TOKEN,
+# ~/.aio-archive-token, or the LXC's .env via the Proxmox host.
+archive-service/scripts/check-freshness.sh            # table report
+archive-service/scripts/check-freshness.sh --json     # machine-readable
+archive-service/scripts/check-freshness.sh --probe-window 80
+
+# Or call the checker directly with explicit creds:
+archive-service/scripts/check_archive_freshness.py \
+  --nas-url http://<lxc-ip>:8088 --nas-token "$TOKEN"
+```
+
+Exit code: `0` fully archived · `1` at least one gap · `2` transport/
+credential error. Overrides (env): `ODYSSEY_NAS_URL`,
+`ODYSSEY_NAS_TOKEN`, `PROXMOX_HOST`, `LXC_ID`.
+
+### Fixing mis-titled archived episodes
+
+`scripts/whisper_titles.py` transcribes each episode's tail (AIO) or
+head (YSH) on the CT 112 GPU via whisperx, fuzzy-matches the spoken
+title against `aio_catalog.json`, and proposes corrections. `validate`
+writes a report (and stamps `title_validated_at` server-side); `plan`
+previews proposals from that report without writing; `apply` PATCHes
+the titles. See the script header for the full flow.
+
+```bash
+export ODYSSEY_BASE_URL=http://<lxc-ip>:8088
+export ODYSSEY_AUTH_TOKEN="$TOKEN"
+scripts/whisper_titles.py validate --limit 20 --out /tmp/report.json
+scripts/whisper_titles.py plan     --report /tmp/report.json
+scripts/whisper_titles.py apply    --report /tmp/report.json --threshold 0.95
+```
+
 ## Development (locally, no Docker)
 
 ```bash

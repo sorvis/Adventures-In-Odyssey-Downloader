@@ -256,6 +256,44 @@ def _ysh_candidates_from_archive(client: "ArchiveClient") -> list[str]:
     return sorted(seen)
 
 
+# AIO closing-credit anchors observed in real transcripts (2026-06-08).
+# Forward = title FOLLOWS the anchor ("today's episode is called X").
+# Backward = title PRECEDES the anchor ("X was written by Y").
+# Order = specificity, first match wins per direction.
+_AIO_FORWARD_ANCHORS = (
+    "today s episode is called",
+    "today s episode it s called",
+    "today s episode is",
+    "today s episode",
+    "you have been listening to",
+    "you ve been listening to",
+    "it s called",
+)
+
+_AIO_BACKWARD_ANCHORS = (
+    "was written and directed by",
+    "was written by",
+    "was directed by",
+)
+
+
+def _strip_part_suffix(title: str) -> str:
+    """'A Touch of Healing, Part 2 of 2' → 'A Touch of Healing'.
+
+    Announcers usually drop the part-suffix when crediting a multi-part
+    episode at the close, so the catalog's full title ('… Part 2 of 2')
+    won't substring-match the credit. Stripping the suffix lets the
+    matcher recognize the announced base title against either Part 1
+    or Part 2 (both legitimate matches when the row's current title
+    contains the same base)."""
+    return re.sub(
+        r",?\s*part\s+\d+\s+of\s+\d+\s*$",
+        "",
+        title,
+        flags=re.IGNORECASE,
+    ).strip()
+
+
 def best_catalog_match(
     transcript: str,
     catalog: list[CatalogEpisode],
@@ -277,38 +315,105 @@ def best_catalog_match(
         return None, 0.0
     tn = _norm(transcript)
     tn_words = tn.split()
-    # Restrict ALL matching to the tail of the transcript — the credit
-    # is in the closing seconds, and an earlier name-drop ("…just like
-    # in Knox on Money…") shouldn't outscore the actual credit phrase.
-    # 50 words covers the typical closing announcement plus a buffer.
-    tail = tn_words[-50:]
-    tail_str = " ".join(tail)
-    best: tuple[CatalogEpisode | None, float] = (None, 0.0)
+
+    # Pre-build (entry, normalized_full, normalized_stripped) tuples so
+    # we don't re-normalize ~1200 catalog titles inside each anchor pass.
+    indexed: list[tuple[CatalogEpisode, str, str]] = []
     for entry in catalog:
         cn = _norm(entry.title)
-        if not cn:
+        stripped = _norm(_strip_part_suffix(entry.title))
+        if cn:
+            indexed.append((entry, cn, stripped))
+
+    def _score_against(
+        span_words: list[str],
+        min_words: int = 1,
+    ) -> tuple[CatalogEpisode | None, float]:
+        """Match every catalog entry against `span_words`. Substring
+        in the span scores 1.0 (full) / 0.95 (stripped); otherwise we
+        slide a window of len(target words) and take the best fuzzy
+        ratio.
+
+        `min_words` skips catalog titles shorter than N words. The
+        anchored passes call with 1 (a localized single-word title like
+        "Karen" is trustworthy right after "it's called"), but the
+        unanchored tail fallback passes 2: a bare word like "Secrets"
+        substring-hitting an album-name mention
+        ("…the album called Secrets, Surprises…") would otherwise score
+        1.0 and auto-propose a bogus rename. Multi-word titles are
+        specific enough to survive the unanchored tail."""
+        if not span_words:
+            return (None, 0.0)
+        span = " ".join(span_words)
+        local_best: tuple[CatalogEpisode | None, float] = (None, 0.0)
+        for entry, full, stripped in indexed:
+            if len(full.split()) >= min_words and full in span:
+                score = 1.0
+                if (score > local_best[1]
+                        or (score == local_best[1]
+                            and (local_best[0] is None
+                                 or len(full) > len(_norm(local_best[0].title))))):
+                    local_best = (entry, score)
+                continue
+            if (stripped and stripped != full
+                    and len(stripped.split()) >= min_words
+                    and stripped in span):
+                if 0.95 > local_best[1]:
+                    local_best = (entry, 0.95)
+                continue
+            # Sliding-window fuzzy on whichever of (full, stripped) fits.
+            for target in (full, stripped):
+                if not target or target == "":
+                    continue
+                tw = target.split()
+                if not tw or len(tw) < min_words or len(tw) > len(span_words):
+                    continue
+                for i in range(len(span_words) - len(tw) + 1):
+                    window = " ".join(span_words[i : i + len(tw)])
+                    r = difflib.SequenceMatcher(None, window, target).ratio()
+                    if r > local_best[1]:
+                        local_best = (entry, r)
+        return local_best
+
+    # Pass 1: forward anchors. After "today's episode is called …" /
+    # "you have been listening to …" / "it's called …" the next ~12
+    # words are the title.
+    for anchor in _AIO_FORWARD_ANCHORS:
+        idx = tn.find(anchor)
+        if idx == -1:
             continue
-        # Exact substring within the tail — cheapest, strongest.
-        # Tie-break (if multiple catalog titles all appear in the tail)
-        # goes to the longest match; rare in practice but keeps the
-        # behavior deterministic.
-        if cn in tail_str:
-            score = 1.0
-            if score > best[1] or (score == best[1] and (best[0] is None or len(cn) > len(_norm(best[0].title)))):
-                best = (entry, score)
+        suffix_words = tn[idx + len(anchor):].split()[:12]
+        if not suffix_words:
             continue
-        cn_words = cn.split()
-        if not cn_words or len(cn_words) > len(tail):
+        match = _score_against(suffix_words)
+        # Anchor hits are high-signal; accept them at >= 0.7 fuzzy.
+        # The 0.95 threshold in `plan` / `apply` still gates real
+        # rename proposals.
+        if match[0] is not None and match[1] >= 0.7:
+            return match
+
+    # Pass 2: backward anchors. Before "X was written by Y" / "X was
+    # written and directed by Y", the immediately preceding ~12 words
+    # contain X. This is the strongest signal in AIO closing credits.
+    for anchor in _AIO_BACKWARD_ANCHORS:
+        idx = tn.find(anchor)
+        if idx == -1:
             continue
-        max_local = 0.0
-        for i in range(0, len(tail) - len(cn_words) + 1):
-            window = " ".join(tail[i : i + len(cn_words)])
-            r = difflib.SequenceMatcher(None, window, cn).ratio()
-            if r > max_local:
-                max_local = r
-        if max_local > best[1]:
-            best = (entry, max_local)
-    return best
+        prefix_words = tn[:idx].split()[-12:]
+        if not prefix_words:
+            continue
+        match = _score_against(prefix_words)
+        if match[0] is not None and match[1] >= 0.7:
+            return match
+
+    # Pass 3: legacy fallback — sliding-window over the last 50 words.
+    # Catches title-drops that bypass the credit phrasing (older
+    # episodes whose closer is just "<title>. Adventures in Odyssey…").
+    # min_words=2: without an anchor to localize the title, single-word
+    # catalog titles collide with incidental mentions (album names, cast
+    # surnames) and must not auto-propose.
+    tail = tn_words[-50:]
+    return _score_against(tail, min_words=2)
 
 
 # ---------------------------------------------------------------------------
@@ -322,7 +427,8 @@ class ArchiveClient:
         self.token = token
 
     def _req(self, method: str, path: str, *, data: bytes | None = None,
-             json_body: dict | None = None) -> bytes:
+             json_body: dict | None = None,
+             quiet_statuses: tuple[int, ...] = ()) -> bytes:
         url = self.base + path
         headers = {"Authorization": f"Bearer {self.token}"}
         body = data
@@ -334,9 +440,12 @@ class ArchiveClient:
             with urlopen(req) as r:
                 return r.read()
         except HTTPError as e:
-            sys.stderr.write(
-                f"HTTP {e.code} on {method} {path}: {e.read().decode(errors='replace')[:500]}\n"
-            )
+            # Some statuses are expected sentinels the caller handles
+            # (e.g. 404 = "no unsorted episodes"); don't cry wolf for those.
+            if e.code not in quiet_statuses:
+                sys.stderr.write(
+                    f"HTTP {e.code} on {method} {path}: {e.read().decode(errors='replace')[:500]}\n"
+                )
             raise
 
     def list_episodes(self, *, limit: int, offset: int,
@@ -363,8 +472,19 @@ class ArchiveClient:
     def list_unsorted_episodes(self) -> list[dict]:
         """/albums/Unsorted/episodes returns the imported-without-album
         rows (album IS NULL OR album=''). Different endpoint from
-        /episodes?album= because the filter semantics differ for NULL."""
-        return json.loads(self._req("GET", "/albums/Unsorted/episodes"))
+        /episodes?album= because the filter semantics differ for NULL.
+
+        The server 404s ("no episodes for that album") when nothing is
+        unsorted — a clean, healthy state, not an error. Treat it as an
+        empty list so `validate --unsorted` no-ops instead of crashing."""
+        try:
+            return json.loads(
+                self._req("GET", "/albums/Unsorted/episodes", quiet_statuses=(404,))
+            )
+        except HTTPError as e:
+            if e.code == 404:
+                return []
+            raise
 
     def download_audio(self, episode_id: int, dest: Path) -> None:
         url = f"{self.base}/episodes/{episode_id}/audio"
@@ -967,6 +1087,17 @@ def _process_batch(
     return rows + download_errors
 
 
+def _is_same_base_part(current: str, candidate: str) -> bool:
+    """True when `current` and `candidate` differ only by their
+    "Part X of N" suffix. Audio can confirm the base title but not
+    which part of a multi-parter is playing, so when the matcher
+    suggests swapping Part 3 → Part 1 we treat that as already-correct
+    rather than a mis-title."""
+    a = _strip_part_suffix(current).strip().lower()
+    b = _strip_part_suffix(candidate).strip().lower()
+    return bool(a) and a == b and current != candidate
+
+
 def cmd_plan(args: argparse.Namespace) -> int:
     """Preview what `apply` would do. No server contact; reads the
     validate-report JSON and bucketizes every entry."""
@@ -1001,6 +1132,12 @@ def cmd_plan(args: argparse.Namespace) -> int:
             below += 1
             continue
         if e["best_title"] == e["current_title"]:
+            already_correct += 1
+            continue
+        # Same base title, different "Part X of N" — audio can confirm
+        # the show but not which part. Treat as correct, not as a
+        # rename candidate.
+        if _is_same_base_part(e["current_title"], e["best_title"]):
             already_correct += 1
             continue
         proposed.append(e)
@@ -1052,6 +1189,9 @@ def cmd_apply(args: argparse.Namespace) -> int:
             continue
         new_title = entry.get("best_title")
         if not new_title or new_title == entry["current_title"]:
+            skipped_match += 1
+            continue
+        if _is_same_base_part(entry["current_title"], new_title):
             skipped_match += 1
             continue
         new_album = entry.get("best_album") if args.fix_album else None
