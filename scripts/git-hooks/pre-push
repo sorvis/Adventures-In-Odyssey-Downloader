@@ -20,6 +20,14 @@ step "Android JVM tests + coverage gate"
 "$REPO_ROOT/scripts/run-jvm-tests.sh"
 "$REPO_ROOT/scripts/check-coverage.sh"
 
+step "JVM test-wiring drift guard"
+# Fails if a pure-JVM *Test.kt is neither wired into run-jvm-tests.sh nor
+# parked in jvm-test-skiplist.txt — so a new bare-JVM test can't silently
+# skip the runner (the v0.1.84-dev FocusRewindTest omission). Membership
+# of the bare-kotlinc island can't be globbed (transitive Android/Room
+# deps), hence a guard rather than auto-discovery.
+"$REPO_ROOT/scripts/check-jvm-test-wiring.sh"
+
 step "App-wide coverage gate (Robolectric JaCoCo via Gradle)"
 # Added v0.1.69 after the user surfaced that scripts/run-jvm-tests.sh
 # only measures coverage of ~15 hand-picked pure-JVM files, missing

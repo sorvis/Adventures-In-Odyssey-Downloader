@@ -1,0 +1,29 @@
+# Pure-JVM-looking *Test.kt files that are DELIBERATELY not run by
+# scripts/run-jvm-tests.sh (the bare-kotlinc island).
+#
+# These tests import nothing from android/androidx/robolectric/mockk
+# directly, so check-jvm-test-wiring.sh sees them as bare-runner
+# candidates — but their PRODUCTION dependencies transitively pull in
+# Android/Room (via com.odyssey.* or same-package references), so they
+# only compile under the full Gradle + Robolectric toolchain. They ARE
+# covered there, by the app-wide jacocoDebugReport gate.
+#
+# One path per line, relative to repo root. '#' starts a comment.
+# When you wire one of these into run-jvm-tests.sh, delete its line here
+# (the guard will flag a contradiction if it's in both places).
+
+# Depends on com.odyssey.app.Settings (imports androidx DataStore).
+android/app/src/test/java/com/odyssey/nas/CfAccessHeadersTest.kt
+
+# Depend on com.odyssey.data.local.LocalEpisodeEntity (a Room @Entity).
+android/app/src/test/java/com/odyssey/show/YshAlbumDetailTest.kt
+android/app/src/test/java/com/odyssey/show/YshAlbumOwnershipTest.kt
+
+# Compile-clean in isolation but their prod closure / fixtures are only
+# assembled in the Gradle Robolectric suite today. Promote to
+# run-jvm-tests.sh (and rebaseline coverage) if you want them pre-push.
+android/app/src/test/java/com/odyssey/show/AioOneplaceFilterTest.kt
+android/app/src/test/java/com/odyssey/show/YshFreeStreamProviderTest.kt
+android/app/src/test/java/com/odyssey/player/AlbumQueueControllerTest.kt
+android/app/src/test/java/com/odyssey/show/ProviderRegistryTest.kt
+android/app/src/test/java/com/odyssey/data/local/EntityEpisodeIdGetterTest.kt
