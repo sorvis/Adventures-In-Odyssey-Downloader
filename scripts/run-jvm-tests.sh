@@ -141,6 +141,7 @@ quietly kotlinc \
   android/app/src/main/java/com/odyssey/player/PlayAction.kt \
   android/app/src/main/java/com/odyssey/player/PositionPersistence.kt \
   android/app/src/main/java/com/odyssey/player/SeekTarget.kt \
+  android/app/src/main/java/com/odyssey/player/FocusRewind.kt \
   android/app/src/main/java/com/odyssey/catalog/AioCatalog.kt \
   android/app/src/main/java/com/odyssey/catalog/AioCatalogMatch.kt \
   android/app/src/main/java/com/odyssey/catalog/AlbumOwnership.kt \
@@ -164,6 +165,7 @@ quietly kotlinc \
   android/app/src/test/java/com/odyssey/player/PlayActionTest.kt \
   android/app/src/test/java/com/odyssey/player/PositionPersistenceTest.kt \
   android/app/src/test/java/com/odyssey/player/SeekTargetTest.kt \
+  android/app/src/test/java/com/odyssey/player/FocusRewindTest.kt \
   android/app/src/test/java/com/odyssey/catalog/AioCatalogMatchTest.kt \
   android/app/src/test/java/com/odyssey/catalog/AlbumOwnershipTest.kt \
   android/app/src/test/java/com/odyssey/ui/screens/RecentListingTest.kt \
@@ -200,6 +202,8 @@ java \
   com.odyssey.player.PlayActionTest \
   com.odyssey.player.PositionPersistenceTest \
   com.odyssey.player.SeekTargetTest \
+  com.odyssey.player.RewindTargetMsTest \
+  com.odyssey.player.FocusPauseTrackerTest \
   com.odyssey.catalog.AioCatalogMatchTest \
   com.odyssey.catalog.AlbumOwnershipTest \
   com.odyssey.ui.screens.RecentListingTest \
