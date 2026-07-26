@@ -90,7 +90,7 @@ fun DebugScreen(onBack: () -> Unit = {}) {
 }
 
 @Composable
-private fun LogRow(e: DebugLogEntry) {
+internal fun LogRow(e: DebugLogEntry) {
     val color = when (e.level) {
         LogLevel.DEBUG -> MaterialTheme.colorScheme.onSurfaceVariant
         LogLevel.INFO -> MaterialTheme.colorScheme.onSurface
