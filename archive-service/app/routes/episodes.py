@@ -32,6 +32,10 @@ class EpisodeOut(BaseModel):
     sha256: str | None
     archived_at: str
     title_validated_at: str | None = None
+    # Which matcher did the validating ("aio/1", "ysh/2"). Lets a run
+    # re-check only the rows an older matcher touched instead of
+    # choosing between "skip everything stamped" and "redo all of it".
+    title_validator_version: str | None = None
     # Surfaced so scripts/whisper_titles.py can dispatch by provider:
     # AIO announces the title in the closing seconds, YSH at the start.
     provider_id: str | None = None
@@ -53,6 +57,10 @@ def _row_to_out(r) -> EpisodeOut:
         external = r["external_id"]
     except (IndexError, KeyError):
         external = None
+    try:
+        validator_version = r["title_validator_version"]
+    except (IndexError, KeyError):
+        validator_version = None
     return EpisodeOut(
         episode_id=r["episode_id"],
         title=r["title"],
@@ -64,6 +72,7 @@ def _row_to_out(r) -> EpisodeOut:
         sha256=r["sha256"],
         archived_at=r["archived_at"],
         title_validated_at=validated,
+        title_validator_version=validator_version,
         provider_id=provider,
         external_id=external,
     )
@@ -256,14 +265,25 @@ def patch_episode(episode_id: int, body: EpisodePatch):
     return _row_to_out(updated)
 
 
+class TitleValidatedIn(BaseModel):
+    """Optional body for the stamp endpoint. Older clients PUT with no
+    body at all, which leaves the version NULL — read as "validated by
+    an unknown, therefore stale, matcher"."""
+    validator_version: str | None = None
+
+
 @router.put("/{episode_id}/title-validated", response_model=EpisodeOut)
-def mark_title_validated(episode_id: int):
+def mark_title_validated(episode_id: int, body: TitleValidatedIn | None = None):
     """Stamp `title_validated_at = now` without touching title/album.
-    Called by scripts/whisper_titles.py for every episode whose tail
+    Called by scripts/whisper_titles.py for every episode whose
     transcription succeeded, regardless of whether the catalog match
     proposed a change — so a re-run can skip already-verified rows.
     Idempotent: re-stamping refreshes the timestamp.
+
+    `validator_version` records WHICH matcher did the checking, so a
+    later run can re-queue only the rows an older matcher touched.
     """
+    version = body.validator_version if body else None
     with db.connect() as c:
         row = c.execute(
             "SELECT 1 FROM episodes WHERE episode_id = ?", (episode_id,)
@@ -271,14 +291,108 @@ def mark_title_validated(episode_id: int):
         if not row:
             raise HTTPException(404, "not found")
         c.execute(
-            "UPDATE episodes SET title_validated_at = datetime('now') "
-            "WHERE episode_id = ?",
-            (episode_id,),
+            "UPDATE episodes SET title_validated_at = datetime('now'), "
+            "title_validator_version = ? WHERE episode_id = ?",
+            (version, episode_id),
         )
         updated = c.execute(
             "SELECT * FROM episodes WHERE episode_id = ?", (episode_id,)
         ).fetchone()
     return _row_to_out(updated)
+
+
+class TranscriptIn(BaseModel):
+    """One cached whisperx clip transcription.
+
+    `secs` and `model` are part of the identity, not metadata: a 90s
+    head clip does not answer a question about the first 180s, and two
+    whisper models do not produce interchangeable text.
+    """
+    segment: str
+    secs: int
+    model: str
+    text: str
+    audio_sha256: str | None = None
+
+
+class TranscriptOut(BaseModel):
+    episode_id: int
+    segment: str
+    secs: int
+    model: str
+    audio_sha256: str
+    text: str
+    created_at: str
+
+
+def _transcript_row_to_out(r) -> TranscriptOut:
+    return TranscriptOut(
+        episode_id=r["episode_id"],
+        segment=r["segment"],
+        secs=r["secs"],
+        model=r["model"],
+        audio_sha256=r["audio_sha256"],
+        text=r["text"],
+        created_at=r["created_at"],
+    )
+
+
+@router.get("/{episode_id}/transcripts", response_model=list[TranscriptOut])
+def list_transcripts(episode_id: int):
+    """Every cached clip transcription for an episode.
+
+    Returns all variants rather than taking (segment, secs, model) as
+    filters, because the caller is deciding whether ANY cached clip is
+    usable — often it can accept a longer clip than it asked for, and
+    that judgement belongs in the client, not in a SQL WHERE.
+    """
+    with db.connect() as c:
+        row = c.execute(
+            "SELECT 1 FROM episodes WHERE episode_id = ?", (episode_id,)
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "not found")
+        rows = c.execute(
+            "SELECT * FROM episode_transcripts WHERE episode_id = ? "
+            "ORDER BY segment, secs, model",
+            (episode_id,),
+        ).fetchall()
+    return [_transcript_row_to_out(r) for r in rows]
+
+
+@router.put("/{episode_id}/transcripts", response_model=TranscriptOut)
+def put_transcript(episode_id: int, body: TranscriptIn):
+    """Upsert one cached clip transcription.
+
+    Idempotent on the full key, so re-running a transcription simply
+    refreshes the text rather than accumulating duplicates.
+    """
+    if body.segment not in ("head", "tail"):
+        raise HTTPException(400, "segment must be 'head' or 'tail'")
+    if body.secs <= 0:
+        raise HTTPException(400, "secs must be positive")
+    sha = body.audio_sha256 or ""
+    with db.connect() as c:
+        row = c.execute(
+            "SELECT 1 FROM episodes WHERE episode_id = ?", (episode_id,)
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "not found")
+        c.execute(
+            "INSERT INTO episode_transcripts "
+            "  (episode_id, segment, secs, model, audio_sha256, text) "
+            "VALUES (?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(episode_id, segment, secs, model, audio_sha256) "
+            "DO UPDATE SET text = excluded.text, "
+            "              created_at = datetime('now')",
+            (episode_id, body.segment, body.secs, body.model, sha, body.text),
+        )
+        saved = c.execute(
+            "SELECT * FROM episode_transcripts WHERE episode_id = ? AND "
+            "segment = ? AND secs = ? AND model = ? AND audio_sha256 = ?",
+            (episode_id, body.segment, body.secs, body.model, sha),
+        ).fetchone()
+    return _transcript_row_to_out(saved)
 
 
 @router.delete("/{episode_id}", status_code=204)

@@ -346,3 +346,142 @@ def test_patch_also_stamps_title_validated_at(client, auth_headers, fake_mp3_byt
     )
     assert r.status_code == 200
     assert r.json()["title_validated_at"] is not None
+
+
+# ---------------------------------------------------------------------------
+# Transcript cache + validator versioning
+# ---------------------------------------------------------------------------
+
+
+def test_title_validated_records_validator_version(client, auth_headers,
+                                                   fake_mp3_bytes):
+    _upload(client, auth_headers, fake_mp3_bytes, episode_id=700)
+    r = client.put("/episodes/700/title-validated", headers=auth_headers,
+                   json={"validator_version": "aio/2"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["title_validator_version"] == "aio/2"
+    assert body["title_validated_at"] is not None
+
+
+def test_title_validated_without_body_leaves_version_null(client, auth_headers,
+                                                          fake_mp3_bytes):
+    """Older clients PUT with no body. That must still stamp the
+    timestamp, and must leave the version NULL so the row reads as
+    "checked by an unknown, therefore stale, matcher"."""
+    _upload(client, auth_headers, fake_mp3_bytes, episode_id=701)
+    r = client.put("/episodes/701/title-validated", headers=auth_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["title_validated_at"] is not None
+    assert r.json()["title_validator_version"] is None
+
+
+def test_transcript_roundtrip(client, auth_headers, fake_mp3_bytes):
+    _upload(client, auth_headers, fake_mp3_bytes, episode_id=702)
+    r = client.put("/episodes/702/transcripts", headers=auth_headers, json={
+        "segment": "head", "secs": 180, "model": "large-v3",
+        "text": "welcome to the show", "audio_sha256": "abc",
+    })
+    assert r.status_code == 200, r.text
+    assert r.json()["text"] == "welcome to the show"
+
+    got = client.get("/episodes/702/transcripts", headers=auth_headers)
+    assert got.status_code == 200
+    assert [(t["segment"], t["secs"], t["model"]) for t in got.json()] \
+        == [("head", 180, "large-v3")]
+
+
+def test_transcript_upsert_is_idempotent(client, auth_headers, fake_mp3_bytes):
+    _upload(client, auth_headers, fake_mp3_bytes, episode_id=703)
+    body = {"segment": "tail", "secs": 45, "model": "large-v3",
+            "text": "first", "audio_sha256": "abc"}
+    client.put("/episodes/703/transcripts", headers=auth_headers, json=body)
+    client.put("/episodes/703/transcripts", headers=auth_headers,
+               json={**body, "text": "second"})
+    rows = client.get("/episodes/703/transcripts", headers=auth_headers).json()
+    assert len(rows) == 1
+    assert rows[0]["text"] == "second"
+
+
+def test_transcript_clip_length_is_part_of_the_key(client, auth_headers,
+                                                   fake_mp3_bytes):
+    """A 90s head clip is not an answer to a question about the first
+    180s. Both must coexist so a longer-clip run gets a cache MISS
+    rather than a confidently wrong shorter transcript."""
+    _upload(client, auth_headers, fake_mp3_bytes, episode_id=704)
+    for secs, text in ((90, "short"), (180, "long")):
+        client.put("/episodes/704/transcripts", headers=auth_headers, json={
+            "segment": "head", "secs": secs, "model": "large-v3",
+            "text": text, "audio_sha256": "abc",
+        })
+    rows = client.get("/episodes/704/transcripts", headers=auth_headers).json()
+    assert {(r["secs"], r["text"]) for r in rows} == {(90, "short"), (180, "long")}
+
+
+def test_transcript_model_is_part_of_the_key(client, auth_headers,
+                                             fake_mp3_bytes):
+    _upload(client, auth_headers, fake_mp3_bytes, episode_id=705)
+    for model in ("large-v3", "medium"):
+        client.put("/episodes/705/transcripts", headers=auth_headers, json={
+            "segment": "head", "secs": 180, "model": model,
+            "text": model, "audio_sha256": "abc",
+        })
+    rows = client.get("/episodes/705/transcripts", headers=auth_headers).json()
+    assert len(rows) == 2
+
+
+def test_transcript_sha_change_invalidates(client, auth_headers, fake_mp3_bytes):
+    """Re-ingested audio must not silently reuse the old transcript."""
+    _upload(client, auth_headers, fake_mp3_bytes, episode_id=706)
+    for sha in ("aaa", "bbb"):
+        client.put("/episodes/706/transcripts", headers=auth_headers, json={
+            "segment": "head", "secs": 180, "model": "large-v3",
+            "text": f"text-{sha}", "audio_sha256": sha,
+        })
+    rows = client.get("/episodes/706/transcripts", headers=auth_headers).json()
+    assert {r["audio_sha256"] for r in rows} == {"aaa", "bbb"}
+
+
+def test_transcript_missing_sha_stores_empty_not_null(client, auth_headers,
+                                                      fake_mp3_bytes):
+    """SQLite permits NULLs in a PRIMARY KEY, which would defeat the
+    upsert's uniqueness. Absent sha must normalize to ''."""
+    _upload(client, auth_headers, fake_mp3_bytes, episode_id=707)
+    body = {"segment": "head", "secs": 180, "model": "large-v3", "text": "a"}
+    client.put("/episodes/707/transcripts", headers=auth_headers, json=body)
+    client.put("/episodes/707/transcripts", headers=auth_headers,
+               json={**body, "text": "b"})
+    rows = client.get("/episodes/707/transcripts", headers=auth_headers).json()
+    assert len(rows) == 1
+    assert rows[0]["audio_sha256"] == ""
+    assert rows[0]["text"] == "b"
+
+
+def test_transcript_rejects_bad_segment(client, auth_headers, fake_mp3_bytes):
+    _upload(client, auth_headers, fake_mp3_bytes, episode_id=708)
+    r = client.put("/episodes/708/transcripts", headers=auth_headers, json={
+        "segment": "middle", "secs": 180, "model": "large-v3", "text": "x",
+    })
+    assert r.status_code == 400
+
+
+def test_transcript_404_on_missing_episode(client, auth_headers):
+    assert client.get("/episodes/9999/transcripts",
+                      headers=auth_headers).status_code == 404
+    assert client.put("/episodes/9999/transcripts", headers=auth_headers, json={
+        "segment": "head", "secs": 180, "model": "large-v3", "text": "x",
+    }).status_code == 404
+
+
+def test_deleting_episode_cascades_transcripts(client, auth_headers,
+                                               fake_mp3_bytes):
+    _upload(client, auth_headers, fake_mp3_bytes, episode_id=709)
+    client.put("/episodes/709/transcripts", headers=auth_headers, json={
+        "segment": "head", "secs": 180, "model": "large-v3", "text": "x",
+    })
+    assert client.delete("/episodes/709", headers=auth_headers).status_code == 204
+    from app import db
+    with db.connect() as c:
+        left = c.execute("SELECT COUNT(*) AS n FROM episode_transcripts "
+                         "WHERE episode_id = 709").fetchone()["n"]
+    assert left == 0

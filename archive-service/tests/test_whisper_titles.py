@@ -7,6 +7,7 @@ so they're the ones worth pinning.
 """
 from __future__ import annotations
 import importlib.util
+import json
 import sys
 from pathlib import Path
 
@@ -370,3 +371,377 @@ def test_list_unsorted_reraises_non_404(monkeypatch):
     monkeypatch.setattr(client, "_req", boom)
     with pytest.raises(HTTPError):
         client.list_unsorted_episodes()
+
+
+# ---------------------------------------------------------------------------
+# audit-ysh: provenance scoring
+# ---------------------------------------------------------------------------
+
+
+def test_score_markers_counts_nested_phrase_once():
+    """"story hour" is a substring of "your story hour". A transcript
+    with only the long form must score the long form's weight, not
+    both — otherwise every normal episode inflates past the margin."""
+    score, hits = WT.score_markers(
+        "welcome to your story hour", WT._YSH_SHOW_MARKERS)
+    assert hits == ["your story hour"]
+    assert score == pytest.approx(3.0)
+
+
+def test_provenance_confirms_ysh_from_station_id():
+    p = WT.ysh_provenance(
+        "this is Uncle Dan. you have been listening to Your Story Hour, "
+        "from Berrien Springs, Michigan."
+    )
+    assert p.verdict == "ysh"
+    assert p.foreign_score == 0.0
+
+
+def test_provenance_flags_foreign_show():
+    """A mis-ingested AIO episode is the whole reason provenance exists:
+    it would score 0.0 against every YSH title, which on title evidence
+    alone is indistinguishable from a garbled transcript."""
+    p = WT.ysh_provenance(
+        "you've been listening to Adventures in Odyssey, "
+        "a production of Focus on the Family. Whit's End is open."
+    )
+    assert p.verdict == "foreign"
+    assert p.ysh_score == 0.0
+
+
+def test_provenance_unknown_when_no_station_id():
+    """Silence/garble must never be reported as a mis-filed episode."""
+    assert WT.ysh_provenance("and then they walked home together").verdict \
+        == "unknown"
+    assert WT.ysh_provenance("").verdict == "unknown"
+
+
+def test_provenance_ambiguous_when_both_shows_tie():
+    """Equal billing for both shows — a promo, a cross-mention, or two
+    files concatenated. Neither verdict is safe, so a human listens."""
+    p = WT.ysh_provenance(
+        "this has been Your Story Hour... next up, Adventures in Odyssey"
+    )
+    assert p.verdict == "ambiguous"
+    assert p.ysh_score == p.foreign_score
+
+
+def test_provenance_prefers_the_side_with_more_evidence():
+    """One passing mention of YSH does not save a clip carrying two
+    independent AIO station IDs."""
+    p = WT.ysh_provenance(
+        "Your Story Hour is brought to you... Adventures in Odyssey "
+        "is a production of Focus on the Family"
+    )
+    assert p.verdict == "foreign"
+
+
+def test_provenance_single_word_overlap_does_not_vote():
+    """Bare tokens are deliberately not markers — a YSH story may well
+    say "odyssey" or name a character "Whit"."""
+    p = WT.ysh_provenance("their odyssey across the sea took months")
+    assert p.verdict == "unknown"
+
+
+# ---------------------------------------------------------------------------
+# audit-ysh: catalog + title variants
+# ---------------------------------------------------------------------------
+
+
+def test_sku_id_from_external_id():
+    assert WT.sku_id_from_external_id("ysh-sku-447") == 447
+    assert WT.sku_id_from_external_id("1278410") is None
+    assert WT.sku_id_from_external_id(None) is None
+
+
+def test_ysh_title_variants_drops_parenthetical_and_part():
+    v = WT.ysh_title_variants("Child of Privilege (Lottie Moon Part 1)")
+    assert v[0] == "Child of Privilege (Lottie Moon Part 1)"
+    assert "Child of Privilege" in v
+
+
+def test_load_ysh_catalog_accepts_flat_shape(tmp_path):
+    p = tmp_path / "flat.json"
+    p.write_text(json.dumps([
+        {"sku_id": 447, "title": "The Lady of Longpoint",
+         "album_title": "Great Stories - Volume 4"},
+    ]))
+    tracks = WT.load_ysh_catalog(p)
+    assert tracks == [WT.YshTrack(447, "The Lady of Longpoint",
+                                  "Great Stories - Volume 4")]
+
+
+def test_load_ysh_catalog_accepts_scrape_shape(tmp_path):
+    p = tmp_path / "ysh_catalog.json"
+    p.write_text(json.dumps({"albums": [
+        {"title": "Great Stories - Volume 4",
+         "tracks": [{"sku_id": 447, "title": "The Lady of Longpoint"}]},
+    ]}))
+    assert WT.load_ysh_catalog(p) == [
+        WT.YshTrack(447, "The Lady of Longpoint", "Great Stories - Volume 4")]
+
+
+def test_load_ysh_catalog_rejects_unknown_shape(tmp_path):
+    p = tmp_path / "junk.json"
+    p.write_text('"not a catalog"')
+    with pytest.raises(ValueError):
+        WT.load_ysh_catalog(p)
+
+
+# ---------------------------------------------------------------------------
+# audit-ysh: teaser trimming + title verdicts
+# ---------------------------------------------------------------------------
+
+
+def test_trim_teaser_cuts_next_episode_plug():
+    trimmed = WT.trim_teaser(
+        "I call my story, The Land of Uz. ... be with us next week for "
+        "Run for Your Life."
+    )
+    assert "land of uz" in trimmed
+    assert "run for your life" not in trimmed
+
+
+def test_trim_teaser_keeps_everything_when_no_teaser():
+    assert WT.trim_teaser("this has been Your Story Hour") \
+        == "this has been your story hour"
+
+
+def test_title_verdict_confirms_own_title():
+    v = WT.ysh_title_verdict(
+        "hello boys and girls. I call my story, The Lady of Longpoint.",
+        "The Lady of Longpoint",
+        ["The Lady of Longpoint", "The Land of Uz"],
+    )
+    assert v.verdict == "match"
+    assert v.own_score == pytest.approx(1.0)
+
+
+def test_title_verdict_confirms_despite_parenthetical():
+    """The storyteller announces the bare title; the catalog carries a
+    disambiguator. That must not read as a mismatch."""
+    v = WT.ysh_title_verdict(
+        "I call my story, Child of Privilege.",
+        "Child of Privilege (Lottie Moon Part 1)",
+        ["Child of Privilege (Lottie Moon Part 1)", "The Land of Uz"],
+    )
+    assert v.verdict == "match"
+
+
+def test_title_verdict_raises_anchored_mismatch():
+    """The swap case the audit exists to catch: the row says one story,
+    the announcer names another."""
+    v = WT.ysh_title_verdict(
+        "I call my story, The Land of Uz.",
+        "The Lady of Longpoint",
+        ["The Lady of Longpoint", "The Land of Uz"],
+    )
+    assert v.verdict == "mismatch"
+    assert v.best_title == "The Land of Uz"
+    assert v.anchored
+
+
+def test_title_verdict_ignores_unanchored_dialogue_hit():
+    """Regression: a catalog title made of ordinary words ("Run for Your
+    Life") appearing as a line of dialogue scored 1.00 and accused a
+    correctly-labeled episode of being the wrong story."""
+    v = WT.ysh_title_verdict(
+        "the dogs were closing in and she screamed run for your life",
+        "A Light in the Window",
+        ["A Light in the Window", "Run for Your Life"],
+    )
+    assert v.verdict == "inconclusive"
+    assert not v.anchored
+
+
+def test_title_verdict_weak_anchor_cannot_accuse():
+    """"the story of" is ordinary narration, so a title found behind it
+    is not localized evidence and must not raise a mismatch."""
+    v = WT.ysh_title_verdict(
+        "and that was the story of The Land of Uz as they told it",
+        "The Lady of Longpoint",
+        ["The Lady of Longpoint", "The Land of Uz"],
+    )
+    assert v.verdict == "inconclusive"
+
+
+def test_title_verdict_requires_margin_over_own_title():
+    """A rival that barely edges out the stored title is scoring noise
+    between similar strings, not a swapped file."""
+    v = WT.ysh_title_verdict(
+        "I call my story, The Land of Uz",
+        "The Land of Uz",
+        ["The Land of Uz", "The Land of Us"],
+        threshold=0.5,
+    )
+    assert v.verdict == "match"
+
+
+def test_title_verdict_treats_part_suffix_swap_as_match():
+    v = WT.ysh_title_verdict(
+        "I call my story, A Touch of Healing, Part 1 of 2",
+        "A Touch of Healing, Part 2 of 2",
+        ["A Touch of Healing, Part 1 of 2", "A Touch of Healing, Part 2 of 2"],
+    )
+    assert v.verdict != "mismatch"
+
+
+# ---------------------------------------------------------------------------
+# audit-ysh: metadata cross-check + roll-up
+# ---------------------------------------------------------------------------
+
+
+CATALOG_BY_SKU = {
+    447: WT.YshTrack(447, "The Lady of Longpoint", "Great Stories - Volume 4"),
+}
+
+
+def test_metadata_check_agrees_with_catalog():
+    e = WT._ysh_metadata_check(
+        {"episode_id": 1, "external_id": "ysh-sku-447",
+         "title": "The Lady of Longpoint", "album": "Great Stories - Volume 4"},
+        CATALOG_BY_SKU,
+    )
+    assert e.metadata_title_ok and e.metadata_album_ok
+    assert e.clean          # no audio run yet, and metadata is fine
+
+
+def test_metadata_check_flags_wrong_album():
+    e = WT._ysh_metadata_check(
+        {"episode_id": 1, "external_id": "ysh-sku-447",
+         "title": "The Lady of Longpoint", "album": "Great Stories - Volume 9"},
+        CATALOG_BY_SKU,
+    )
+    assert e.metadata_title_ok is True
+    assert e.metadata_album_ok is False
+    assert not e.clean
+
+
+def test_metadata_check_unknown_sku_is_not_a_conflict():
+    """A SKU minted after the catalog snapshot is a stale-catalog
+    artifact; it must not masquerade as a title disagreement."""
+    e = WT._ysh_metadata_check(
+        {"episode_id": 1, "external_id": "ysh-sku-9999",
+         "title": "Brand New Story", "album": "Whatever"},
+        CATALOG_BY_SKU,
+    )
+    assert e.metadata_title_ok is None
+    assert e.metadata_album_ok is None
+    assert e.catalog_title is None
+
+
+def test_audit_entry_not_clean_when_audio_disagrees():
+    e = WT._ysh_metadata_check(
+        {"episode_id": 1, "external_id": "ysh-sku-447",
+         "title": "The Lady of Longpoint", "album": "Great Stories - Volume 4"},
+        CATALOG_BY_SKU,
+    )
+    e.provenance = "foreign"
+    assert not e.clean
+
+
+def test_verdict_rank_prefers_confirmation_then_accusation():
+    """Head and tail are scored independently; a confirmation from
+    either settles the row, and an accusation must not be buried by an
+    inconclusive clip whose own-title score edged it out."""
+    match = WT.TitleVerdict("match", own_score=0.91, best_title="X",
+                            best_score=0.91)
+    mismatch = WT.TitleVerdict("mismatch", own_score=0.20, best_title="Y",
+                               best_score=0.99, anchored=True)
+    inconclusive = WT.TitleVerdict("inconclusive", own_score=0.60,
+                                   best_title="Z", best_score=0.60)
+    ranked = sorted([inconclusive, mismatch, match], key=WT._verdict_rank)
+    assert [v.verdict for v in ranked] == ["inconclusive", "mismatch", "match"]
+
+
+def test_matchable_rejects_titles_normalization_destroys():
+    """`_norm` keeps only [a-z0-9 ], so a Cyrillic title collapses to ""
+    or a bare volume digit."""
+    assert not WT._matchable(WT._norm("Мария из Назарета"))
+    assert not WT._matchable(WT._norm("Бриллиантовое Колье, ч. 2"))
+    assert WT._matchable(WT._norm("The Land of Uz"))
+
+
+def test_title_verdict_ignores_degenerate_catalog_entries():
+    """Regression: the yourstoryhour.org catalog carries 182 Russian
+    tracks. One of them normalized to "2", substring-matched a
+    transcript at a perfect 1.00, and accused a correctly-labeled Paul
+    Revere episode of being a Russian story."""
+    v = WT.ysh_title_verdict(
+        "I call my story, The Road to Revolution, part 2 of our series",
+        "The Road to Revolution (Paul Revere Part 2)",
+        ["The Road to Revolution (Paul Revere Part 2)",
+         "Бриллиантовое Колье, ч. 2"],
+    )
+    assert v.verdict == "match"
+    assert v.best_title != "Бриллиантовое Колье, ч. 2"
+
+
+def test_audit_candidates_drops_unmatchable_titles():
+    catalog = [
+        WT.YshTrack(1, "The Land of Uz", "Bible Comes Alive - Album 4"),
+        WT.YshTrack(2, "Судилище", "Russian Album"),
+    ]
+    assert WT._audit_candidates(catalog, ["The Lady of Longpoint"]) == [
+        "The Lady of Longpoint", "The Land of Uz"]
+
+
+def test_score_entry_is_reusable_offline():
+    """`--from-report --rescore` must run the same scorer the live pass
+    does, so a re-scored report can't drift from a fresh run."""
+    e = WT.YshAuditEntry(
+        episode_id=1, external_id="ysh-sku-1", title="The Land of Uz",
+        album=None, sku_id=1, catalog_title=None, catalog_album=None,
+        metadata_title_ok=None, metadata_album_ok=None,
+    )
+    e.head_transcript = "welcome to Your Story Hour. I call my story, The Land of Uz."
+    e.tail_transcript = "this has been Your Story Hour from Berrien Springs."
+    WT.score_entry(e, ["The Land of Uz", "The Lady of Longpoint"], {},
+                   threshold=0.9)
+    assert e.provenance == "ysh"
+    assert e.title_verdict == "match"
+    assert e.segment == "head"
+
+
+# ---------------------------------------------------------------------------
+# Matcher versioning
+# ---------------------------------------------------------------------------
+
+
+def test_matcher_version_is_per_provider():
+    """Hardening the YSH matcher must not re-queue 361 AIO episodes."""
+    assert WT.matcher_version("ysh") == WT.YSH_MATCHER_VERSION
+    assert WT.matcher_version("aio") == WT.AIO_MATCHER_VERSION
+    assert WT.matcher_version(None) == WT.AIO_MATCHER_VERSION
+    assert WT.YSH_MATCHER_VERSION != WT.AIO_MATCHER_VERSION
+
+
+def test_needs_recheck_for_never_validated_row():
+    assert WT.needs_recheck({"provider_id": "ysh"})
+
+
+def test_needs_recheck_false_at_current_version():
+    assert not WT.needs_recheck({
+        "provider_id": "ysh",
+        "title_validated_at": "2026-09-11",
+        "title_validator_version": WT.YSH_MATCHER_VERSION,
+    })
+
+
+def test_needs_recheck_true_for_pre_versioning_stamp():
+    """The real case: 376 rows stamped 2026-06-08 carry a timestamp but
+    no version, and were skipped by every run after the 2026-07-13
+    matcher hardening. They must re-queue."""
+    assert WT.needs_recheck({
+        "provider_id": "aio",
+        "title_validated_at": "2026-06-08",
+        "title_validator_version": None,
+    })
+
+
+def test_needs_recheck_true_for_superseded_version():
+    assert WT.needs_recheck({
+        "provider_id": "ysh",
+        "title_validated_at": "2026-09-11",
+        "title_validator_version": "ysh/1",
+    })

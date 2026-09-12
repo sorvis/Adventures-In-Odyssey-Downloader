@@ -180,6 +180,44 @@ scripts/whisper_titles.py plan     --report /tmp/report.json
 scripts/whisper_titles.py apply    --report /tmp/report.json --threshold 0.95
 ```
 
+### Auditing the Your Story Hour library
+
+`scripts/audit-ysh.sh` sweeps every YSH row and answers two questions
+per episode from the audio itself:
+
+1. **Does this actually belong to YSH?** Scored off station-ID phrases
+   ("…has been Your Story Hour, from Berrien Springs") versus another
+   show's branding ("Adventures in Odyssey", "Whit's End"). This catches
+   a mis-ingested episode that title matching alone cannot — a foreign
+   file scores 0.00 against every YSH title, which looks exactly like a
+   YSH episode whisperx garbled.
+2. **Does the announced title match the row?** The storyteller names
+   the story in the cold-open ("I call my story, …"); that is matched
+   against the full 1055-track yourstoryhour.org catalog.
+
+It also cross-checks each row's title/album against the catalog entry
+for its `ysh-sku-<id>` external_id, which needs no audio at all.
+
+Read-only — it reports and never renames, deletes, or stamps
+`title_validated_at`. Run it from the dev box (needs local ffmpeg, HTTP
+to the service, and ssh to the Proxmox host owning the whisperx LXC).
+
+```bash
+archive-service/scripts/audit-ysh.sh              # full sweep
+archive-service/scripts/audit-ysh.sh --quick      # catalog metadata only, no GPU
+archive-service/scripts/audit-ysh.sh --limit 10   # smoke run
+archive-service/scripts/audit-ysh.sh --report /tmp/ysh-audit.json   # re-read
+```
+
+A finding is a prompt to listen, not a verdict: `inconclusive` means
+YSH never announced the title in the clip (common — the host often
+describes the subject instead of naming the story), and only
+`MISMATCH` / `FOREIGN` claim something is actually wrong. Mismatches
+are deliberately hard to trigger — the rival title has to clear the
+threshold, sit directly behind a real credit phrase, and beat the
+stored title by a margin — because the failure mode that matters is
+renaming a correctly-labeled episode.
+
 ## Development (locally, no Docker)
 
 ```bash
