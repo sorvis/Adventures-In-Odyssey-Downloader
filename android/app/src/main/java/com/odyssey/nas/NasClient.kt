@@ -98,7 +98,7 @@ class NasClient @Inject constructor(
             if (resp.code !in 200..201) {
                 val bodyPreview = runCatching { resp.body?.string()?.take(200) }.getOrNull().orEmpty()
                 DebugLogger.w("NasClient", "upload($episodeId) — HTTP ${resp.code}: $bodyPreview")
-                error("upload HTTP ${resp.code}: $bodyPreview")
+                throw NasHttpException(resp.code, bodyPreview)
             }
             DebugLogger.d("NasClient", "upload($episodeId) — HTTP ${resp.code} OK")
         }
@@ -267,7 +267,7 @@ class NasClient @Inject constructor(
             if (resp.code !in 200..201) {
                 val bodyPreview = runCatching { resp.body?.string()?.take(200) }.getOrNull().orEmpty()
                 DebugLogger.w("NasClient", "uploadV2($providerId:$externalId) — HTTP ${resp.code}: $bodyPreview")
-                error("uploadV2 HTTP ${resp.code}: $bodyPreview")
+                throw NasHttpException(resp.code, bodyPreview)
             }
             DebugLogger.d("NasClient", "uploadV2($providerId:$externalId) — HTTP ${resp.code} OK")
         }
@@ -324,6 +324,39 @@ fun Request.Builder.applyCfAccess(s: Settings): Request.Builder {
 }
 
 object NasNotConfiguredException : RuntimeException("NAS not configured")
+
+/**
+ * An upload the archive actively rejected, carrying the status code.
+ *
+ * Exists so callers can tell a PERMANENT rejection from a transient
+ * one. A 4xx means the bytes we sent are not acceptable and re-sending
+ * the identical bytes cannot help — the archive now rejects incomplete
+ * audio with 422, so a phone holding a truncated file would otherwise
+ * retry that rejection through WorkManager's full backoff. A 5xx,
+ * timeout or reset is worth retrying.
+ *
+ * The status used to be recoverable only by string-matching the
+ * exception message, which is not a contract worth branching retry
+ * behavior on.
+ */
+class NasHttpException(
+    val code: Int,
+    val bodyPreview: String,
+) : RuntimeException("HTTP $code: $bodyPreview") {
+    /**
+     * 422 — the archive judged the BYTES we sent unacceptable (its
+     * completeness gate refusing a truncated file). Re-sending the
+     * identical bytes can never succeed.
+     *
+     * Deliberately just 422 and not all of 4xx. A 401/403 is also a
+     * 4xx, but it means the token is wrong — which the user can fix in
+     * Settings, after which the queued upload succeeds. Treating auth
+     * failures as permanent would discard downloads over a typo'd
+     * token. 400 is likewise ambiguous (a client-side request bug
+     * would be blamed on the file). Only 422 names the payload.
+     */
+    val isPayloadRejected: Boolean get() = code == 422
+}
 
 /**
  * RequestBody wrapper that ticks a callback as okhttp pulls bytes from

@@ -9,6 +9,7 @@ import com.odyssey.data.local.EpisodeDao
 import com.odyssey.debug.DebugLogger
 import com.odyssey.download.ArchiveProgressTracker
 import com.odyssey.nas.NasClient
+import com.odyssey.nas.NasHttpException
 import com.odyssey.nas.NasNotConfiguredException
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
@@ -147,12 +148,39 @@ class ArchiveEpisodeWorker @AssistedInject constructor(
                 Result.success()
             },
             onFailure = { e ->
-                if (e is NasNotConfiguredException) {
-                    DebugLogger.d("ArchiveWorker", "doWork($resolvedProvider:$resolvedExternalId) — NAS unconfigured mid-flight")
-                    Result.success()
-                } else {
-                    DebugLogger.w("ArchiveWorker", "doWork($resolvedProvider:$resolvedExternalId) — upload failed, retrying", e)
-                    Result.retry()
+                when {
+                    e is NasNotConfiguredException -> {
+                        DebugLogger.d("ArchiveWorker", "doWork($resolvedProvider:$resolvedExternalId) — NAS unconfigured mid-flight")
+                        Result.success()
+                    }
+                    e is NasHttpException && e.isPayloadRejected -> {
+                        // 422: the archive's completeness gate refused
+                        // these exact bytes as a truncated file.
+                        // Re-sending the identical bytes
+                        // cannot succeed, so a retry would only burn the
+                        // full WorkManager backoff while the row sat on
+                        // the Sync screen as "queued" (the v0.1.75
+                        // backup:// pattern, which ate ~10h that way).
+                        //
+                        // Clear the download state so the row falls off
+                        // observeUnarchivedDownloaded and the user can
+                        // re-download a good copy, and delete the bad
+                        // file rather than orphan bytes that nothing
+                        // references and that the server has already
+                        // judged incomplete.
+                        DebugLogger.w(
+                            "ArchiveWorker",
+                            "doWork($resolvedProvider:$resolvedExternalId) — archive rejected the upload " +
+                                "(HTTP ${e.code}: ${e.bodyPreview}); clearing download state, not retrying",
+                        )
+                        episodes.markUndownloadedByKey(resolvedProvider, resolvedExternalId)
+                        runCatching { file.delete() }
+                        Result.failure()
+                    }
+                    else -> {
+                        DebugLogger.w("ArchiveWorker", "doWork($resolvedProvider:$resolvedExternalId) — upload failed, retrying", e)
+                        Result.retry()
+                    }
                 }
             },
         )

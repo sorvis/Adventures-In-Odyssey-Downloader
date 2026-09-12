@@ -324,6 +324,59 @@ class ArchiveEpisodeWorkerTest {
         assertNull(episodes.byKey("aio", "202")!!.archivedAt)
     }
 
+    @Test
+    fun `doWork -- server 422 incomplete audio fails fast and clears download state`() = runBlocking {
+        // The archive's completeness gate refused a truncated file.
+        // Retrying would re-send the identical bad bytes through the
+        // full WorkManager backoff while the row sat on the Sync screen
+        // as "queued" — the v0.1.75 pattern that ate ~10h that way.
+        settings.setNas(server.url("/").toString().trimEnd('/'), "tok")
+        val file = File(ctx.cacheDir, "truncated.mp3").apply { writeText("partial") }
+        episodes.upsert(makeRow(
+            externalId = "203",
+            filePath = file.absolutePath,
+            archivedAt = null,
+        ))
+        server.enqueue(
+            MockResponse().setResponseCode(422)
+                .setBody("""{"detail":"incomplete audio: 16,124,025 bytes short"}"""),
+        )
+
+        val result = buildWorker(episodeId = 203L).doWork()
+
+        assertTrue(result is ListenableWorker.Result.Failure)
+        val row = episodes.byKey("aio", "203")!!
+        // Falls off observeUnarchivedDownloaded so it stops looping as "queued"...
+        assertNull(row.filePath)
+        // ...but is never claimed as backed up, because it isn't.
+        assertNull(row.archivedAt)
+        // And the rejected bytes aren't orphaned on disk.
+        assertTrue(!file.exists())
+    }
+
+    @Test
+    fun `doWork -- server 401 keeps the downloaded file (only 422 discards it)`() = runBlocking {
+        // Guards the tempting over-generalization "4xx means permanent".
+        // A 401 is a wrong token, which the user fixes in Settings and
+        // the queued upload then succeeds. Discarding downloads over a
+        // typo'd token would be a far worse bug than the retry churn
+        // this change set out to fix.
+        settings.setNas(server.url("/").toString().trimEnd('/'), "wrong-tok")
+        val file = File(ctx.cacheDir, "keepme.mp3").apply { writeText("audio") }
+        episodes.upsert(makeRow(
+            externalId = "204",
+            filePath = file.absolutePath,
+            archivedAt = null,
+        ))
+        server.enqueue(MockResponse().setResponseCode(401))
+
+        val result = buildWorker(episodeId = 204L).doWork()
+
+        assertTrue(result is ListenableWorker.Result.Retry)
+        assertTrue(file.exists())
+        assertNotNull(episodes.byKey("aio", "204")!!.filePath)
+    }
+
     // ---- helpers ---------------------------------------------------------
 
     private fun makeRow(
