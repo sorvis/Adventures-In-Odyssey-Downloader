@@ -180,6 +180,38 @@ scripts/whisper_titles.py plan     --report /tmp/report.json
 scripts/whisper_titles.py apply    --report /tmp/report.json --threshold 0.95
 ```
 
+### Checking audio files for truncation
+
+`scripts/check-integrity.sh` finds episodes whose audio stops partway
+through — a download that died mid-transfer and got archived as though
+it were complete. Those files play fine and look fine in the app; they
+just end in the middle of the story.
+
+The test is one each file makes against itself. Every MP3 in the
+archive carries a Xing/Info header declaring how many bytes the
+complete file should contain, so comparing that against the real size
+finds a short file immediately. It reads only the first ~16 KB of each
+episode, so a full sweep of 462 episodes is a few hundred small range
+requests — not ~10 GB of downloads — and needs no ffmpeg anywhere.
+
+Three checks ride along: a duration-outlier pass (catches a file whose
+header was itself written against truncated input, so it agrees with
+itself), a DB-size-vs-disk-size comparison (catches a file that lost
+bytes after archiving), and `--deep`, which re-downloads everything to
+verify stored sha256s and so catches corruption that preserves length.
+
+```bash
+archive-service/scripts/check-integrity.sh                 # full sweep
+archive-service/scripts/check-integrity.sh --provider ysh  # one show
+archive-service/scripts/check-integrity.sh --deep          # + sha256 verify
+```
+
+Read-only, and exits 1 when anything needs attention, so it works as a
+cron check. A handful of older files carry no Xing/Info header; those
+fall back to a duration derived from their constant bitrate, and the
+report says so rather than quietly treating the weaker verdict as
+equivalent.
+
 ### Auditing the Your Story Hour library
 
 `scripts/audit-ysh.sh` sweeps every YSH row and answers two questions
