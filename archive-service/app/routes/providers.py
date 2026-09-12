@@ -24,6 +24,7 @@ from ..range_stream import stream_file
 from ..scrape_aio import enrich_album
 from ..scrape_ysh import build_indexes, load_catalog
 from ..storage import episode_path_for, sha256_file
+from .. import audio_integrity
 
 
 router = APIRouter(prefix="/providers/{provider}", dependencies=[Depends(require_token)])
@@ -139,6 +140,18 @@ async def create_episode(
     with tmp_path.open("wb") as f:
         while chunk := await audio.read(1 << 20):
             f.write(chunk)
+
+    # Same completeness gate as the legacy POST /episodes route, and
+    # the one that matters more day to day: this is the path the app
+    # has used for every upload since it went provider-aware. Checked
+    # while the bytes are still a .part file, so a truncated upload
+    # never reaches the canonical path and never gets a row. See
+    # app/audio_integrity.py for why the header self-check is decisive.
+    verdict = audio_integrity.inspect_file(tmp_path)
+    if verdict.is_truncated:
+        tmp_path.unlink(missing_ok=True)
+        raise HTTPException(422, f"incomplete audio: {verdict.reason}")
+
     tmp_path.replace(out_path)
 
     size = out_path.stat().st_size

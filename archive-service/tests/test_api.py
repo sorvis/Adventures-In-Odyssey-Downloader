@@ -485,3 +485,85 @@ def test_deleting_episode_cascades_transcripts(client, auth_headers,
         left = c.execute("SELECT COUNT(*) AS n FROM episode_transcripts "
                          "WHERE episode_id = 709").fetchone()["n"]
     assert left == 0
+
+
+# ---------------------------------------------------------------------------
+# Upload completeness gate
+# ---------------------------------------------------------------------------
+
+
+def _mp3(declared_bytes: int, actual_audio_bytes: int) -> bytes:
+    """An MP3 whose Info header declares `declared_bytes` of audio but
+    which actually carries `actual_audio_bytes`. Equal values give a
+    complete file; a smaller actual gives a truncated one."""
+    def syncsafe(n):
+        return bytes([(n >> 21) & 0x7F, (n >> 14) & 0x7F,
+                      (n >> 7) & 0x7F, n & 0x7F])
+    id3 = b"ID3\x03\x00\x00" + syncsafe(32) + b"\x00" * 32
+    frame = bytes([0xFF, 0xFB, 0x90, 0x00])          # MPEG1 L3 stereo 128k
+    info = (b"\x00" * 32 + b"Info" + (0x3).to_bytes(4, "big")
+            + (58593).to_bytes(4, "big") + declared_bytes.to_bytes(4, "big"))
+    audio = frame + info
+    return id3 + audio + b"\x00" * max(0, actual_audio_bytes - len(audio))
+
+
+def test_upload_rejects_truncated_audio(client, auth_headers):
+    """The episode-313 case: a download that stopped partway, uploaded
+    as though complete. The archive must not accept it and then report
+    the episode as backed up."""
+    body = _mp3(declared_bytes=18_000_000, actual_audio_bytes=200_000)
+    r = _upload(client, auth_headers, body, episode_id=810)
+    assert r.status_code == 422, r.text
+    assert "incomplete audio" in r.text
+    # and it left nothing behind
+    assert client.get("/episodes/810", headers=auth_headers).status_code == 404
+
+
+def test_upload_accepts_complete_audio(client, auth_headers):
+    complete = 40_000
+    body = _mp3(declared_bytes=complete, actual_audio_bytes=complete)
+    r = _upload(client, auth_headers, body, episode_id=811)
+    assert r.status_code == 201, r.text
+
+
+def test_upload_still_accepts_headerless_audio(client, auth_headers,
+                                               fake_mp3_bytes):
+    """Files with no Xing/Info header can't be checked against
+    themselves. Rejecting them would refuse the legitimately headerless
+    files already in the archive, so UNKNOWN must not mean BAD."""
+    r = _upload(client, auth_headers, fake_mp3_bytes, episode_id=812)
+    assert r.status_code == 201, r.text
+
+
+def test_truncated_upload_leaves_no_partial_file(client, auth_headers):
+    """A rejected upload must not leave a .part file or a stray audio
+    file behind for the next sweep to trip over."""
+    from app.config import AUDIO_DIR
+    body = _mp3(declared_bytes=18_000_000, actual_audio_bytes=200_000)
+    _upload(client, auth_headers, body, episode_id=813)
+    leftovers = [p for p in AUDIO_DIR.rglob("*") if p.is_file()]
+    assert not any("813" in p.name or p.suffix == ".part" for p in leftovers), \
+        leftovers
+
+
+def _upload_v2(client, headers, body, provider="ysh", external_id="ysh-sku-1"):
+    files = {"audio": ("a.mp3", io.BytesIO(body), "audio/mpeg")}
+    data = {"external_id": external_id, "title": "A Story"}
+    return client.post(f"/providers/{provider}/episodes",
+                       headers=headers, files=files, data=data)
+
+
+def test_provider_upload_rejects_truncated_audio(client, auth_headers):
+    """The provider route is the path the app has used for every upload
+    since it went multi-show, so it needs the same gate."""
+    body = _mp3(declared_bytes=18_000_000, actual_audio_bytes=200_000)
+    r = _upload_v2(client, auth_headers, body)
+    assert r.status_code == 422, r.text
+    assert "incomplete audio" in r.text
+
+
+def test_provider_upload_accepts_complete_audio(client, auth_headers):
+    complete = 40_000
+    r = _upload_v2(client, auth_headers, _mp3(complete, complete),
+                   external_id="ysh-sku-2")
+    assert r.status_code == 201, r.text

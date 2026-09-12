@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from .. import db
 from ..auth import require_token
 from ..storage import episode_path, sha256_file
+from .. import audio_integrity
 from ..range_stream import stream_file
 from ..scrape_aio import enrich_album
 
@@ -109,6 +110,25 @@ async def create_episode(
     with tmp_path.open("wb") as f:
         while chunk := await audio.read(1 << 20):
             f.write(chunk)
+
+    # Verify the upload is a COMPLETE episode before it becomes one.
+    #
+    # Checked here, while the bytes are still in the .part file, so a
+    # truncated upload never reaches the canonical path and never gets
+    # a row — the archive should not be able to tell the app an episode
+    # is backed up when only part of it arrived. Episode 313 is what
+    # this prevents: 3.1 minutes of a 25.5 minute story, archived and
+    # reported as good for months because every layer only asked
+    # whether the transfer errored, never whether it finished.
+    #
+    # Only a definite verdict rejects. A file with no Xing/Info header
+    # can't be checked against itself, and refusing those would reject
+    # the legitimately headerless files already in the archive.
+    verdict = audio_integrity.inspect_file(tmp_path)
+    if verdict.is_truncated:
+        tmp_path.unlink(missing_ok=True)
+        raise HTTPException(422, f"incomplete audio: {verdict.reason}")
+
     tmp_path.replace(out_path)
 
     size = out_path.stat().st_size

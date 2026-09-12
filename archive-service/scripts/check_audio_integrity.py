@@ -62,6 +62,7 @@ import os
 import statistics
 import sys
 from dataclasses import dataclass, asdict, field
+from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -69,136 +70,29 @@ from urllib.request import Request, urlopen
 # ---------------------------------------------------------------------------
 # MP3 header parsing
 # ---------------------------------------------------------------------------
+#
+# Imported from the service package rather than duplicated here: the
+# upload path in app/routes/ enforces the same rule on every incoming
+# episode, and two copies of this parser would drift into disagreeing
+# about what "complete" means — the sweep passing files the ingest gate
+# rejects, or worse, the reverse.
+_SVC_ROOT = Path(__file__).resolve().parent.parent
+if str(_SVC_ROOT) not in sys.path:
+    sys.path.insert(0, str(_SVC_ROOT))
 
-# (version_id, layer) -> bitrate table index. Only Layer III matters here.
-_BITRATES_V1_L3 = [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160,
-                   192, 224, 256, 320, 0]
-_BITRATES_V2_L3 = [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96,
-                   112, 128, 144, 160, 0]
-_SAMPLE_RATES = {
-    3: [44100, 48000, 32000, 0],   # MPEG 1
-    2: [22050, 24000, 16000, 0],   # MPEG 2
-    0: [11025, 12000, 8000, 0],    # MPEG 2.5
-}
-
-
-def id3v2_size(head: bytes) -> int:
-    """Total bytes occupied by a leading ID3v2 tag (0 when absent).
-
-    The size field is 'syncsafe': 7 bits per byte, so a tag can never
-    contain a false frame-sync pattern. Getting this wrong shifts every
-    subsequent offset, so it is parsed rather than guessed.
-    """
-    if len(head) < 10 or head[:3] != b"ID3":
-        return 0
-    flags = head[5]
-    size = ((head[6] & 0x7F) << 21 | (head[7] & 0x7F) << 14
-            | (head[8] & 0x7F) << 7 | (head[9] & 0x7F))
-    total = 10 + size
-    if flags & 0x10:      # footer present
-        total += 10
-    return total
-
-
-@dataclass
-class FrameInfo:
-    version: int          # 3 = MPEG1, 2 = MPEG2, 0 = MPEG2.5
-    sample_rate: int
-    bitrate_kbps: int
-    channels: int
-    samples_per_frame: int
-    frame_offset: int     # byte offset of the frame header
-
-
-def parse_frame_header(buf: bytes, offset: int) -> FrameInfo | None:
-    """Parse an MPEG audio frame header at `offset`, or None if the
-    bytes there aren't a plausible Layer III header."""
-    if offset + 4 > len(buf):
-        return None
-    b0, b1, b2, b3 = buf[offset:offset + 4]
-    if b0 != 0xFF or (b1 & 0xE0) != 0xE0:
-        return None
-    version = (b1 >> 3) & 0x03        # 3=MPEG1, 2=MPEG2, 0=MPEG2.5
-    layer = (b1 >> 1) & 0x03          # 1 = Layer III
-    if layer != 1 or version == 1:    # version 1 is reserved
-        return None
-    bitrate_idx = (b2 >> 4) & 0x0F
-    sr_idx = (b2 >> 2) & 0x03
-    if bitrate_idx in (0, 15) or sr_idx == 3:
-        return None
-    table = _BITRATES_V1_L3 if version == 3 else _BITRATES_V2_L3
-    sample_rate = _SAMPLE_RATES[version][sr_idx]
-    if not sample_rate:
-        return None
-    channels = 1 if ((b3 >> 6) & 0x03) == 3 else 2
-    return FrameInfo(
-        version=version,
-        sample_rate=sample_rate,
-        bitrate_kbps=table[bitrate_idx],
-        channels=channels,
-        samples_per_frame=1152 if version == 3 else 576,
-        frame_offset=offset,
-    )
-
-
-def find_first_frame(buf: bytes, start: int) -> FrameInfo | None:
-    """Scan forward for the first valid Layer III frame header.
-
-    Scans rather than trusting `start` because a tag's declared size can
-    be off, and some files carry padding between the tag and the audio.
-    """
-    for off in range(start, min(len(buf) - 4, start + 65536)):
-        fi = parse_frame_header(buf, off)
-        if fi is not None:
-            return fi
-    return None
-
-
-@dataclass
-class XingHeader:
-    frames: int | None
-    byte_count: int | None
-    tag: str             # "Xing" | "Info"
-
-
-def parse_xing(buf: bytes, frame: FrameInfo) -> XingHeader | None:
-    """Read the Xing/Info tag that lives inside the first frame.
-
-    Its offset from the frame header depends on MPEG version and
-    channel mode — the tag sits after the side-information block, whose
-    length varies. Hence the little table rather than a constant.
-    """
-    if frame.version == 3:                      # MPEG 1
-        side_info = 17 if frame.channels == 1 else 32
-    else:                                       # MPEG 2 / 2.5
-        side_info = 9 if frame.channels == 1 else 17
-    pos = frame.frame_offset + 4 + side_info
-    if pos + 8 > len(buf):
-        return None
-    tag = buf[pos:pos + 4]
-    if tag not in (b"Xing", b"Info"):
-        return None
-    flags = int.from_bytes(buf[pos + 4:pos + 8], "big")
-    cur = pos + 8
-    frames = byte_count = None
-    if flags & 0x1:
-        if cur + 4 > len(buf):
-            return None
-        frames = int.from_bytes(buf[cur:cur + 4], "big")
-        cur += 4
-    if flags & 0x2:
-        if cur + 4 > len(buf):
-            return None
-        byte_count = int.from_bytes(buf[cur:cur + 4], "big")
-        cur += 4
-    return XingHeader(frames=frames, byte_count=byte_count,
-                      tag=tag.decode())
-
-
-def declared_duration_secs(frame: FrameInfo, xing: XingHeader) -> float | None:
-    if not xing.frames:
-        return None
-    return xing.frames * frame.samples_per_frame / frame.sample_rate
+from app.audio_integrity import (      # noqa: E402
+    BAD,
+    UNKNOWN,
+    Integrity,
+    XingHeader,
+    FrameInfo,
+    declared_duration_secs,
+    find_first_frame,
+    id3v2_size,
+    inspect_bytes,
+    parse_frame_header,
+    parse_xing,
+)
 
 
 # ---------------------------------------------------------------------------
