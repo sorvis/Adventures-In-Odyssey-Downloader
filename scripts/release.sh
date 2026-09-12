@@ -185,10 +185,24 @@ TAG_SHA=$(git rev-parse "$VERSION^{commit}")
 step "Waiting for tag-triggered CI on $TAG_SHA (this usually takes 5-7 min)"
 
 API="https://api.github.com/repos/$REPO/actions/runs?per_page=20"
+
+# This repo is PRIVATE, so unauthenticated API calls 404 and the JSON
+# parse below dies with a confusing JSONDecodeError -- after the tag
+# has already been pushed. Send a token when one is available.
+GH_CURL=(curl -fsS)
+if [[ -n "${GH_TOKEN:-}" ]]; then
+  GH_CURL+=(-H "Authorization: Bearer $GH_TOKEN")
+elif [[ -n "${GITHUB_TOKEN:-}" ]]; then
+  GH_CURL+=(-H "Authorization: Bearer $GITHUB_TOKEN")
+else
+  echo "    note: no GH_TOKEN/GITHUB_TOKEN set — CI polling will fail on this" >&2
+  echo "          private repo. The tag is already pushed and CI still runs;" >&2
+  echo "          verify the release manually, or re-run with a token." >&2
+fi
 DEADLINE=$(( $(date +%s) + 1200 ))   # 20-minute hard cap
 
 while :; do
-  STATUS=$(curl -fsS "$API" | python3 -c "
+  STATUS=$("${GH_CURL[@]}" "$API" | python3 -c "
 import sys, json
 data = json.load(sys.stdin)
 runs = [r for r in data.get('workflow_runs', [])
@@ -231,7 +245,7 @@ echo
 
 # --------------------- step 5: verify release ---------------------
 step "Verifying release asset"
-RELEASE_JSON=$(curl -fsS "https://api.github.com/repos/$REPO/releases/tags/$VERSION") \
+RELEASE_JSON=$("${GH_CURL[@]}" "https://api.github.com/repos/$REPO/releases/tags/$VERSION") \
   || fail "release $VERSION not found on GitHub yet"
 
 ASSET=$(echo "$RELEASE_JSON" | python3 -c "
