@@ -19,8 +19,7 @@ import org.junit.Test
  *   - Sort is by catalog orderIndex ASC so tracks land in album
  *     order — title secondary so ties don't shuffle on recompose.
  *   - DB rows for other albums in the same input list don't pollute
- *     the result (defensive against `observeYshAlbumTracks` returning
- *     extras).
+ *     the result — the caller hands over every row it has.
  */
 class YshAlbumDetailTest {
 

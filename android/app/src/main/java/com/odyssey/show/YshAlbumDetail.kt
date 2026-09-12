@@ -43,9 +43,9 @@ enum class YshTrackOwnership {
 
 /**
  * Build the per-track detail for [albumName] by joining the full
- * [catalog] with the DB rows we already have (passed in from
- * `EpisodeDao.observeYshAlbumTracks` — caller restricts to this album,
- * but we tolerate extras defensively).
+ * [catalog] with the DB rows we already have (the caller passes every
+ * row from `EpisodeDao.observeAll` — rows for other albums, and for
+ * other providers, are filtered out here via the skuId join).
  *
  * Pure — no Room/Android deps, JVM-testable. Sort: catalog orderIndex
  * ASC, then title for stable ordering on ties.

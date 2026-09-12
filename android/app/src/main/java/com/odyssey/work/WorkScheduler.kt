@@ -14,7 +14,7 @@ import javax.inject.Singleton
 
 @Singleton
 class WorkScheduler @Inject constructor(@ApplicationContext private val ctx: Context) :
-    DownloadEnqueuer, ArchiveEnqueuer {
+    DownloadEnqueuer, ArchiveEnqueuer, RestoreEnqueuer {
 
     private val wm get() = WorkManager.getInstance(ctx)
 
@@ -270,7 +270,7 @@ class WorkScheduler @Inject constructor(@ApplicationContext private val ctx: Con
      * with overlapping numeric ranges don't collapse onto the same
      * KEEP-policy slot.
      */
-    fun enqueueRestoreByKey(
+    override fun enqueueRestoreByKey(
         providerId: String,
         externalId: String,
         title: String,

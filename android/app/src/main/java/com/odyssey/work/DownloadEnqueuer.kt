@@ -86,3 +86,32 @@ interface ArchiveEnqueuer {
      */
     fun cancelArchive(episodeId: Long) = Unit
 }
+
+/**
+ * Testability seam for NAS restores, mirroring [DownloadEnqueuer].
+ *
+ * PlaybackRecovery uses it to re-pull a corrupt backup-restored file
+ * from the archive service instead of the CDN: rows written by
+ * RestoreEpisodeWorker carry `downloadUrl = "backup://<id>"`, which
+ * DownloadEpisodeWorker fail-fasts on by design (v0.1.75), so routing
+ * those through the download path would delete the bad file and never
+ * replace it.
+ */
+interface RestoreEnqueuer {
+    /**
+     * Pull `(providerId, externalId)` from the backup service onto the
+     * phone. The metadata arguments seed the local row when the phone
+     * has never seen the episode; for a row that already exists the
+     * worker keeps the values it already had.
+     */
+    fun enqueueRestoreByKey(
+        providerId: String,
+        externalId: String,
+        title: String,
+        airDate: String?,
+        album: String?,
+        description: String?,
+        durationSecs: Long,
+        allowMetered: Boolean,
+    )
+}

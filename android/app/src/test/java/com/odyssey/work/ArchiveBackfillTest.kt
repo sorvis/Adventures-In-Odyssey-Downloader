@@ -183,8 +183,6 @@ class ArchiveBackfillTest {
         override suspend fun downloadedOldestFirst(): List<LocalEpisodeEntity> = emptyList()
         override fun observeUnarchivedDownloaded(): Flow<List<LocalEpisodeEntity>> = flowOf(unarchivedNow())
         override suspend fun unarchivedDownloaded(): List<LocalEpisodeEntity> = unarchivedNow()
-        override fun observeYshAlbumSummaries(): Flow<List<com.odyssey.data.local.YshAlbumSummary>> = flowOf(emptyList())
-        override fun observeYshAlbumTracks(albumName: String): Flow<List<LocalEpisodeEntity>> = flowOf(emptyList())
         override suspend fun yshRowsMissingAlbum(): List<LocalEpisodeEntity> =
             rows.filter { it.providerId == "ysh" && it.albumName == null }
         override suspend fun setAlbumInfo(providerId: String, externalId: String, albumName: String?, albumImageUrl: String?, albumTrackOrder: Int?) {

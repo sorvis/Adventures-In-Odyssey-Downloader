@@ -131,13 +131,6 @@ class MediaCache @Inject constructor(
         }
     }
 
-    /**
-     * @deprecated kept temporarily for any caller still on the old name.
-     * Use [mediaSourceDataFactory] for new code.
-     */
-    @Deprecated("Use mediaSourceDataFactory()", ReplaceWith("mediaSourceDataFactory()"))
-    fun cacheDataSourceFactory(): DataSource.Factory = mediaSourceDataFactory()
-
     companion object {
         const val CACHE_DIR_NAME = "media-cache"
 

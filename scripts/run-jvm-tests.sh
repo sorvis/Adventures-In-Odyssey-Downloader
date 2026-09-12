@@ -138,6 +138,7 @@ quietly kotlinc \
   android/app/src/main/java/com/odyssey/player/PlaySource.kt \
   android/app/src/main/java/com/odyssey/player/PlaybackFormat.kt \
   android/app/src/main/java/com/odyssey/player/Mp3Validation.kt \
+  android/app/src/main/java/com/odyssey/player/RecoveryDecision.kt \
   android/app/src/main/java/com/odyssey/player/PlayAction.kt \
   android/app/src/main/java/com/odyssey/player/PositionPersistence.kt \
   android/app/src/main/java/com/odyssey/player/SeekTarget.kt \
@@ -162,6 +163,7 @@ quietly kotlinc \
   android/app/src/test/java/com/odyssey/player/PlaySourceTest.kt \
   android/app/src/test/java/com/odyssey/player/PlaybackFormatTest.kt \
   android/app/src/test/java/com/odyssey/player/Mp3ValidationTest.kt \
+  android/app/src/test/java/com/odyssey/player/RecoveryDecisionTest.kt \
   android/app/src/test/java/com/odyssey/player/PlayActionTest.kt \
   android/app/src/test/java/com/odyssey/player/PositionPersistenceTest.kt \
   android/app/src/test/java/com/odyssey/player/SeekTargetTest.kt \
@@ -199,6 +201,7 @@ java \
   com.odyssey.player.PlaySourceTest \
   com.odyssey.player.PlaybackFormatTest \
   com.odyssey.player.Mp3ValidationTest \
+  com.odyssey.player.RecoveryDecisionTest \
   com.odyssey.player.PlayActionTest \
   com.odyssey.player.PositionPersistenceTest \
   com.odyssey.player.SeekTargetTest \
