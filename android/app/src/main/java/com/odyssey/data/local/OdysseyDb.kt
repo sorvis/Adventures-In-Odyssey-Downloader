@@ -44,6 +44,19 @@ data class LocalEpisodeEntity(
     val albumName: String? = null,
     val albumImageUrl: String? = null,
     val albumTrackOrder: Int? = null,
+    /**
+     * How many times the archive has rejected this row's audio as
+     * incomplete (HTTP 422 from the completeness gate). Bounds the
+     * re-download loop: a source that is itself permanently truncated
+     * downloads cleanly every time and only fails at the archive step,
+     * so without a cap the phone would re-fetch it forever.
+     *
+     * Persisted rather than held in memory because that cycle is
+     * WorkManager-driven and survives process death — an in-memory
+     * guard would reset on restart and let the loop resume. Added in
+     * v5→v6. Reset only on a SUCCESSFUL archive.
+     */
+    val redownloadAttempts: Int = 0,
 ) {
     /**
      * Long-keyed view of the row id, kept so code paths that pre-date
@@ -174,6 +187,30 @@ interface EpisodeDao {
      */
     @Query("UPDATE local_episodes SET filePath = NULL, fileSize = 0, downloadedAt = NULL WHERE providerId = :providerId AND externalId = :externalId")
     suspend fun markUndownloadedByKey(providerId: String, externalId: String)
+
+    /**
+     * Count one archive rejection of this row's audio as incomplete.
+     * See [LocalEpisodeEntity.redownloadAttempts] for why this is
+     * persisted rather than tracked in memory.
+     */
+    @Query("""UPDATE local_episodes
+                 SET redownloadAttempts = redownloadAttempts + 1
+               WHERE providerId = :providerId AND externalId = :externalId""")
+    suspend fun incrementRedownloadAttempts(providerId: String, externalId: String)
+
+    /**
+     * Clear the rejection counter.
+     *
+     * Called ONLY after a successful archive. Resetting on a successful
+     * download instead would defeat the cap entirely: a truncated
+     * source downloads without error every single time, and only the
+     * archive's completeness gate ever notices, so the counter would
+     * zero on every pass and the loop would never terminate.
+     */
+    @Query("""UPDATE local_episodes
+                 SET redownloadAttempts = 0
+               WHERE providerId = :providerId AND externalId = :externalId""")
+    suspend fun resetRedownloadAttempts(providerId: String, externalId: String)
 
     @Query("UPDATE local_episodes SET archivedAt = :ts WHERE externalId = :id AND providerId = 'aio'")
     suspend fun markArchived(id: Long, ts: Long)
@@ -379,7 +416,7 @@ interface YshUnmatchedDao {
         PlaybackPositionEntity::class,
         YshUnmatchedTitleEntity::class,
     ],
-    version = 5,
+    version = 6,
     exportSchema = false,
 )
 abstract class OdysseyDb : RoomDatabase() {
@@ -459,6 +496,19 @@ val MIGRATION_3_4: Migration = object : Migration(3, 4) {
  * number — both round-trip through CAST), drop the v4 tables. Row
  * counts and contents are preserved exactly.
  */
+val MIGRATION_5_6: Migration = object : Migration(5, 6) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        // Bounds the re-download loop after an archive rejects a row's
+        // audio as incomplete. A plain ADD COLUMN with a default — no
+        // table rebuild needed, unlike 4→5, since nothing about the
+        // existing columns or constraints changes.
+        db.execSQL(
+            "ALTER TABLE local_episodes ADD COLUMN redownloadAttempts " +
+                "INTEGER NOT NULL DEFAULT 0",
+        )
+    }
+}
+
 val MIGRATION_4_5: Migration = object : Migration(4, 5) {
     override fun migrate(db: SupportSQLiteDatabase) {
         // --- local_episodes ---------------------------------------------

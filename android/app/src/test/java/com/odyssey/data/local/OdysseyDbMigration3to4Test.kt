@@ -61,6 +61,21 @@ class OdysseyDbMigration3to4Test {
     }
 
     @Test
+    fun redownloadAttemptsDefaultsToZeroAfterMigration() {
+        // v5→v6 adds the archive-rejection counter that bounds the
+        // re-download loop. An existing row must come through the
+        // migration at zero — a NULL or a carried-over value would
+        // either crash the non-null column or start a row already at
+        // its cap, silently disabling repair for it.
+        seedV3Database()
+        val db = openV4()
+        val row = runBlocking { db.episodes().byId(1278294L) }
+        assertNotNull("seeded AIO row should survive the migration", row)
+        assertEquals(0, row!!.redownloadAttempts)
+        db.close()
+    }
+
+    @Test
     fun yshUnmatchedTitlesTableIsUsableAfterMigration() {
         seedV3Database()
         val db = openV4()
@@ -153,7 +168,10 @@ class OdysseyDbMigration3to4Test {
 
     private fun openV4(): OdysseyDb =
         Room.databaseBuilder(ctx, OdysseyDb::class.java, dbName)
-            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+            .addMigrations(
+                MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4,
+                MIGRATION_4_5, MIGRATION_5_6,
+            )
             .allowMainThreadQueries()
             .build()
 

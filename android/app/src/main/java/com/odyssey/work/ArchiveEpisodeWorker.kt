@@ -9,7 +9,11 @@ import com.odyssey.data.local.EpisodeDao
 import com.odyssey.debug.DebugLogger
 import com.odyssey.download.ArchiveProgressTracker
 import com.odyssey.nas.NasClient
+import com.odyssey.app.SettingsRepo
 import com.odyssey.nas.NasHttpException
+import com.odyssey.player.RecoveryAction
+import com.odyssey.player.decideRecovery
+import kotlinx.coroutines.flow.first
 import com.odyssey.nas.NasNotConfiguredException
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
@@ -42,7 +46,16 @@ class ArchiveEpisodeWorker @AssistedInject constructor(
     private val scheduler: WorkScheduler,
     private val progress: ArchiveProgressTracker,
     private val catalog: AioCatalogRepo,
+    private val settings: SettingsRepo,
 ) : CoroutineWorker(ctx, params) {
+
+    /**
+     * Mirrors PlaybackRecovery's default: when the setting can't be
+     * read, assume metered downloads are NOT allowed, so a repair can
+     * never surprise the user with cellular data.
+     */
+    private suspend fun settingsAllowMetered(): Boolean =
+        runCatching { settings.flow.first().allowMeteredDownloads }.getOrDefault(false)
 
     override suspend fun doWork(): Result {
         // Prefer v2 input shape; fall back to legacy AIO-only Long id
@@ -144,6 +157,10 @@ class ArchiveEpisodeWorker @AssistedInject constructor(
             onSuccess = {
                 DebugLogger.i("ArchiveWorker", "doWork($resolvedProvider:$resolvedExternalId) — upload OK, marking archived")
                 episodes.markArchivedByKey(resolvedProvider, resolvedExternalId, System.currentTimeMillis())
+                // Only a successful archive clears the rejection count,
+                // so a genuinely transient bad download doesn't hold the
+                // cap against the row for the rest of its life.
+                episodes.resetRedownloadAttempts(resolvedProvider, resolvedExternalId)
                 scheduler.enqueueRetention()
                 Result.success()
             },
@@ -168,13 +185,73 @@ class ArchiveEpisodeWorker @AssistedInject constructor(
                         // file rather than orphan bytes that nothing
                         // references and that the server has already
                         // judged incomplete.
+                        val attempts = ep.redownloadAttempts + 1
                         DebugLogger.w(
                             "ArchiveWorker",
                             "doWork($resolvedProvider:$resolvedExternalId) — archive rejected the upload " +
-                                "(HTTP ${e.code}: ${e.bodyPreview}); clearing download state, not retrying",
+                                "(HTTP ${e.code}: ${e.bodyPreview}); attempt $attempts of " +
+                                "$MAX_REDOWNLOAD_ATTEMPTS",
                         )
+                        episodes.incrementRedownloadAttempts(resolvedProvider, resolvedExternalId)
                         episodes.markUndownloadedByKey(resolvedProvider, resolvedExternalId)
                         runCatching { file.delete() }
+
+                        if (attempts > MAX_REDOWNLOAD_ATTEMPTS) {
+                            // The source itself is almost certainly the
+                            // problem — it has now produced incomplete
+                            // audio this many times. Stop. The row stays
+                            // visible as not-downloaded so the user can
+                            // retry deliberately; what we refuse to do is
+                            // keep re-fetching bytes that never improve.
+                            DebugLogger.w(
+                                "ArchiveWorker",
+                                "doWork($resolvedProvider:$resolvedExternalId) — giving up after " +
+                                    "$attempts rejected download(s); not re-fetching again",
+                            )
+                        } else {
+                            // Deliberately pass NO bytes to the recovery
+                            // policy. Its MP3 sniff only reads the first
+                            // 8 bytes, and a truncated file's header is
+                            // perfectly valid — sniffing would return
+                            // Skip and we'd never repair the exact case
+                            // we're handling. The archive has already
+                            // judged these bytes; all we need from the
+                            // policy is WHERE to re-fetch from.
+                            val allowMetered = settingsAllowMetered()
+                            when (decideRecovery(path, ep.downloadUrl, ByteArray(0))) {
+                                RecoveryAction.Restore -> {
+                                    scheduler.enqueueRestoreByKey(
+                                        providerId = resolvedProvider,
+                                        externalId = resolvedExternalId,
+                                        title = ep.title,
+                                        airDate = ep.airDate,
+                                        album = ep.albumName,
+                                        description = ep.description,
+                                        durationSecs = ep.durationMs / 1000,
+                                        allowMetered = allowMetered,
+                                    )
+                                    DebugLogger.i(
+                                        "ArchiveWorker",
+                                        "doWork($resolvedProvider:$resolvedExternalId) — re-pulling from " +
+                                            "backup (attempt $attempts)",
+                                    )
+                                }
+                                RecoveryAction.Redownload -> {
+                                    scheduler.enqueueDownload(
+                                        resolvedProvider, resolvedExternalId, allowMetered,
+                                    )
+                                    DebugLogger.i(
+                                        "ArchiveWorker",
+                                        "doWork($resolvedProvider:$resolvedExternalId) — re-downloading " +
+                                            "(attempt $attempts)",
+                                    )
+                                }
+                                is RecoveryAction.Skip -> DebugLogger.w(
+                                    "ArchiveWorker",
+                                    "doWork($resolvedProvider:$resolvedExternalId) — nothing to re-fetch",
+                                )
+                            }
+                        }
                         Result.failure()
                     }
                     else -> {
@@ -187,6 +264,23 @@ class ArchiveEpisodeWorker @AssistedInject constructor(
     }
 
     companion object {
+        /**
+         * How many times the archive may reject this row's audio as
+         * incomplete before the app stops re-fetching it.
+         *
+         * The bound is what makes the repair loop safe. A source that
+         * is itself truncated downloads cleanly every time and only
+         * fails at the archive's completeness gate, so an unbounded
+         * retry would cycle download → reject → download forever.
+         *
+         * `attempts` counts rejections including the current one, so
+         * this permits exactly this many re-fetches and refuses the
+         * one after — capping the waste at two extra episodes of
+         * bandwidth while still recovering the common case, a single
+         * bad transfer.
+         */
+        const val MAX_REDOWNLOAD_ATTEMPTS = 2
+
         /** v0.1.72: providerId of the row to archive. Required for new ingests. */
         const val KEY_PROVIDER_ID = "providerId"
         /** v0.1.72: externalId of the row to archive. Required for new ingests. */

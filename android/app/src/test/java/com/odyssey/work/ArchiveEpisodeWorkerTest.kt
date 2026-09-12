@@ -377,12 +377,96 @@ class ArchiveEpisodeWorkerTest {
         assertNotNull(episodes.byKey("aio", "204")!!.filePath)
     }
 
+    @Test
+    fun `doWork -- 422 under the cap re-downloads and counts the attempt`() = runBlocking {
+        settings.setNas(server.url("/").toString().trimEnd('/'), "tok")
+        val file = File(ctx.cacheDir, "short1.mp3").apply { writeText("partial") }
+        episodes.upsert(makeRow(
+            externalId = "205", filePath = file.absolutePath, archivedAt = null,
+        ))
+        server.enqueue(MockResponse().setResponseCode(422).setBody("incomplete audio"))
+
+        buildWorker(episodeId = 205L).doWork()
+
+        assertEquals(1, episodes.byKey("aio", "205")!!.redownloadAttempts)
+        assertTrue(workCount("download-aio-205") > 0)
+    }
+
+    @Test
+    fun `doWork -- 422 past the cap stops re-downloading`() = runBlocking {
+        // A source that is itself truncated downloads cleanly every
+        // time and only fails at the archive gate, so without this
+        // bound the cycle download -> reject -> download never ends.
+        settings.setNas(server.url("/").toString().trimEnd('/'), "tok")
+        val file = File(ctx.cacheDir, "short2.mp3").apply { writeText("partial") }
+        episodes.upsert(makeRow(
+            externalId = "206",
+            filePath = file.absolutePath,
+            archivedAt = null,
+            redownloadAttempts = ArchiveEpisodeWorker.MAX_REDOWNLOAD_ATTEMPTS,
+        ))
+        server.enqueue(MockResponse().setResponseCode(422).setBody("incomplete audio"))
+
+        buildWorker(episodeId = 206L).doWork()
+
+        assertEquals(0, workCount("download-aio-206"))
+        // Still counted, so the cap can't be walked back by a later pass.
+        assertEquals(
+            ArchiveEpisodeWorker.MAX_REDOWNLOAD_ATTEMPTS + 1,
+            episodes.byKey("aio", "206")!!.redownloadAttempts,
+        )
+    }
+
+    @Test
+    fun `doWork -- 422 on a backup-sourced row restores instead of downloading`() = runBlocking {
+        // DownloadEpisodeWorker fail-fasts on backup:// by design
+        // (v0.1.75), so routing these through the download path would
+        // delete the file and never replace it.
+        settings.setNas(server.url("/").toString().trimEnd('/'), "tok")
+        val file = File(ctx.cacheDir, "short3.mp3").apply { writeText("partial") }
+        episodes.upsert(makeRow(
+            externalId = "207",
+            filePath = file.absolutePath,
+            archivedAt = null,
+            downloadUrl = "backup://207",
+        ))
+        server.enqueue(MockResponse().setResponseCode(422).setBody("incomplete audio"))
+
+        buildWorker(episodeId = 207L).doWork()
+
+        assertTrue(workCount("restore-aio-207") > 0)
+        assertEquals(0, workCount("download-aio-207"))
+    }
+
+    @Test
+    fun `doWork -- a successful archive clears the attempt counter`() = runBlocking {
+        // Otherwise one transient bad download would hold the cap
+        // against the row for the rest of its life.
+        settings.setNas(server.url("/").toString().trimEnd('/'), "tok")
+        val file = File(ctx.cacheDir, "good.mp3").apply { writeText("audio") }
+        episodes.upsert(makeRow(
+            externalId = "208",
+            filePath = file.absolutePath,
+            archivedAt = null,
+            redownloadAttempts = 1,
+        ))
+        server.enqueue(MockResponse().setResponseCode(201).setBody("{}"))
+
+        buildWorker(episodeId = 208L).doWork()
+
+        val row = episodes.byKey("aio", "208")!!
+        assertNotNull(row.archivedAt)
+        assertEquals(0, row.redownloadAttempts)
+    }
+
     // ---- helpers ---------------------------------------------------------
 
     private fun makeRow(
         externalId: String,
         filePath: String? = null,
         archivedAt: Long? = null,
+        downloadUrl: String = "https://zcast/$externalId.mp3",
+        redownloadAttempts: Int = 0,
     ) = LocalEpisodeEntity(
         providerId = "aio",
         externalId = externalId,
@@ -390,13 +474,19 @@ class ArchiveEpisodeWorkerTest {
         airDate = "May 1, 2026",
         description = null,
         sourceUrl = "https://oneplace.com/$externalId",
-        downloadUrl = "https://zcast/$externalId.mp3",
+        downloadUrl = downloadUrl,
         filePath = filePath,
         fileSize = filePath?.let { File(it).takeIf(File::exists)?.length() } ?: 0L,
         durationMs = 25 * 60_000L,
         downloadedAt = if (filePath != null) 1L else null,
         archivedAt = archivedAt,
+        redownloadAttempts = redownloadAttempts,
     )
+
+    /** Unique-work names WorkScheduler keys its enqueues on. */
+    private fun workCount(name: String): Int =
+        androidx.work.WorkManager.getInstance(ctx)
+            .getWorkInfosForUniqueWork(name).get().size
 
     private fun buildWorker(episodeId: Long): ArchiveEpisodeWorker =
         TestListenableWorkerBuilder.from(ctx, ArchiveEpisodeWorker::class.java)
@@ -419,6 +509,7 @@ class ArchiveEpisodeWorkerTest {
                 scheduler = scheduler,
                 progress = progress,
                 catalog = catalog,
+                settings = settings,
             )
         }
     }
