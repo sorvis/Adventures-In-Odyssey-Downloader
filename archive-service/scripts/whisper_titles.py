@@ -1411,7 +1411,31 @@ def _process_batch(
         clips: dict[str, Path] = {}
         plans: dict[str, tuple[dict, str]] = {}
         download_errors: list[ReportEntry] = []
+
+        # Phase 0: serve whatever the transcript cache already holds.
+        # Transcribing is ~95% of this pipeline's cost and a transcript
+        # of unchanged audio stays valid forever, so a cache hit skips
+        # the download, the clipping and the GPU entirely.
+        cached: dict[str, str] = {}
+        pending: list[dict] = []
         for ep in batch:
+            eid = ep["episode_id"]
+            provider = (ep.get("provider_id") or "aio").lower()
+            wanted = ({"head": head_secs, "tail": tail_secs}
+                      if provider == "ysh" else {"tail": tail_secs})
+            hit = cache_fetch(client, eid, ep.get("sha256"), wanted, cfg.model)
+            if hit is None:
+                pending.append(ep)
+                continue
+            for segment, text in hit.items():
+                name = f"ep{eid}-{segment}"
+                cached[name] = text
+                plans[name] = (ep, segment)
+        if cached:
+            sys.stderr.write(f"[{len(batch) - len(pending)} cached] ")
+            sys.stderr.flush()
+
+        for ep in pending:
             eid = ep["episode_id"]
             provider = (ep.get("provider_id") or "aio").lower()
             full = td / f"{eid}.mp3"
@@ -1464,22 +1488,35 @@ def _process_batch(
                 clips[name] = p
                 plans[name] = (ep, segment)
 
-        if not clips:
+        if not clips and not cached:
             sys.stderr.write("  (all downloads failed)\n")
             return download_errors
 
-        # 2. One whisperx call for the whole batch.
-        try:
-            sys.stderr.write(f"({len(clips)} clip(s)) … ")
-            sys.stderr.flush()
-            transcripts = transcribe_batch(clips, cfg)
-        except Exception as exc:
-            sys.stderr.write(f"BATCH ERR: {exc}\n")
-            for ep in batch:
-                rows.append(ReportEntry(
-                    ep["episode_id"], ep["title"], ep.get("album"), "",
-                    None, None, 0.0, f"whisperx batch: {exc}",
-                ))
+        # 2. One whisperx call for whatever the cache didn't cover.
+        transcripts: dict[str, str] = dict(cached)
+        if clips:
+            try:
+                sys.stderr.write(f"({len(clips)} clip(s)) … ")
+                sys.stderr.flush()
+                fresh = transcribe_batch(clips, cfg)
+            except Exception as exc:
+                sys.stderr.write(f"BATCH ERR: {exc}\n")
+                for ep in pending:
+                    rows.append(ReportEntry(
+                        ep["episode_id"], ep["title"], ep.get("album"), "",
+                        None, None, 0.0, f"whisperx batch: {exc}",
+                    ))
+                fresh = {}
+            for clip_name, text in fresh.items():
+                ep, segment = plans[clip_name]
+                client.put_transcript(
+                    ep["episode_id"], segment=segment,
+                    secs=head_secs if segment == "head" else tail_secs,
+                    model=cfg.model, text=text,
+                    audio_sha256=ep.get("sha256"),
+                )
+            transcripts.update(fresh)
+        if not transcripts:
             return rows + download_errors
 
         # 3. Score per episode. For YSH, score head + tail and keep
@@ -1828,6 +1865,46 @@ def _score_and_log(
         )
 
 
+def cache_fetch(
+    client: "ArchiveClient",
+    episode_id: int,
+    audio_sha256: str | None,
+    wanted: dict[str, int],
+    model: str,
+) -> dict[str, str] | None:
+    """Return {segment: text} when EVERY clip in `wanted` ({segment:
+    secs}) is already cached server-side for this exact (episode,
+    segment, secs, model, sha); None when anything is missing.
+
+    All-or-nothing on purpose: a partial hit still needs the audio
+    downloaded and clipped, at which point transcribing the remaining
+    clip alongside it is nearly free — the model load dominates.
+
+    The match is exact rather than "cached clip is at least as long as
+    requested". A longer clip's transcript would arguably answer a
+    shorter clip's question, but not the reverse, and that asymmetry is
+    an easy thing to get backwards later; an exact key can only ever
+    produce an honest miss.
+    """
+    if not wanted:
+        return None
+    try:
+        rows = client.list_transcripts(episode_id)
+    except Exception as exc:
+        sys.stderr.write(f"    (transcript cache read failed: {exc})\n")
+        return None
+    sha = audio_sha256 or ""
+    found: dict[str, str] = {}
+    for r in rows:
+        seg = r.get("segment")
+        if (seg in wanted
+                and r.get("secs") == wanted[seg]
+                and r.get("model") == model
+                and (r.get("audio_sha256") or "") == sha):
+            found[seg] = r.get("text") or ""
+    return found if len(found) == len(wanted) else None
+
+
 def _cached_clips(
     client: "ArchiveClient",
     entry: "YshAuditEntry",
@@ -1836,38 +1913,10 @@ def _cached_clips(
     head_secs: int,
     tail_secs: int,
 ) -> tuple[str, str] | None:
-    """Return (head_text, tail_text) when BOTH clips are already cached
-    server-side for this exact (episode, segment, secs, model, sha), or
-    None when anything is missing.
-
-    All-or-nothing on purpose: a partial hit still needs the audio
-    downloaded and clipped, at which point transcribing the second clip
-    alongside the first is nearly free — the model load dominates.
-
-    The match is exact rather than "cached clip is at least as long as
-    requested". A longer clip's transcript would arguably answer a
-    shorter clip's question, but not the reverse, and the asymmetry is
-    an easy thing to get backwards later; an exact key can only ever
-    produce an honest miss.
-    """
-    try:
-        rows = client.list_transcripts(entry.episode_id)
-    except Exception as exc:
-        sys.stderr.write(f"    (transcript cache read failed: {exc})\n")
-        return None
-    sha = entry.audio_sha256 or ""
-    want = {"head": head_secs, "tail": tail_secs}
-    found: dict[str, str] = {}
-    for r in rows:
-        seg = r.get("segment")
-        if (seg in want
-                and r.get("secs") == want[seg]
-                and r.get("model") == model
-                and (r.get("audio_sha256") or "") == sha):
-            found[seg] = r.get("text") or ""
-    if len(found) == 2:
-        return found["head"], found["tail"]
-    return None
+    """audit-ysh's head+tail view of `cache_fetch`."""
+    found = cache_fetch(client, entry.episode_id, entry.audio_sha256,
+                        {"head": head_secs, "tail": tail_secs}, model)
+    return (found["head"], found["tail"]) if found else None
 
 
 def _audit_batch(
