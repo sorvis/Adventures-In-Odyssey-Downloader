@@ -675,6 +675,165 @@ class RetentionWorkerTest {
         }
     }
 
+    // ---- backup-safety invariant ----------------------------------------
+    //
+    // The rule these four pin: retention exists to free space for new
+    // downloads, but a local file that has NEVER been backed up is the
+    // only copy in existence. Losing it is unrecoverable, so the worker
+    // must prefer staying over cap to deleting it. `candidates` in
+    // RetentionWorker filters to `archivedAt != null` whenever the NAS
+    // is configured — these lock that filter in place, because a
+    // refactor that drops it would still pass every other test in this
+    // file (they all seed fully-archived rows).
+
+    @Test
+    fun `backup-safety -- unarchived downloads are never pruned, even when oldest and over cap`() = runBlocking {
+        settings.setNas("http://nas.example", "token")
+        settings.setRetentionFor("aio", 2)
+
+        // Oldest two have NO backup; newest two are archived. Being
+        // oldest normally makes 601/602 first in line for pruning.
+        for (n in 1..4) {
+            val file = File(ctx.cacheDir, "unarch-$n.mp3").apply { writeText("audio $n") }
+            episodes.upsert(
+                LocalEpisodeEntity(
+                    providerId = "aio", externalId = "60$n",
+                    title = "ep $n", airDate = "2026-05-0$n", description = null,
+                    sourceUrl = "https://oneplace.com/60$n",
+                    downloadUrl = "https://zcast/60$n.mp3",
+                    filePath = file.absolutePath, fileSize = file.length(),
+                    durationMs = 25 * 60_000L,
+                    downloadedAt = 1000L * n,
+                    archivedAt = if (n <= 2) null else 2000L * n,
+                ),
+            )
+        }
+
+        buildWorker().doWork()
+
+        val byId = episodes.observeAll().first().associateBy { it.externalId }
+
+        // The invariant. These are the only copies that exist.
+        for (id in listOf("601", "602")) {
+            assertNotNull("unarchived $id must keep its filePath", byId.getValue(id).filePath)
+            assertNull("unarchived $id must stay unarchived", byId.getValue(id).archivedAt)
+        }
+        assertTrue("unarchived file 1 must stay on disk", File(ctx.cacheDir, "unarch-1.mp3").exists())
+        assertTrue("unarchived file 2 must stay on disk", File(ctx.cacheDir, "unarch-2.mp3").exists())
+
+        // The archived ones absorb the whole prune instead. Note this
+        // leaves the cap "spent" on unbacked rows — accepted tradeoff:
+        // safety beats hitting the cap exactly.
+        for (id in listOf("603", "604")) {
+            assertNull("archived $id should be ghosted", byId.getValue(id).filePath)
+            assertNotNull("archived $id keeps archivedAt", byId.getValue(id).archivedAt)
+        }
+    }
+
+    @Test
+    fun `backup-safety -- nothing is pruned when no download has a backup yet`() = runBlocking {
+        // Strongest form: over cap, but every candidate is unbacked.
+        // Correct behavior is to prune NOTHING and stay over cap.
+        settings.setNas("http://nas.example", "token")
+        settings.setRetentionFor("aio", 1)
+
+        for (n in 1..4) {
+            val file = File(ctx.cacheDir, "allunarch-$n.mp3").apply { writeText("audio $n") }
+            episodes.upsert(
+                LocalEpisodeEntity(
+                    providerId = "aio", externalId = "61$n",
+                    title = "ep $n", airDate = "2026-05-0$n", description = null,
+                    sourceUrl = "https://oneplace.com/61$n",
+                    downloadUrl = "https://zcast/61$n.mp3",
+                    filePath = file.absolutePath, fileSize = file.length(),
+                    durationMs = 25 * 60_000L,
+                    downloadedAt = 1000L * n, archivedAt = null,
+                ),
+            )
+        }
+
+        val result = buildWorker().doWork()
+        assertTrue("worker should still succeed", result is ListenableWorker.Result.Success)
+
+        val rows = episodes.observeAll().first()
+        assertEquals("no row may be dropped", 4, rows.size)
+        assertTrue("every unbacked download keeps its filePath", rows.all { it.filePath != null })
+        for (n in 1..4) {
+            assertTrue("file $n must survive", File(ctx.cacheDir, "allunarch-$n.mp3").exists())
+        }
+    }
+
+    @Test
+    fun `backup-safety -- prune skips an unarchived row and takes the next-oldest archived`() = runBlocking {
+        // Interleaved: the unbacked row sits in the MIDDLE of the
+        // oldest-first ordering, so this catches an implementation that
+        // filters correctly but then loses oldest-first ordering (or
+        // one that takes a contiguous slice off the front).
+        settings.setNas("http://nas.example", "token")
+        settings.setRetentionFor("aio", 2)
+
+        val archived = mapOf(1 to 2001L, 2 to null, 3 to 2003L, 4 to 2004L)
+        for (n in 1..4) {
+            val file = File(ctx.cacheDir, "interleave-$n.mp3").apply { writeText("audio $n") }
+            episodes.upsert(
+                LocalEpisodeEntity(
+                    providerId = "aio", externalId = "62$n",
+                    title = "ep $n", airDate = "2026-05-0$n", description = null,
+                    sourceUrl = "https://oneplace.com/62$n",
+                    downloadUrl = "https://zcast/62$n.mp3",
+                    filePath = file.absolutePath, fileSize = file.length(),
+                    durationMs = 25 * 60_000L,
+                    downloadedAt = 1000L * n,
+                    archivedAt = archived[n],
+                ),
+            )
+        }
+
+        buildWorker().doWork()
+
+        val byId = episodes.observeAll().first().associateBy { it.externalId }
+
+        // excess = 4 - 2 = 2, eligible = [621, 623, 624] oldest-first,
+        // so 621 and 623 go. 622 is skipped for being unbacked; 624
+        // survives as the newest.
+        assertNull("621 (oldest archived) should be ghosted", byId.getValue("621").filePath)
+        assertNull("623 (next-oldest archived) should be ghosted", byId.getValue("623").filePath)
+        assertNotNull("622 is unbacked — must be skipped, not pruned", byId.getValue("622").filePath)
+        assertTrue("622's file must stay on disk", File(ctx.cacheDir, "interleave-2.mp3").exists())
+        assertNotNull("624 (newest) should be kept", byId.getValue("624").filePath)
+    }
+
+    @Test
+    fun `oldest-first tie-break falls back to externalId when airDate matches`() = runBlocking {
+        // downloadedOldestFirst() orders by `airDate ASC, externalId ASC`.
+        // Same-day episodes are common (two-parters air together), so
+        // the tie-break decides which one dies — pin it.
+        settings.setNas("http://nas.example", "token")
+        settings.setRetentionFor("aio", 1)
+
+        for (n in 1..3) {
+            val file = File(ctx.cacheDir, "tie-$n.mp3").apply { writeText("audio $n") }
+            episodes.upsert(
+                LocalEpisodeEntity(
+                    providerId = "aio", externalId = "63$n",
+                    title = "ep $n", airDate = "2026-05-01", description = null,
+                    sourceUrl = "https://oneplace.com/63$n",
+                    downloadUrl = "https://zcast/63$n.mp3",
+                    filePath = file.absolutePath, fileSize = file.length(),
+                    durationMs = 25 * 60_000L,
+                    downloadedAt = 1000L * n, archivedAt = 2000L * n,
+                ),
+            )
+        }
+
+        buildWorker().doWork()
+
+        val byId = episodes.observeAll().first().associateBy { it.externalId }
+        assertNull("631 sorts first on the tie-break — pruned", byId.getValue("631").filePath)
+        assertNull("632 sorts second — pruned", byId.getValue("632").filePath)
+        assertNotNull("633 sorts last — survives", byId.getValue("633").filePath)
+    }
+
     // ---- helpers ---------------------------------------------------------
 
     private fun buildWorker(): RetentionWorker =

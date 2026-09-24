@@ -6,6 +6,47 @@ not yet scheduled. Add new entries at the top; remove (or move to
 
 ---
 
+## Space-driven eviction — free disk on demand, not just on a count cap
+
+`RetentionWorker` enforces a **per-provider count cap** (`retentionCountFor`)
+and nothing else. There is no free-space logic anywhere in `app/src/main/`:
+no `StatFs`, no `usableSpace`, no `ENOSPC` handling, no "make room before
+downloading". So the app never evicts *because it needs space* — only
+because a provider went over its episode count.
+
+Practical consequence: set a generous cap, fill the device, and downloads
+start failing on write. The cap is a proxy for space that ignores actual
+file sizes (a 25-min episode and a 90-min two-parter count the same).
+
+What's wanted:
+
+- Before a download, check free bytes against the expected size plus a
+  headroom margin. If short, evict until it fits or until nothing is
+  eligible.
+- Eviction must reuse the existing safety rule, not reinvent it:
+  **oldest-first among rows with `archivedAt != null`**, and never touch a
+  row whose only copy is local. Pinned by the `backup-safety --` tests in
+  `RetentionWorkerTest`.
+- If nothing is evictable (everything unbacked), fail the download with a
+  clear, surfaced reason rather than silently deleting the only copy or
+  dying on an opaque IO error.
+- Prefer eviction by reclaimed bytes, not row count, so one large file can
+  satisfy the request instead of evicting several small ones.
+- Decide what happens when the NAS is unreachable: today
+  `verifyBackupBeforePrune` makes a network error a *skip*, which is right
+  for a background sweep but would block a foreground download. Likely
+  needs a separate policy for the on-demand path.
+
+Open policy question worth settling first: when the NAS is **not**
+configured, `candidates = rows` — retention hard-deletes unbacked
+downloads, which is the one case that violates "never delete a file that
+has no backup". Defensible (no backup is possible, so the cap has to mean
+something), but it should be a deliberate, documented choice rather than a
+fallthrough, and space-driven eviction will hit the same fork.
+
+---
+
+
 ## Multi-show plugin abstraction — full path beyond H-lite
 
 **H-lite landed** (commit TBD): `ShowProvider` interface, AIO wrapped
