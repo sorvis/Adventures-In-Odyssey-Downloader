@@ -1,5 +1,6 @@
 package com.odyssey.ui.screens
 
+import android.text.format.DateUtils
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
@@ -43,6 +44,36 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+
+/**
+ * How long "last successful backup" may go stale before the Settings
+ * screen calls it out in error colour. Only applied when episodes are
+ * actually waiting — a quiet phone with nothing to upload is not a
+ * fault. 48h gives a daily-download app a full missed cycle of slack
+ * before it cries wolf.
+ */
+private const val BACKUP_STALE_AFTER_MS = 48L * 60 * 60 * 1000
+
+/**
+ * Should Settings → Backup call out that backups look broken?
+ *
+ * Extracted from the composable so the decision is testable on its own —
+ * the full SettingsScreen needs the Hilt ViewModel to render, and this
+ * is the part with actual logic in it.
+ *
+ * Only true when episodes are genuinely waiting. A phone with nothing
+ * to upload is not a fault no matter how long ago the last backup was,
+ * which keeps the warning from crying wolf on a quiet install.
+ *
+ * @param lastOkMs epoch ms of the last accepted upload; 0 = never.
+ * @param pendingCount downloaded-but-unarchived episodes right now.
+ */
+internal fun backupLooksBroken(
+    lastOkMs: Long,
+    nowMs: Long,
+    pendingCount: Int,
+    staleAfterMs: Long = BACKUP_STALE_AFTER_MS,
+): Boolean = pendingCount > 0 && (lastOkMs == 0L || nowMs - lastOkMs > staleAfterMs)
 
 @HiltViewModel
 class SettingsVm @Inject constructor(
@@ -415,6 +446,42 @@ fun SettingsScreen(
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.testTag("backup-pending-count"),
                 )
+
+                // Last *successful* backup. The "Last push" line further
+                // down reports how many jobs were ENQUEUED, which keeps
+                // looking reassuring even when every upload is failing —
+                // during the 2026-09-14 archive-service outage it read
+                // "queued N uploads" for 9 days while nothing landed.
+                // This line is written only by ArchiveEpisodeWorker's
+                // onSuccess branch, so when it goes stale while episodes
+                // pile up, backups really are broken.
+                val lastOk = current.lastBackupSuccessAtMs
+                val now = System.currentTimeMillis()
+                val backupsLookBroken = backupLooksBroken(lastOk, now, unarchivedCount)
+                Text(
+                    text = when {
+                        lastOk == 0L && unarchivedCount == 0 -> "No backup has run yet."
+                        lastOk == 0L -> "No backup has ever succeeded on this phone."
+                        else -> "Last successful backup: " +
+                            DateUtils.getRelativeTimeSpanString(
+                                lastOk, now, DateUtils.MINUTE_IN_MILLIS,
+                            )
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (backupsLookBroken) MaterialTheme.colorScheme.error
+                            else LocalContentColor.current,
+                    modifier = Modifier.testTag("backup-last-success"),
+                )
+                if (backupsLookBroken) {
+                    Text(
+                        text = "Backups aren't getting through. Downloads are being " +
+                            "kept on this phone until they can be backed up, so nothing " +
+                            "is lost — but check that the backup server is reachable.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.testTag("backup-stale-warning"),
+                    )
+                }
                 Button(
                     onClick = vm::pushUnarchivedNow,
                     enabled = unarchivedCount > 0,

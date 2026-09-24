@@ -161,6 +161,12 @@ class ArchiveEpisodeWorker @AssistedInject constructor(
                 // so a genuinely transient bad download doesn't hold the
                 // cap against the row for the rest of its life.
                 episodes.resetRedownloadAttempts(resolvedProvider, resolvedExternalId)
+                // Stamp the only honest "backups are working" signal we
+                // have. Written here and nowhere else, so if this value
+                // goes stale while episodes pile up unarchived, backups
+                // really have stopped — which is what went unnoticed for
+                // 9 days during the 2026-09-14 archive-service outage.
+                settings.recordBackupSuccess()
                 scheduler.enqueueRetention()
                 Result.success()
             },

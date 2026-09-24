@@ -47,6 +47,16 @@ private object Keys {
      * "Manage shows…" entry on the switcher dropdown.
      */
     val ENABLED_PROVIDERS = stringSetPreferencesKey("enabled_providers")
+    /**
+     * Epoch ms of the last upload the backup server actually ACCEPTED.
+     * 0 = never. Distinct from the in-memory "last push" feedback on
+     * the Settings screen, which only reports how many jobs got
+     * *enqueued* — during the 2026-09-14 archive-service outage that
+     * line read "queued N uploads" while every one of them failed, so
+     * the UI looked reassuring for 9 days. This key is written only on
+     * the onSuccess branch of ArchiveEpisodeWorker, so it cannot lie.
+     */
+    val LAST_BACKUP_SUCCESS_AT = longPreferencesKey("last_backup_success_at_ms")
 }
 
 /**
@@ -104,6 +114,11 @@ data class Settings(
      */
     val cfAccessClientId: String,
     val cfAccessClientSecret: String,
+    /**
+     * Epoch ms of the last upload the backup server accepted; 0 when
+     * no backup has ever succeeded on this install.
+     */
+    val lastBackupSuccessAtMs: Long = 0L,
 ) {
     val nasConfigured: Boolean get() = nasUrl.isNotBlank() && nasToken.isNotBlank()
     val cfAccessConfigured: Boolean
@@ -124,6 +139,7 @@ class SettingsRepo @Inject constructor(@ApplicationContext private val ctx: Cont
             verifyBackupBeforePrune = p[Keys.VERIFY_BACKUP] ?: true,
             cfAccessClientId = p[Keys.CF_CLIENT_ID].orEmpty(),
             cfAccessClientSecret = p[Keys.CF_CLIENT_SECRET].orEmpty(),
+            lastBackupSuccessAtMs = p[Keys.LAST_BACKUP_SUCCESS_AT] ?: 0L,
         )
     }
 
@@ -193,6 +209,15 @@ class SettingsRepo @Inject constructor(@ApplicationContext private val ctx: Cont
      */
     suspend fun setVerifyBackupBeforePrune(enabled: Boolean) =
         ctx.dataStore.edit { it[Keys.VERIFY_BACKUP] = enabled }
+
+    /**
+     * Stamp "a backup actually succeeded just now". Called only from
+     * ArchiveEpisodeWorker's onSuccess branch — never on enqueue, never
+     * on a skip, so a stale value is genuine evidence that backups have
+     * stopped working rather than that nothing was queued.
+     */
+    suspend fun recordBackupSuccess(atMs: Long = System.currentTimeMillis()) =
+        ctx.dataStore.edit { it[Keys.LAST_BACKUP_SUCCESS_AT] = atMs }
 
     // -----------------------------------------------------------------
     // Per-provider lastSeen API (multi-show prep, step 2 of YSH plan).

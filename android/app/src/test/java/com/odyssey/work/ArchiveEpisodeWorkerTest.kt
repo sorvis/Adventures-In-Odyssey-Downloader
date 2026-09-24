@@ -21,6 +21,7 @@ import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
+import kotlinx.coroutines.flow.first
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -458,6 +459,57 @@ class ArchiveEpisodeWorkerTest {
         assertNotNull(row.archivedAt)
         assertEquals(0, row.redownloadAttempts)
     }
+
+    // ---- backup-health signal --------------------------------------------
+
+    @Test
+    fun `doWork -- successful upload stamps lastBackupSuccessAt`() = runBlocking {
+        settings.setNas(server.url("/").toString().trimEnd('/'), "tok")
+        val file = File(ctx.cacheDir, "stamp-ok.mp3").apply { writeText("audio") }
+        episodes.upsert(makeRow(
+            externalId = "210",
+            filePath = file.absolutePath,
+            archivedAt = null,
+        ))
+        server.enqueue(MockResponse().setResponseCode(201).setBody("{}"))
+
+        val before = System.currentTimeMillis()
+        buildWorker(episodeId = 210L).doWork()
+
+        val stamped = settings.flow.first().lastBackupSuccessAtMs
+        assertTrue(
+            "a successful upload must stamp lastBackupSuccessAt (got $stamped)",
+            stamped >= before,
+        )
+    }
+
+    @Test
+    fun `doWork -- a failing upload must NOT stamp lastBackupSuccessAt`() = runBlocking {
+        // The load-bearing half. The Settings screen shows this value as
+        // "Last successful backup", and turns the panel red when it goes
+        // stale while episodes are waiting. If a failed upload stamped
+        // it, the UI would report healthy backups through an outage —
+        // exactly the 9-day blind spot of 2026-09-14 that this signal
+        // exists to remove.
+        settings.setNas(server.url("/").toString().trimEnd('/'), "tok")
+        val file = File(ctx.cacheDir, "stamp-fail.mp3").apply { writeText("audio") }
+        episodes.upsert(makeRow(
+            externalId = "211",
+            filePath = file.absolutePath,
+            archivedAt = null,
+        ))
+        server.enqueue(MockResponse().setResponseCode(503))
+
+        val result = buildWorker(episodeId = 211L).doWork()
+
+        assertTrue("5xx should retry", result is ListenableWorker.Result.Retry)
+        assertEquals(
+            "lastBackupSuccessAt must stay 0 — nothing was ever accepted",
+            0L,
+            settings.flow.first().lastBackupSuccessAtMs,
+        )
+    }
+
 
     // ---- helpers ---------------------------------------------------------
 
