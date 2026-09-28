@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Odyssey — Recent History mockup</title>
+<style>
+  :root{
+    --bg:#f6f4f2; --surf:#fffbff; --on:#1c1b1e; --on-var:#49454e;
+    --prim:#4b5c92; --prim-c:#dce1ff; --on-prim-c:#001944;
+    --outline:#cac4cf; --err:#ba1a1a;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:32px 20px 64px;background:var(--bg);color:var(--on);
+       font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  h1{font-size:22px;margin:0 0 4px}
+  .sub{color:var(--on-var);margin:0 0 28px;max-width:70ch}
+  .row{display:flex;gap:28px;flex-wrap:wrap;align-items:flex-start}
+  .col{flex:0 0 auto}
+  .cap{font-weight:600;margin:0 0 2px}
+  .capsub{color:var(--on-var);font-size:13px;margin:0 0 10px;max-width:34ch}
+  .phone{width:340px;height:700px;background:var(--surf);border:1px solid var(--outline);
+         border-radius:26px;overflow:hidden;display:flex;flex-direction:column;
+         box-shadow:0 2px 10px rgba(0,0,0,.09)}
+  .appbar{padding:14px 16px;font-size:20px;font-weight:600;display:flex;
+          justify-content:space-between;align-items:center;border-bottom:1px solid var(--outline)}
+  .appbar .acts{font-size:13px;color:var(--prim);font-weight:500;display:flex;gap:14px}
+  .back{font-weight:400;color:var(--on-var);margin-right:8px}
+  .scroll{flex:1;overflow:hidden;padding:8px 0}
+  .sect{padding:10px 16px 6px;font-size:13px;font-weight:600;color:var(--on-var);
+        display:flex;justify-content:space-between;align-items:baseline}
+  .seeall{color:var(--prim);font-weight:600;font-size:13px}
+  .card{margin:6px 12px;padding:12px 14px;border-radius:14px;background:var(--surf);
+        border:1px solid var(--outline)}
+  .card.hero{background:var(--prim-c);border-color:transparent}
+  .over{font-size:11px;letter-spacing:.4px;text-transform:uppercase;color:var(--on-prim-c);
+        opacity:.75;margin-bottom:3px}
+  .title{font-weight:600;margin-bottom:3px}
+  .meta{font-size:13px;color:var(--on-var);display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .hero .meta,.hero .title{color:var(--on-prim-c)}
+  .chip{font-size:11px;padding:2px 8px;border-radius:999px;background:#eceef4;
+        color:var(--on-var);border:1px solid var(--outline)}
+  .chip.done{background:#d7f0d9;border-color:#b6dcbb;color:#14521d}
+  .chip.show{background:#efe2f7;border-color:#dcc8e8;color:#4a2a57}
+  .bar{height:3px;border-radius:2px;background:var(--outline);margin-top:9px;overflow:hidden}
+  .bar > i{display:block;height:100%;background:var(--prim)}
+  .nav{display:flex;border-top:1px solid var(--outline);padding:7px 0 10px;background:var(--surf)}
+  .nav div{flex:1;text-align:center;font-size:11px;color:var(--on-var)}
+  .nav div.on{color:var(--prim);font-weight:600}
+  .nav .ic{display:block;font-size:17px;margin-bottom:2px}
+  .empty{padding:60px 28px;text-align:center}
+  .empty .eh{font-size:17px;font-weight:600;margin-bottom:8px}
+  .empty .eb{color:var(--on-var);font-size:14px}
+  .daysep{padding:12px 16px 4px;font-size:12px;font-weight:700;color:var(--on-var);
+          letter-spacing:.3px}
+  .note{margin-top:10px;font-size:12px;color:var(--on-var);max-width:34ch}
+  .note b{color:var(--on)}
+</style>
+</head>
+<body>
+
+<h1>Odyssey — Recent History</h1>
+<p class="sub">Mockup for the 2026-09-28 report: reopening the app showed a blank screen, and after a
+full close there was no quick way back to the episode in progress. Three states below — the fixed home
+tab, the new full history screen, and the empty state that replaces the white screen.</p>
+
+<div class="row">
+
+  <!-- 1. HOME -->
+  <div class="col">
+    <p class="cap">1 · Recent tab (home)</p>
+    <p class="capsub">Continue listening always resolves now, even when the episode belongs to the show
+      you're not currently browsing. New “See all” opens the full history.</p>
+    <div class="phone">
+      <div class="appbar"><span>Recent</span><span class="acts"><span>Refresh</span><span>⋮</span></span></div>
+      <div class="scroll">
+        <div class="card hero">
+          <div class="over">Continue listening</div>
+          <div class="title">The Decision</div>
+          <div class="meta">12 min left · 58% through</div>
+          <div class="bar"><i style="width:58%"></i></div>
+        </div>
+
+        <div class="sect"><span>Recently played</span><span class="seeall">See all →</span></div>
+
+        <div class="card">
+          <div class="title">A Name, Not a Number</div>
+          <div class="meta"><span>2h ago</span><span class="chip">8 min left</span></div>
+        </div>
+        <div class="card">
+          <div class="title">Saint Paul: Voyage to Rome</div>
+          <div class="meta"><span>Yesterday</span><span class="chip done">✓ played</span></div>
+        </div>
+        <div class="card">
+          <div class="title">B-TV: Compassion</div>
+          <div class="meta"><span>2d ago</span><span class="chip">21 min left</span></div>
+        </div>
+
+        <div class="sect"><span>New episodes</span></div>
+        <div class="card">
+          <div class="title">An Appointment with Caesar</div>
+          <div class="meta">September 28, 2026</div>
+        </div>
+      </div>
+      <div class="nav">
+        <div class="on"><span class="ic">⌂</span>Recent</div>
+        <div><span class="ic">▤</span>Albums</div>
+        <div><span class="ic">↓</span>Downloaded</div>
+        <div><span class="ic">☁</span>Backup</div>
+        <div><span class="ic">⚙</span>Settings</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2. HISTORY -->
+  <div class="col">
+    <p class="cap">2 · Recent History (new screen)</p>
+    <p class="capsub">Everything you've played, newest first, uncapped. Grouped by day. Tap any row to
+      resume exactly where you stopped.</p>
+    <div class="phone">
+      <div class="appbar"><span><span class="back">←</span>Recent history</span></div>
+      <div class="scroll">
+        <div class="daysep">TODAY</div>
+        <div class="card">
+          <div class="title">The Decision</div>
+          <div class="meta"><span>2h ago</span><span class="chip">12 min left</span></div>
+          <div class="bar"><i style="width:58%"></i></div>
+        </div>
+        <div class="card">
+          <div class="title">A Name, Not a Number</div>
+          <div class="meta"><span>5h ago</span><span class="chip">8 min left</span></div>
+          <div class="bar"><i style="width:68%"></i></div>
+        </div>
+
+        <div class="daysep">YESTERDAY</div>
+        <div class="card">
+          <div class="title">Saint Paul: Voyage to Rome</div>
+          <div class="meta"><span>Yesterday</span><span class="chip done">✓ played</span></div>
+        </div>
+        <div class="card">
+          <div class="title">An Appointment with Caesar</div>
+          <div class="meta"><span>Yesterday</span><span class="chip done">✓ played</span></div>
+        </div>
+
+        <div class="daysep">EARLIER</div>
+        <div class="card">
+          <div class="title">B-TV: Compassion</div>
+          <div class="meta"><span>Sep 24</span><span class="chip">21 min left</span></div>
+          <div class="bar"><i style="width:30%"></i></div>
+        </div>
+        <div class="card">
+          <div class="title">I Want My B-TV!</div>
+          <div class="meta"><span>Sep 21</span><span class="chip done">✓ played</span></div>
+        </div>
+        <div class="card">
+          <div class="title">The Coronation</div>
+          <div class="meta"><span>Sep 19</span><span class="chip">4 min left</span></div>
+          <div class="bar"><i style="width:88%"></i></div>
+        </div>
+      </div>
+      <div class="nav">
+        <div class="on"><span class="ic">⌂</span>Recent</div>
+        <div><span class="ic">▤</span>Albums</div>
+        <div><span class="ic">↓</span>Downloaded</div>
+        <div><span class="ic">☁</span>Backup</div>
+        <div><span class="ic">⚙</span>Settings</div>
+      </div>
+    </div>
+    <p class="note"><b>Open question:</b> should this stay scoped to the active show, or list both with a
+      show badge like <span class="chip show">YSH</span>? You asked on 2026-06-14 that they not be mixed,
+      so it's scoped here.</p>
+  </div>
+
+  <!-- 3. EMPTY -->
+  <div class="col">
+    <p class="cap">3 · Empty state</p>
+    <p class="capsub">What renders instead of the white screen. Copy changes depending on whether a
+      refresh is running, or a saved position points at an episode no longer on the phone.</p>
+    <div class="phone">
+      <div class="appbar"><span>Recent</span><span class="acts"><span>Refresh</span><span>⋮</span></span></div>
+      <div class="scroll">
+        <div class="empty">
+          <div class="eh">Nothing to show yet</div>
+          <div class="eb">The episode you were last listening to is no longer on this phone.
+            Pull down to refresh, or browse the Albums tab to find it again.</div>
+        </div>
+      </div>
+      <div class="nav">
+        <div class="on"><span class="ic">⌂</span>Recent</div>
+        <div><span class="ic">▤</span>Albums</div>
+        <div><span class="ic">↓</span>Downloaded</div>
+        <div><span class="ic">☁</span>Backup</div>
+        <div><span class="ic">⚙</span>Settings</div>
+      </div>
+    </div>
+    <p class="note">Two other variants share this layout: <b>“Checking for new episodes…”</b> while a
+      refresh is in flight, and <b>“No episodes yet”</b> on a fresh install.</p>
+  </div>
+
+</div>
+</body>
+</html>

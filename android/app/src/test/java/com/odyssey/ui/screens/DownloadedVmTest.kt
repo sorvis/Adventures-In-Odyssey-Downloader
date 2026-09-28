@@ -202,6 +202,8 @@ class DownloadedVmTest {
         override suspend fun getByKey(providerId: String, externalId: String): PlaybackPositionEntity? = null
         override fun observeMostRecent(): Flow<PlaybackPositionEntity?> = flowOf(null)
         override fun observeRecentlyPlayed(limit: Int): Flow<List<PlaybackPositionEntity>> = flowOf(emptyList())
+        override fun observeRecentlyPlayedFor(providerId: String, limit: Int): Flow<List<PlaybackPositionEntity>> = flowOf(emptyList())
+        override fun observePlayHistoryFor(providerId: String): Flow<List<PlaybackPositionEntity>> = flowOf(emptyList())
         override fun observeCompletedIds(): Flow<List<Long>> = flowOf(emptyList())
         override fun observeAllPositions(): Flow<List<PlaybackPositionEntity>> = flowOf(emptyList())
         override suspend fun upsert(p: PlaybackPositionEntity) {}

@@ -376,6 +376,32 @@ interface PlaybackDao {
     fun observeRecentlyPlayed(limit: Int): Flow<List<PlaybackPositionEntity>>
 
     /**
+     * Same as [observeRecentlyPlayed] but scoped to one show, and —
+     * critically — the provider filter runs BEFORE the LIMIT.
+     *
+     * The unscoped query above takes the newest N positions across every
+     * provider and leaves the caller to drop the ones from the inactive
+     * show. That's filter-after-limit: if your last N plays were all YSH,
+     * the AIO strip renders empty even though plenty of AIO history
+     * exists just past the window. Pushing the WHERE into SQL means the
+     * limit counts only rows the caller can actually use.
+     */
+    @Query("""SELECT * FROM playback_positions
+              WHERE providerId = :providerId
+              ORDER BY updatedAt DESC LIMIT :limit""")
+    fun observeRecentlyPlayedFor(providerId: String, limit: Int): Flow<List<PlaybackPositionEntity>>
+
+    /**
+     * Full play history for one show, newest first — backs the Recent
+     * History screen. No LIMIT: the screen is a lazy list and the table
+     * holds one row per episode ever played, not one per play event.
+     */
+    @Query("""SELECT * FROM playback_positions
+              WHERE providerId = :providerId
+              ORDER BY updatedAt DESC""")
+    fun observePlayHistoryFor(providerId: String): Flow<List<PlaybackPositionEntity>>
+
+    /**
      * Completed-ids stream. AIO-only legacy shape — coerces externalId
      * to Long (always works for AIO; YSH externalIds aren't numeric and
      * are filtered out by the WHERE clause).

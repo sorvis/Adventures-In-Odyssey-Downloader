@@ -16,6 +16,8 @@ import androidx.work.testing.WorkManagerTestInitHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
@@ -440,15 +442,53 @@ class RecentVmTest {
         assertEquals(1, fakePlayer.playLocalCalls.size)
     }
 
+    // -- Recent screen data wiring (2026-09-28 white-screen report) --------
+
+    @Test
+    fun `resume episode resolves even when it belongs to the inactive show`() = runTest {
+        // Regression: resumeEpisode used to resolve the saved position
+        // against `items`, which is filtered to the active show. Play a
+        // YSH episode, leave the dropdown on AIO, and the lookup returned
+        // null — and because the call site nests
+        // `resume?.let { resumeEp?.let { ... } }`, the Continue-listening
+        // card vanished silently. The user was left with no way back to
+        // what they'd been listening to.
+        val yshEp = makeEp(providerId = "ysh", externalId = "ysh-sku-501", title = "A YSH Story")
+        val pos = PlaybackPositionEntity(
+            providerId = "ysh",
+            externalId = "ysh-sku-501",
+            positionMs = 60_000L,
+            durationMs = 300_000L,
+            updatedAt = 1_000L,
+            completedAt = null,
+        )
+        val vm = makeVm(
+            player = FakePlayer(),
+            episodes = object : NoopEpisodeDao() {
+                override fun observeAll(): Flow<List<LocalEpisodeEntity>> = flowOf(listOf(yshEp))
+            },
+            playback = object : NoopPlaybackDao() {
+                override fun observeMostRecent(): Flow<PlaybackPositionEntity?> = flowOf(pos)
+            },
+        )
+
+        // activeShow defaults to "aio" — the episode is YSH, so the old
+        // code path returned null here.
+        val resolved = vm.resumeEpisode.filterNotNull().first()
+        assertEquals("ysh-sku-501", resolved.externalId)
+    }
+
     // -- helpers ---------------------------------------------------------
 
     private fun makeVm(
         player: EpisodePlayer,
         tracker: DownloadProgressTracker = DownloadProgressTracker(),
+        episodes: EpisodeDao = NoopEpisodeDao(),
+        playback: PlaybackDao = NoopPlaybackDao(),
     ): RecentVm = RecentVm(
         ctx = ApplicationProvider.getApplicationContext(),
-        episodes = NoopEpisodeDao(),
-        playback = NoopPlaybackDao(),
+        episodes = episodes,
+        playback = playback,
         player = player,
         scheduler = WorkScheduler(ApplicationProvider.getApplicationContext()),
         settings = SettingsRepo(ApplicationProvider.getApplicationContext()),
@@ -475,10 +515,13 @@ class RecentVmTest {
     private fun makeEp(
         filePath: String? = null,
         downloadUrl: String = "https://cdn.example/x.mp3",
+        providerId: String = "aio",
+        externalId: String = "1",
+        title: String = "Some Episode",
     ) = LocalEpisodeEntity(
-        providerId = "aio",
-        externalId = "1",
-        title = "Some Episode",
+        providerId = providerId,
+        externalId = externalId,
+        title = title,
         airDate = "2026-05-08",
         description = null,
         sourceUrl = "https://oneplace.com/x",
@@ -522,7 +565,7 @@ class RecentVmTest {
         }
     }
 
-    private class NoopEpisodeDao : EpisodeDao {
+    private open class NoopEpisodeDao : EpisodeDao {
         override fun observeAll(): Flow<List<LocalEpisodeEntity>> = flowOf(emptyList())
         override fun observeDownloaded(): Flow<List<LocalEpisodeEntity>> = flowOf(emptyList())
         override suspend fun allUndownloaded(): List<LocalEpisodeEntity> = emptyList()
@@ -551,11 +594,13 @@ class RecentVmTest {
         override suspend fun setAlbumInfo(providerId: String, externalId: String, albumName: String?, albumImageUrl: String?, albumTrackOrder: Int?) {}
     }
 
-    private class NoopPlaybackDao : PlaybackDao {
+    private open class NoopPlaybackDao : PlaybackDao {
         override suspend fun get(id: Long): PlaybackPositionEntity? = null
         override suspend fun getByKey(providerId: String, externalId: String): PlaybackPositionEntity? = null
         override fun observeMostRecent(): Flow<PlaybackPositionEntity?> = flowOf(null)
         override fun observeRecentlyPlayed(limit: Int): Flow<List<PlaybackPositionEntity>> = flowOf(emptyList())
+        override fun observeRecentlyPlayedFor(providerId: String, limit: Int): Flow<List<PlaybackPositionEntity>> = flowOf(emptyList())
+        override fun observePlayHistoryFor(providerId: String): Flow<List<PlaybackPositionEntity>> = flowOf(emptyList())
         override fun observeCompletedIds(): Flow<List<Long>> = flowOf(emptyList())
         override fun observeAllPositions(): Flow<List<PlaybackPositionEntity>> = flowOf(emptyList())
         override suspend fun upsert(p: PlaybackPositionEntity) {}

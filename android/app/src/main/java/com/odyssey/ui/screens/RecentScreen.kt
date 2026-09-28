@@ -63,11 +63,13 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 @HiltViewModel
 class RecentVm @Inject constructor(
     @ApplicationContext private val ctx: Context,
@@ -147,7 +149,29 @@ class RecentVm @Inject constructor(
 
     // Pair the most-recent playback position with its episode entity so
     // "Continue listening" can show the real title and dispatch to play().
-    val resumeEpisode = combine(items, resume) { eps, r ->
+    // Resolved against the UNFILTERED episode list on purpose.
+    //
+    // This used to resolve against `items`, which is filtered to the
+    // active show — so if the last thing you played was from the other
+    // show, `resume` was non-null but `resumeEpisode` came back null and
+    // the Continue-listening card silently vanished (the call site
+    // nests `resume?.let { resumeEp?.let { ... } }`, so a null episode
+    // renders nothing at all, with no fallback). The user then had no
+    // way back to what they were listening to except remembering the
+    // album and navigating to it — reported 2026-09-28.
+    //
+    // "The single most recent thing you played" should always be one tap
+    // away regardless of which show the dropdown is on. The per-show
+    // scoping the user asked for on 2026-06-14 was about the recently-
+    // played STRIP mixing shows, which stays scoped below.
+    //
+    // Still null when the position is orphaned (episode row hard-deleted
+    // by the no-NAS retention path while its playback_positions row
+    // survived). That case is handled by the empty state rather than by
+    // deleting the row here — `episodes.observeAll()` starts as an empty
+    // list, so cleaning up on a null lookup would wipe real history on
+    // the first frame.
+    val resumeEpisode = combine(episodes.observeAll(), resume) { eps, r ->
         if (r == null) null else eps.firstOrNull { it.episodeId == r.episodeId }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
@@ -165,7 +189,15 @@ class RecentVm @Inject constructor(
      */
     val recentlyPlayed = combine(
         episodes.observeAll(),
-        playback.observeRecentlyPlayed(MAX_RECENTLY_PLAYED + 1),
+        settings.activeShow.flatMapLatest { active ->
+            // Scope the query to the active show so the LIMIT counts only
+            // usable rows. Previously this pulled the newest N positions
+            // across ALL providers and filtered afterwards, so a handful
+            // of recent plays in the other show could push every row of
+            // the active show out of the window and render the strip
+            // empty despite plenty of history.
+            playback.observeRecentlyPlayedFor(active, MAX_RECENTLY_PLAYED + 1)
+        },
         resume,
         settings.activeShow,
     ) { eps, plays, resumePos, active ->
@@ -600,6 +632,22 @@ fun RecentScreen(
                 recentlyPlayed.forEach { add(it.episodeId) }
             }
             val mainList = items.filterNot { it.episodeId in excludeIds }
+
+            // Empty state. Without this the LazyColumn renders NOTHING
+            // when all three sections are empty — a blank white screen
+            // with no explanation, which is what the user hit on
+            // 2026-09-28 ("it just shows as a white screen"). An empty
+            // Recent tab is a normal state (fresh install, a show with
+            // no ingests yet, or an orphaned resume position), so it
+            // needs copy rather than a void.
+            if (mainList.isEmpty() && recentlyPlayed.isEmpty() && resumeEp == null) {
+                item {
+                    RecentEmptyState(
+                        isRefreshing = isRefreshing,
+                        hasOrphanedResume = resume != null,
+                    )
+                }
+            }
             items(mainList, key = { it.episodeId }) { ep ->
                 ElevatedCard(
                     modifier = Modifier
@@ -996,3 +1044,53 @@ internal fun refreshCompleteMessage(newCount: Int): String =
         1 -> "Refresh complete — 1 new episode"
         else -> "Refresh complete — $newCount new episodes"
     }
+
+/**
+ * Shown when the Recent tab has nothing to display at all. Distinguishes
+ * three cases so the message is actionable rather than a shrug:
+ *
+ *  - a refresh is in flight  → say so, don't imply emptiness is final
+ *  - a saved position exists but its episode row is gone (orphan, e.g.
+ *    the no-NAS retention path hard-deleted the row while the
+ *    playback_positions row survived) → explain, since "you were
+ *    definitely listening to something" is the user's mental model
+ *  - genuinely nothing yet   → point at Refresh
+ */
+@Composable
+fun RecentEmptyState(
+    isRefreshing: Boolean,
+    hasOrphanedResume: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 24.dp, vertical = 48.dp)
+            .testTag("recent-empty-state"),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(
+            text = when {
+                isRefreshing -> "Checking for new episodes…"
+                hasOrphanedResume -> "Nothing to show yet"
+                else -> "No episodes yet"
+            },
+            style = MaterialTheme.typography.titleMedium,
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            text = when {
+                isRefreshing -> "Hang tight — this usually takes a second."
+                hasOrphanedResume ->
+                    "The episode you were last listening to is no longer on this " +
+                        "phone. Pull down to refresh, or browse the Albums tab to " +
+                        "find it again."
+                else ->
+                    "Pull down to refresh, or tap Refresh above to check for " +
+                        "today's episode. Anything you've downloaded also shows " +
+                        "up on the Downloaded tab."
+            },
+            style = MaterialTheme.typography.bodyMedium,
+        )
+    }
+}
