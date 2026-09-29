@@ -9,6 +9,7 @@ import com.odyssey.download.DownloadReconciler
 import com.odyssey.nas.NasMirror
 import com.odyssey.show.YshCatalog
 import com.odyssey.show.backfillYshAlbums
+import com.odyssey.work.ArchiveNetworkKicker
 import com.odyssey.work.WorkScheduler
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
@@ -28,6 +29,7 @@ class OdysseyApp : Application(), Configuration.Provider {
     @Inject lateinit var settings: SettingsRepo
     @Inject lateinit var nasMirror: NasMirror
     @Inject lateinit var episodes: EpisodeDao
+    @Inject lateinit var archiveNetworkKicker: ArchiveNetworkKicker
 
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder().setWorkerFactory(workerFactory).build()
@@ -36,6 +38,9 @@ class OdysseyApp : Application(), Configuration.Provider {
         super.onCreate()
         workScheduler.ensureDailyCheck()
         workScheduler.ensureYshCatalogRefresh()
+        // Rejoining the home network is the real signal that stalled
+        // uploads are worth retrying — see ArchiveNetworkKicker.
+        archiveNetworkKicker.start()
         // Phone-disk layout: move legacy AIO downloads under /aio/
         // subdirectory on first launch of the YSH-aware build. Runs
         // off the main thread and is idempotent (sentinel-gated).

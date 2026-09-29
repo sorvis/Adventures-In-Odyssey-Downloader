@@ -32,18 +32,39 @@ class ArchiveBackfill @Inject constructor(
     private val scheduler: ArchiveEnqueuer,
     private val settings: SettingsRepo,
 ) {
-    suspend fun run(): Int {
+    /**
+     * @param force when true, cancel each episode's existing WorkManager
+     *   entry before re-enqueueing so the upload runs NOW instead of
+     *   waiting out its exponential backoff.
+     *
+     *   Idempotency layer 2 in the class doc (unique-name + KEEP dedup)
+     *   turns into a liability once uploads have started failing: every
+     *   pending episode already has a backing-off entry, so a plain
+     *   enqueue is discarded and the queue never moves. Pass force=true
+     *   for anything the user explicitly asked for (the "Push N to
+     *   backup" button) or for a signal that the previous failure cause
+     *   is gone (rejoining a network). Leave it false for speculative
+     *   background sweeps, where respecting backoff is the point.
+     */
+    suspend fun run(force: Boolean = false): Int {
         val pending = episodes.unarchivedDownloaded()
         if (pending.isEmpty()) {
             DebugLogger.d("ArchiveBackfill", "no unarchived files — skip")
             return 0
         }
         val allowMetered = settings.flow.first().allowMeteredDownloads
-        DebugLogger.i("ArchiveBackfill", "enqueuing ${pending.size} archive jobs (allowMetered=$allowMetered)")
+        DebugLogger.i(
+            "ArchiveBackfill",
+            "enqueuing ${pending.size} archive jobs (allowMetered=$allowMetered force=$force)",
+        )
         for (ep in pending) {
             // v0.1.72: route by (providerId, externalId) so YSH rows
             // don't hash-fall-back through the legacy Long path.
-            scheduler.enqueueArchiveByKey(ep.providerId, ep.externalId, allowMetered)
+            if (force) {
+                scheduler.kickArchiveByKey(ep.providerId, ep.externalId, allowMetered)
+            } else {
+                scheduler.enqueueArchiveByKey(ep.providerId, ep.externalId, allowMetered)
+            }
         }
         return pending.size
     }

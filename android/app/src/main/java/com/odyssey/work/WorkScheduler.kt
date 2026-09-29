@@ -215,6 +215,21 @@ class WorkScheduler @Inject constructor(@ApplicationContext private val ctx: Con
         )
     }
 
+    override fun kickArchiveByKey(providerId: String, externalId: String, allowMetered: Boolean) {
+        // Cancel first: enqueueUniqueWork(..., KEEP, ...) is a no-op when
+        // an entry already exists under this name, which is exactly the
+        // state a backed-off upload is in. Without the cancel the user's
+        // "Push to backup" tap cannot break a 15-minute-base exponential
+        // backoff that may have grown to hours.
+        val name = archiveWorkNameByKey(providerId, externalId)
+        wm.cancelUniqueWork(name)
+        wm.enqueueUniqueWork(
+            name,
+            ExistingWorkPolicy.KEEP,
+            buildArchiveRequestByKey(providerId, externalId, allowMetered),
+        )
+    }
+
     override fun kickArchive(episodeId: Long, allowMetered: Boolean) {
         // Cancel first so the subsequent enqueue isn't no-op'd by the
         // unique-name + KEEP policy. cancelUniqueWork is idempotent

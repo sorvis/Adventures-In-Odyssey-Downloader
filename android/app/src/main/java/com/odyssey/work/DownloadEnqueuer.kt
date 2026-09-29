@@ -80,6 +80,23 @@ interface ArchiveEnqueuer {
         enqueueArchive(episodeId, allowMetered)
 
     /**
+     * Provider-aware [kickArchive]. The legacy Long-keyed overload above
+     * only reaches AIO rows, so a YSH backlog stuck in backoff had no
+     * way to be forced — the manual "Push N to backup" button routed
+     * through [enqueueArchiveByKey], whose KEEP policy silently discards
+     * the request when a backing-off entry already exists under the same
+     * unique name. The button logged "enqueuing N archive jobs" and did
+     * nothing (observed 2026-09-28: 39 jobs "enqueued", zero
+     * ArchiveWorker runs in the following 90 minutes).
+     *
+     * Implementations MUST cancel the existing unique work before
+     * enqueueing. The default here is the no-cancel fallback used by
+     * test fakes; [WorkScheduler] overrides it.
+     */
+    fun kickArchiveByKey(providerId: String, externalId: String, allowMetered: Boolean) =
+        enqueueArchiveByKey(providerId, externalId, allowMetered)
+
+    /**
      * Cancel any pending archive work for [episodeId]. Called by
      * DownloadReconciler.cleanupCrossShowContamination when it deletes
      * a row so the corresponding WorkManager entry doesn't fire later.

@@ -138,19 +138,24 @@ class ArchiveEpisodeWorker @AssistedInject constructor(
         // Use long episodeId for the in-flight progress tracker so the
         // existing UI keyed on Long ids still finds the entry.
         val trackerKey = ep.episodeId
-        val result = withContext(Dispatchers.IO) {
-            nas.uploadV2(
-                providerId   = resolvedProvider,
-                externalId   = resolvedExternalId,
-                title        = ep.title,
-                airDate      = ep.airDate,
-                description  = ep.description,
-                durationSecs = ep.durationMs / 1000,
-                sourceUrl    = ep.sourceUrl,
-                audio        = file,
-                album        = album,
-                onProgress   = { sent, total -> progress.update(trackerKey, sent, total) },
-            )
+        // Serialise through the upload gate so a backlog drains a few at
+        // a time instead of firing every queued job at once. See
+        // ArchiveUploadGate for why simultaneity is actively harmful.
+        val result = ArchiveUploadGate.withSlot {
+            withContext(Dispatchers.IO) {
+                nas.uploadV2(
+                    providerId   = resolvedProvider,
+                    externalId   = resolvedExternalId,
+                    title        = ep.title,
+                    airDate      = ep.airDate,
+                    description  = ep.description,
+                    durationSecs = ep.durationMs / 1000,
+                    sourceUrl    = ep.sourceUrl,
+                    audio        = file,
+                    album        = album,
+                    onProgress   = { sent, total -> progress.update(trackerKey, sent, total) },
+                )
+            }
         }
         progress.clear(trackerKey)
         return result.fold(

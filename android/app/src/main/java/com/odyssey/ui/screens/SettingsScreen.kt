@@ -161,14 +161,23 @@ class SettingsVm @Inject constructor(
         // already on-device. ArchiveBackfill is idempotent, so even if
         // some rows are mid-archive this is safe to re-run.
         if (url.isNotBlank() && token.isNotBlank()) {
-            runCatching { lastBackfillEnqueued.value = backfill.run() }
+            // force: the user just changed credentials, so whatever made
+            // earlier uploads fail is plausibly fixed. Respecting the old
+            // backoff here would leave them staring at an unchanged
+            // "N not yet backed up" for hours after a successful save.
+            runCatching { lastBackfillEnqueued.value = backfill.run(force = true) }
                 .onFailure { DebugLogger.e("SettingsVm", "saveNas backfill failed", it) }
         }
     }
 
-    /** User-tapped "Push N waiting" button. Same code path as auto-trigger. */
+    /**
+     * User-tapped "Push N waiting" button. Always forces, because this
+     * is the one control the user has when uploads are visibly stuck —
+     * and "stuck" means every pending episode is sitting in backoff,
+     * which is precisely the state a non-forced enqueue cannot escape.
+     */
     fun pushUnarchivedNow() = viewModelScope.launch {
-        runCatching { lastBackfillEnqueued.value = backfill.run() }
+        runCatching { lastBackfillEnqueued.value = backfill.run(force = true) }
             .onFailure { DebugLogger.e("SettingsVm", "pushUnarchivedNow failed", it) }
     }
 
@@ -184,7 +193,7 @@ class SettingsVm @Inject constructor(
         runCatching {
             val cleared = episodes.clearAllArchived()
             DebugLogger.i("SettingsVm", "reArchiveAll cleared $cleared rows; firing backfill")
-            lastBackfillEnqueued.value = backfill.run()
+            lastBackfillEnqueued.value = backfill.run(force = true)
         }.onFailure { DebugLogger.e("SettingsVm", "reArchiveAll failed", it) }
     }
 

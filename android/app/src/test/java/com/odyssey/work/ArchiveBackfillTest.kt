@@ -136,6 +136,55 @@ class ArchiveBackfillTest {
         archivedAt = archivedAt,
     )
 
+    // -- force path (2026-09-28 stuck-queue regression) ---------------------
+
+    @Test
+    fun `force routes through kickArchiveByKey so backoff is cancelled`() = runBlocking {
+        // Regression: the manual "Push N to backup" button called run()
+        // with no force, which enqueues under a per-episode unique name
+        // with ExistingWorkPolicy.KEEP. Once uploads have failed, every
+        // pending episode already owns that name in a backing-off state,
+        // so KEEP discarded the request and the queue never moved —
+        // while the UI still reported "queued N uploads".
+        val dao = FakeEpisodeDao(
+            listOf(
+                ep(id = 1L, filePath = "/tmp/1.mp3", archivedAt = null),
+                ep(id = 2L, filePath = "/tmp/2.mp3", archivedAt = null),
+            ),
+        )
+        val enqueuer = RecordingArchiveEnqueuer()
+        val backfill = ArchiveBackfill(dao, enqueuer, settings)
+
+        val n = backfill.run(force = true)
+
+        assertEquals(2, n)
+        assertEquals(
+            "force must use the cancel-then-enqueue path",
+            listOf(1L, 2L),
+            enqueuer.kicked.map { it.episodeId },
+        )
+        assertTrue(
+            "force must NOT use the KEEP-policy enqueue (saw: ${enqueuer.calls})",
+            enqueuer.calls.isEmpty(),
+        )
+    }
+
+    @Test
+    fun `default run still respects backoff via the plain enqueue`() = runBlocking {
+        // The complement: background sweeps shouldn't stampede past
+        // backoff, or a genuinely broken server gets hammered.
+        val dao = FakeEpisodeDao(
+            listOf(ep(id = 1L, filePath = "/tmp/1.mp3", archivedAt = null)),
+        )
+        val enqueuer = RecordingArchiveEnqueuer()
+        val backfill = ArchiveBackfill(dao, enqueuer, settings)
+
+        backfill.run()
+
+        assertEquals(listOf(1L), enqueuer.calls.map { it.episodeId })
+        assertTrue("default must not force", enqueuer.kicked.isEmpty())
+    }
+
     private class RecordingArchiveEnqueuer : ArchiveEnqueuer {
         data class Call(val episodeId: Long, val allowMetered: Boolean)
         val calls = mutableListOf<Call>()
@@ -150,6 +199,18 @@ class ArchiveBackfillTest {
         }
         override fun enqueueArchive(episodeId: Long, allowMetered: Boolean) {
             calls += Call(episodeId, allowMetered)
+        }
+
+        /**
+         * Recorded separately from [calls] because the whole point of the
+         * force path is that it does NOT go through the KEEP-policy
+         * enqueue. Collapsing them here would make the regression
+         * untestable.
+         */
+        val kicked = mutableListOf<Call>()
+        override fun kickArchiveByKey(providerId: String, externalId: String, allowMetered: Boolean) {
+            val id = externalId.toLongOrNull() ?: externalId.hashCode().toLong()
+            kicked += Call(id, allowMetered)
         }
     }
 
