@@ -1,5 +1,7 @@
 package com.odyssey.ui.screens
 
+import java.time.LocalDateTime
+import java.time.ZoneId
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -436,5 +438,120 @@ class RecentListingTest {
         // the chip.
         val now = 1_700_000_000_000L
         assertEquals("", formatRelativePlayedAt(updatedAtMs = now + 60_000L, nowMs = now))
+    }
+
+    // -- day bucketing for the Recent History screen -----------------------
+
+    /** Fixed zone + explicit timestamps so these never depend on the host. */
+    private val utc = ZoneId.of("UTC")
+
+    private fun at(iso: String): Long =
+        LocalDateTime.parse(iso).atZone(utc).toInstant().toEpochMilli()
+
+    @Test
+    fun `playedBucket buckets by calendar date, not elapsed time`() {
+        val now = at("2026-09-29T01:00")
+        // 2 hours earlier by the clock, but the previous calendar day.
+        // Calling this "today" would put last night's listening under a
+        // Today header at 1am, which is why the helper compares dates.
+        assertEquals(
+            PlayedBucket.YESTERDAY,
+            playedBucket(at("2026-09-28T23:00"), now, utc),
+        )
+        // And 30 minutes earlier on the same date is Today.
+        assertEquals(
+            PlayedBucket.TODAY,
+            playedBucket(at("2026-09-29T00:30"), now, utc),
+        )
+    }
+
+    @Test
+    fun `playedBucket separates today, yesterday and earlier`() {
+        val now = at("2026-09-29T12:00")
+        assertEquals(PlayedBucket.TODAY, playedBucket(at("2026-09-29T09:00"), now, utc))
+        assertEquals(PlayedBucket.YESTERDAY, playedBucket(at("2026-09-28T09:00"), now, utc))
+        assertEquals(PlayedBucket.EARLIER, playedBucket(at("2026-09-27T23:59"), now, utc))
+        assertEquals(PlayedBucket.EARLIER, playedBucket(at("2026-01-01T00:00"), now, utc))
+    }
+
+    @Test
+    fun `playedBucket treats future timestamps as today instead of throwing`() {
+        val now = at("2026-09-29T12:00")
+        assertEquals(PlayedBucket.TODAY, playedBucket(at("2026-09-30T08:00"), now, utc))
+    }
+
+    @Test
+    fun `groupPlaysByDay preserves newest-first order within each bucket`() {
+        val now = at("2026-09-29T12:00")
+        // Input is newest-first, as PlaybackDao returns it. The helper
+        // must not re-sort — the DB already decided the order.
+        val plays = listOf(
+            "a" to at("2026-09-29T11:00"),
+            "b" to at("2026-09-29T08:00"),
+            "c" to at("2026-09-28T20:00"),
+            "d" to at("2026-09-20T10:00"),
+            "e" to at("2026-09-19T10:00"),
+        )
+
+        val grouped = groupPlaysByDay(plays, playedAt = { it.second }, nowMs = now, zone = utc)
+
+        assertEquals(
+            listOf(PlayedBucket.TODAY, PlayedBucket.YESTERDAY, PlayedBucket.EARLIER),
+            grouped.map { it.first },
+        )
+        assertEquals(listOf("a", "b"), grouped[0].second.map { it.first })
+        assertEquals(listOf("c"), grouped[1].second.map { it.first })
+        assertEquals(listOf("d", "e"), grouped[2].second.map { it.first })
+    }
+
+    @Test
+    fun `groupPlaysByDay omits empty buckets so headers can be rendered blindly`() {
+        val now = at("2026-09-29T12:00")
+        // Nothing today, nothing yesterday — only the Earlier header
+        // should appear, not three headers with two empty sections.
+        val plays = listOf("old" to at("2026-08-01T10:00"))
+
+        val grouped = groupPlaysByDay(plays, playedAt = { it.second }, nowMs = now, zone = utc)
+
+        assertEquals(1, grouped.size)
+        assertEquals(PlayedBucket.EARLIER, grouped.single().first)
+    }
+
+    @Test
+    fun `groupPlaysByDay on empty input is an empty list`() {
+        val grouped = groupPlaysByDay(
+            emptyList<Pair<String, Long>>(),
+            playedAt = { it.second },
+            nowMs = at("2026-09-29T12:00"),
+            zone = utc,
+        )
+        assertTrue(grouped.isEmpty())
+    }
+
+    @Test
+    fun `bucket labels are the user-visible header text`() {
+        // These render as section headers on the history screen, so a
+        // rename is a UI change and should break a test, not slip out.
+        assertEquals("Today", PlayedBucket.TODAY.label)
+        assertEquals("Yesterday", PlayedBucket.YESTERDAY.label)
+        assertEquals("Earlier", PlayedBucket.EARLIER.label)
+    }
+
+    @Test
+    fun `zone defaults to the system zone when the caller omits it`() {
+        // Production calls the no-zone overload; every other case here
+        // injects UTC for determinism, so without this the default-arg
+        // path would ship unexercised. A play at `now` is Today in any
+        // timezone, so this stays deterministic on any host.
+        val now = at("2026-09-29T12:00")
+        assertEquals(PlayedBucket.TODAY, playedBucket(playedAtMs = now, nowMs = now))
+
+        val grouped = groupPlaysByDay(
+            listOf("only" to now),
+            playedAt = { it.second },
+            nowMs = now,
+        )
+        assertEquals(1, grouped.size)
+        assertEquals(PlayedBucket.TODAY, grouped.single().first)
     }
 }

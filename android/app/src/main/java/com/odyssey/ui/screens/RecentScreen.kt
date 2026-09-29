@@ -212,6 +212,33 @@ class RecentVm @Inject constructor(
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    /**
+     * Full play history for the active show, newest first and uncapped —
+     * backs the Recent History screen ("See all" from the strip above).
+     *
+     * Scoped to the active show, same as [recentlyPlayed]: Steven's call
+     * on 2026-09-29, consistent with the 2026-06-14 "ysh is mixed with
+     * aio" report. The provider filter is pushed into SQL via
+     * observePlayHistoryFor so it isn't a filter-after-limit trap the
+     * way the strip's was — though with no LIMIT here it's correctness
+     * of scope rather than of windowing.
+     *
+     * Pairs each episode with its position so the screen can render the
+     * "N min left" / "played" chip and the day grouping without a second
+     * lookup. Positions with no surviving episode row (retention
+     * hard-deleted it) drop out.
+     */
+    val playHistory = combine(
+        episodes.observeAll(),
+        settings.activeShow.flatMapLatest { active ->
+            playback.observePlayHistoryFor(active)
+        },
+        settings.activeShow,
+    ) { eps, plays, active ->
+        val index = eps.filter { it.providerId == active }.associateBy { it.episodeId }
+        plays.mapNotNull { pos -> index[pos.episodeId]?.let { ep -> ep to pos } }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
     val showMeteredWarning = MutableStateFlow(false)
 
     fun checkNow() {
@@ -417,6 +444,7 @@ class RecentVm @Inject constructor(
 fun RecentScreen(
     onNavigateToSettings: () -> Unit = {},
     onOpenAlbum: (com.odyssey.ui.AlbumNavTarget) -> Unit = {},
+    onOpenHistory: () -> Unit = {},
     vm: RecentVm = hiltViewModel(),
 ) {
     val items by vm.items.collectAsState()
@@ -555,13 +583,27 @@ fun RecentScreen(
             // dropdown to YSH never surfaces AIO plays here.
             if (recentlyPlayed.isNotEmpty()) {
                 item {
-                    Text(
-                        text = "Recently played",
-                        style = MaterialTheme.typography.titleSmall,
+                    // "See all" opens the uncapped history. Gated on the
+                    // strip being non-empty, which is also the only state
+                    // where it could lead anywhere interesting — the strip
+                    // is the first 5 rows of the same list.
+                    Row(
                         modifier = Modifier
-                            .padding(horizontal = 16.dp, vertical = 8.dp)
-                            .testTag("recently-played-header"),
-                    )
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = "Recently played",
+                            style = MaterialTheme.typography.titleSmall,
+                            modifier = Modifier.testTag("recently-played-header"),
+                        )
+                        TextButton(
+                            onClick = onOpenHistory,
+                            modifier = Modifier.testTag("recently-played-see-all"),
+                        ) { Text("See all") }
+                    }
                 }
                 items(recentlyPlayed, key = { "rp-${it.episodeId}" }) { ep ->
                     val pos = positions[ep.episodeId]

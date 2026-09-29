@@ -1,6 +1,8 @@
 package com.odyssey.ui.screens
 
 import java.text.SimpleDateFormat
+import java.time.Instant
+import java.time.ZoneId
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
@@ -161,3 +163,65 @@ fun <T> recentItemsFor(
                 .thenByDescending(externalId),
         )
         .toList()
+
+/**
+ * Day buckets for the Recent History screen. Three coarse buckets
+ * rather than one header per calendar date — at the distance where
+ * per-date headers start to matter, the per-row "Sep 21" chip already
+ * carries it, and a wall of one-row groups reads worse than a list.
+ */
+enum class PlayedBucket(val label: String) {
+    TODAY("Today"),
+    YESTERDAY("Yesterday"),
+    EARLIER("Earlier"),
+}
+
+/**
+ * Which bucket a play at [playedAtMs] falls into relative to [nowMs].
+ *
+ * Compares calendar dates in [zone], not elapsed milliseconds: a play
+ * at 11pm is "yesterday" at 1am, not "2 hours ago → today". [zone] and
+ * [nowMs] are injected so tests don't depend on the host clock or
+ * timezone.
+ *
+ * Future timestamps (clock skew) bucket as TODAY rather than throwing.
+ */
+fun playedBucket(
+    playedAtMs: Long,
+    nowMs: Long,
+    zone: ZoneId = ZoneId.systemDefault(),
+): PlayedBucket {
+    val today = Instant.ofEpochMilli(nowMs).atZone(zone).toLocalDate()
+    val played = Instant.ofEpochMilli(playedAtMs).atZone(zone).toLocalDate()
+    return when {
+        !played.isBefore(today) -> PlayedBucket.TODAY
+        played == today.minusDays(1) -> PlayedBucket.YESTERDAY
+        else -> PlayedBucket.EARLIER
+    }
+}
+
+/**
+ * Group [items] into day buckets, preserving input order within each
+ * bucket and emitting buckets in TODAY → YESTERDAY → EARLIER order.
+ * Empty buckets are omitted, so the caller can render headers blindly.
+ *
+ * Callers pass a newest-first list (PlaybackDao orders by updatedAt
+ * DESC), which this preserves — it does not re-sort.
+ *
+ * Generic over T so the pure-JVM test doesn't need Room.
+ */
+fun <T> groupPlaysByDay(
+    items: List<T>,
+    playedAt: (T) -> Long,
+    nowMs: Long,
+    zone: ZoneId = ZoneId.systemDefault(),
+): List<Pair<PlayedBucket, List<T>>> {
+    if (items.isEmpty()) return emptyList()
+    val byBucket = items.groupBy { playedBucket(playedAt(it), nowMs, zone) }
+    // No takeIf(isNotEmpty) guard: groupBy never yields an empty value
+    // list, so the absent-key case (mapNotNull drops it) is the only way
+    // a bucket can be empty. The guard was unreachable.
+    return PlayedBucket.entries.mapNotNull { bucket ->
+        byBucket[bucket]?.let { bucket to it }
+    }
+}

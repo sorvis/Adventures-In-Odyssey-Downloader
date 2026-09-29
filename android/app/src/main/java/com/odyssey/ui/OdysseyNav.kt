@@ -23,6 +23,7 @@ import com.odyssey.ui.screens.DebugScreen
 import com.odyssey.ui.screens.DownloadedScreen
 import com.odyssey.ui.screens.MiniPlayerBar
 import com.odyssey.ui.screens.NowPlayingScreen
+import com.odyssey.ui.screens.RecentHistoryScreen
 import com.odyssey.ui.screens.RecentScreen
 import com.odyssey.ui.screens.SettingsScreen
 import com.odyssey.ui.screens.TransfersScreen
@@ -49,6 +50,7 @@ class OdysseyNavVm @Inject constructor(
 
 private const val ROUTE_NOW_PLAYING = "now-playing"
 private const val ROUTE_DEBUG = "debug"
+private const val ROUTE_RECENT_HISTORY = "recent-history"
 const val ROUTE_TRANSFERS = "transfers"
 const val ROUTE_YSH_UNMATCHED = "ysh-unmatched"
 
@@ -134,7 +136,11 @@ fun OdysseyNav(
                             }
                         },
                         onOpenAlbum = openAlbum,
+                        onOpenHistory = { nav.navigate(ROUTE_RECENT_HISTORY) },
                     )
+                }
+                composable(ROUTE_RECENT_HISTORY) {
+                    RecentHistoryScreen(onBack = { nav.popBackStack() })
                 }
                 composable(Tab.Albums.route) {
                     // Albums tab adapts to the active show. AIO uses
