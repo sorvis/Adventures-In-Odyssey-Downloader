@@ -120,6 +120,16 @@ class DownloadedVmTest {
                 catalog,
                 com.odyssey.show.YshCatalog(ctx, okhttp3.OkHttpClient()),
             ),
+            queuePrimer = com.odyssey.player.AlbumQueuePrimer(
+                dao,
+                com.odyssey.ui.AlbumNavResolver(
+                    catalog,
+                    com.odyssey.show.YshCatalog(ctx, okhttp3.OkHttpClient()),
+                ),
+                catalog,
+                com.odyssey.show.YshCatalog(ctx, okhttp3.OkHttpClient()),
+                com.odyssey.player.AlbumQueueController(),
+            ),
         )
     }
 

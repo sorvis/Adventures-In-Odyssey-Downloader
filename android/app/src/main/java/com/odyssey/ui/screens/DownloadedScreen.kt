@@ -62,6 +62,7 @@ class DownloadedVm @Inject constructor(
     private val mirror: NasMirror,
     private val yshCatalog: com.odyssey.show.YshCatalog,
     private val albumResolver: com.odyssey.ui.AlbumNavResolver,
+    private val queuePrimer: com.odyssey.player.AlbumQueuePrimer,
 ) : ViewModel() {
 
     /** YSH cover fallback when a Library row's own imageUrl is null. */
@@ -137,6 +138,11 @@ class DownloadedVm @Inject constructor(
             "play(${ep.episodeId}) — ${if (src is PlaySource.Local) "local" else "stream"}",
         )
         viewModelScope.launch {
+            // Same contract as RecentVm.play: install the album queue
+            // before dispatch so auto-advance has somewhere to go, and
+            // never let a priming failure stop playback.
+            runCatching { queuePrimer.primeFor(ep) }
+                .onFailure { DebugLogger.e("DownloadedVm", "queue prime failed", it) }
             try {
                 when (src) {
                     is PlaySource.Local -> player.playLocal(ep, artwork)

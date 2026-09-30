@@ -510,6 +510,22 @@ class RecentVmTest {
                 okhttp3.OkHttpClient(),
             ),
         ),
+        queuePrimer = com.odyssey.player.AlbumQueuePrimer(
+            episodes,
+            com.odyssey.ui.AlbumNavResolver(
+                AioCatalogRepo(ApplicationProvider.getApplicationContext()),
+                com.odyssey.show.YshCatalog(
+                    ApplicationProvider.getApplicationContext(),
+                    okhttp3.OkHttpClient(),
+                ),
+            ),
+            AioCatalogRepo(ApplicationProvider.getApplicationContext()),
+            com.odyssey.show.YshCatalog(
+                ApplicationProvider.getApplicationContext(),
+                okhttp3.OkHttpClient(),
+            ),
+            com.odyssey.player.AlbumQueueController(),
+        ),
     )
 
     private fun makeEp(

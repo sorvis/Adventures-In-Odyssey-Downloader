@@ -84,6 +84,7 @@ class RecentVm @Inject constructor(
     private val yshCatalog: com.odyssey.show.YshCatalog,
     private val nas: com.odyssey.nas.NasClient,
     private val albumResolver: com.odyssey.ui.AlbumNavResolver,
+    private val queuePrimer: com.odyssey.player.AlbumQueuePrimer,
 ) : ViewModel() {
 
     /**
@@ -306,6 +307,12 @@ class RecentVm @Inject constructor(
             ?: ep.imageUrl
             ?: yshAlbumArtworkFor(ep)
         viewModelScope.launch {
+            // Install the album queue BEFORE dispatch so the STATE_ENDED
+            // hook has something to advance into. Priming is best-effort:
+            // a failure here costs auto-advance for this play, and must
+            // never stop the episode from starting.
+            runCatching { queuePrimer.primeFor(ep) }
+                .onFailure { DebugLogger.e("RecentVm", "queue prime failed", it) }
             try {
                 when {
                     // On-disk file beats every other path.
