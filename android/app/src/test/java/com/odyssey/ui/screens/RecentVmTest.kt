@@ -526,6 +526,34 @@ class RecentVmTest {
             ),
             com.odyssey.player.AlbumQueueController(),
         ),
+        dispatcher = com.odyssey.player.EpisodePlayDispatcher(
+            player,
+            com.odyssey.nas.NasClient(
+                SettingsRepo(ApplicationProvider.getApplicationContext()),
+                okhttp3.OkHttpClient(),
+            ),
+            AioCatalogRepo(ApplicationProvider.getApplicationContext()),
+            com.odyssey.show.YshCatalog(
+                ApplicationProvider.getApplicationContext(),
+                okhttp3.OkHttpClient(),
+            ),
+            com.odyssey.player.AlbumQueuePrimer(
+                episodes,
+                com.odyssey.ui.AlbumNavResolver(
+                    AioCatalogRepo(ApplicationProvider.getApplicationContext()),
+                    com.odyssey.show.YshCatalog(
+                        ApplicationProvider.getApplicationContext(),
+                        okhttp3.OkHttpClient(),
+                    ),
+                ),
+                AioCatalogRepo(ApplicationProvider.getApplicationContext()),
+                com.odyssey.show.YshCatalog(
+                    ApplicationProvider.getApplicationContext(),
+                    okhttp3.OkHttpClient(),
+                ),
+                com.odyssey.player.AlbumQueueController(),
+            ),
+        ),
     )
 
     private fun makeEp(

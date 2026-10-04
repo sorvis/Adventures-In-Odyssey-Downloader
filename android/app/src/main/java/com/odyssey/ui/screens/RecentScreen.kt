@@ -85,6 +85,7 @@ class RecentVm @Inject constructor(
     private val nas: com.odyssey.nas.NasClient,
     private val albumResolver: com.odyssey.ui.AlbumNavResolver,
     private val queuePrimer: com.odyssey.player.AlbumQueuePrimer,
+    private val dispatcher: com.odyssey.player.EpisodePlayDispatcher,
 ) : ViewModel() {
 
     /**
@@ -295,62 +296,19 @@ class RecentVm @Inject constructor(
 
     fun play(ep: LocalEpisodeEntity) {
         // Tap on the row's button while THIS episode is already playing
-        // → pause instead of re-issuing playLocal/playStream. Otherwise
-        // dispatch as before.
+        // → pause instead of re-issuing playLocal/playStream. Pause-in-
+        // place is per-surface UI policy, so it stays here rather than
+        // moving into the dispatcher.
         val s = player.state.value
         if (s.currentEpisodeId == ep.episodeId && s.isPlaying) {
             DebugLogger.i("RecentVm", "play(${ep.episodeId}) — pausing in-place")
             viewModelScope.launch { runCatching { player.pause() } }
             return
         }
-        val artwork = catalog.match(ep.title)?.thumbnailUrl
-            ?: ep.imageUrl
-            ?: yshAlbumArtworkFor(ep)
-        viewModelScope.launch {
-            // Install the album queue BEFORE dispatch so the STATE_ENDED
-            // hook has something to advance into. Priming is best-effort:
-            // a failure here costs auto-advance for this play, and must
-            // never stop the episode from starting.
-            runCatching { queuePrimer.primeFor(ep) }
-                .onFailure { DebugLogger.e("RecentVm", "queue prime failed", it) }
-            try {
-                when {
-                    // On-disk file beats every other path.
-                    ep.filePath != null -> {
-                        DebugLogger.i("RecentVm", "play(${ep.episodeId}) — local")
-                        player.playLocal(ep, artwork)
-                    }
-                    // backup:// row — retention-pruned local copy OR
-                    // NasMirror-only entry. Resolve via NasClient and
-                    // stream from the bearer-protected /audio endpoint.
-                    // (v0.1.68 — was previously hidden from Recent by
-                    // the ghost filter; now visible + tappable, so
-                    // dispatch must be aware of the backup scheme.)
-                    ep.downloadUrl.startsWith("backup://") -> {
-                        val audio = nas.audioUrl(ep.episodeId).getOrNull()
-                        if (audio == null) {
-                            DebugLogger.w(
-                                "RecentVm",
-                                "play(${ep.episodeId}) — backup:// row but NAS unconfigured/unreachable",
-                            )
-                            return@launch
-                        }
-                        DebugLogger.i("RecentVm", "play(${ep.episodeId}) — stream from NAS")
-                        player.playStream(ep.episodeId, audio.url, ep.title, artwork, description = ep.description)
-                    }
-                    // Public CDN — oneplace stream URL, no auth.
-                    else -> {
-                        DebugLogger.i("RecentVm", "play(${ep.episodeId}) — stream from CDN")
-                        when (val src = playSourceFor(ep.filePath, ep.downloadUrl)) {
-                            is PlaySource.Local -> player.playLocal(ep, artwork)
-                            is PlaySource.Stream -> player.playStream(ep.episodeId, src.url, ep.title, artwork, description = ep.description)
-                        }
-                    }
-                }
-            } catch (t: Throwable) {
-                DebugLogger.e("RecentVm", "play(${ep.episodeId}) — dispatch threw", t)
-            }
-        }
+        // Everything else — on-disk / backup:// via NAS / CDN, plus
+        // album-queue priming — lives in EpisodePlayDispatcher so
+        // NowPlayingScreen can start an episode the same way.
+        viewModelScope.launch { dispatcher.play(ep, tag = "RecentVm") }
     }
 
     /**

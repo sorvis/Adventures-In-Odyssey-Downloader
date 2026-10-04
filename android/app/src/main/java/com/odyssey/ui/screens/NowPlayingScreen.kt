@@ -27,6 +27,10 @@ import androidx.lifecycle.viewModelScope
 import androidx.media3.session.MediaController
 import coil.compose.AsyncImage
 import com.odyssey.data.local.EpisodeDao
+import com.odyssey.data.local.LocalEpisodeEntity
+import com.odyssey.data.local.PlaybackDao
+import com.odyssey.data.local.PlaybackPositionEntity
+import com.odyssey.player.EpisodePlayDispatcher
 import com.odyssey.player.PlayerController
 import com.odyssey.player.seekTargetMs
 import com.odyssey.show.YshCatalog
@@ -36,6 +40,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -44,7 +49,9 @@ import javax.inject.Inject
 @HiltViewModel
 class NowPlayingVm @Inject constructor(
     private val player: PlayerController,
-    episodes: EpisodeDao,
+    private val episodes: EpisodeDao,
+    private val playback: PlaybackDao,
+    private val dispatcher: EpisodePlayDispatcher,
     albumResolver: AlbumNavResolver,
     yshCatalog: YshCatalog,
 ) : ViewModel() {
@@ -77,25 +84,96 @@ class NowPlayingVm @Inject constructor(
     /** Has anything ever been loaded? Drives MiniPlayer visibility. */
     val hasContent: Boolean get() = title.isNotEmpty() || artworkUri != null
 
+    /**
+     * What we were last listening to — the fallback for when the player
+     * has nothing loaded.
+     *
+     * Android kills the playback service while the app is backgrounded.
+     * Reconnecting hands back a FRESH service with no media item, so
+     * every field below derived from `currentMediaItem` came back empty
+     * and the screen rendered "Nothing playing" over a blank area, with
+     * a play button that no-op'd because there was nothing to play
+     * (reported 2026-10-04, screenshot taken mid-navigation).
+     *
+     * The app always knew the answer — it's in `playback_positions`,
+     * and the Recent tab's Continue-listening card already reads it.
+     * This screen just never asked.
+     *
+     * Eagerly shared: the poll loop reads `.value` directly and nothing
+     * else collects this, so WhileSubscribed would leave it permanently
+     * null.
+     */
+    private val lastPlayed: StateFlow<Pair<LocalEpisodeEntity, PlaybackPositionEntity>?> =
+        combine(playback.observeMostRecent(), episodes.observeAll()) { pos, eps ->
+            if (pos == null) {
+                null
+            } else {
+                eps.firstOrNull { it.episodeId == pos.episodeId }?.let { ep -> ep to pos }
+            }
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
     init {
         viewModelScope.launch {
             val c = player.connect()
             controller = c
             while (true) {
-                positionMs = c.currentPosition
-                durationMs = c.duration.coerceAtLeast(0)
-                playing = c.isPlaying
                 val item = c.currentMediaItem
-                title = item?.mediaMetadata?.title?.toString().orEmpty()
-                description = item?.mediaMetadata?.description?.toString().orEmpty()
-                artworkUri = item?.mediaMetadata?.artworkUri
-                currentEpisodeId.value = item?.mediaId?.toLongOrNull()
+                if (item != null) {
+                    positionMs = c.currentPosition
+                    durationMs = c.duration.coerceAtLeast(0)
+                    playing = c.isPlaying
+                    title = item.mediaMetadata.title?.toString().orEmpty()
+                    description = item.mediaMetadata.description?.toString().orEmpty()
+                    artworkUri = item.mediaMetadata.artworkUri
+                    currentEpisodeId.value = item.mediaId.toLongOrNull()
+                } else {
+                    // Nothing loaded: either a genuinely fresh install or
+                    // — far more often — the service was killed while
+                    // backgrounded. Show the last episode, paused at its
+                    // saved offset, so the screen is useful instead of
+                    // blank. Populating `title` also brings the
+                    // MiniPlayer back (see [hasContent]), restoring the
+                    // other route to what you were listening to.
+                    val fallback = lastPlayed.value
+                    if (fallback == null) {
+                        positionMs = 0L
+                        durationMs = 0L
+                        playing = false
+                        title = ""
+                        description = ""
+                        artworkUri = null
+                        currentEpisodeId.value = null
+                    } else {
+                        val (ep, pos) = fallback
+                        positionMs = pos.positionMs
+                        durationMs = pos.durationMs.coerceAtLeast(0)
+                        playing = false
+                        title = ep.title
+                        description = ep.description.orEmpty()
+                        artworkUri = dispatcher.artworkFor(ep)?.let(Uri::parse)
+                        currentEpisodeId.value = ep.episodeId
+                    }
+                }
                 delay(500)
             }
         }
     }
 
-    fun togglePlay() { controller?.let { if (it.isPlaying) it.pause() else it.play() } }
+    /**
+     * Play/pause. When nothing is loaded this resumes the last episode
+     * rather than no-opping — `controller.play()` on an empty player
+     * does nothing, which made the button inert in exactly the state
+     * where it was most needed.
+     */
+    fun togglePlay() {
+        val c = controller
+        if (c?.currentMediaItem != null) {
+            if (c.isPlaying) c.pause() else c.play()
+            return
+        }
+        val ep = lastPlayed.value?.first ?: return
+        viewModelScope.launch { dispatcher.play(ep, tag = "NowPlayingVm") }
+    }
     fun back30()     { controller?.let { it.seekTo((it.currentPosition - 30_000).coerceAtLeast(0)) } }
     fun fwd30()      { controller?.let { it.seekTo((it.currentPosition + 30_000).coerceAtMost(it.duration)) } }
     fun seekTo(ms: Long) {
