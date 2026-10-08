@@ -57,7 +57,45 @@ interface EpisodePlayer {
      * when the row's episode IS the one currently playing.
      */
     val state: StateFlow<PlayerStateSnapshot>
+
+    /**
+     * Load a whole album as the player's playlist and start at
+     * [startIndex].
+     *
+     * Previously the player held exactly one MediaItem, and advancing
+     * was done by hand: AlbumQueueController kept a parallel list and
+     * AutoAdvanceController swapped the item on STATE_ENDED. That works
+     * on-screen but gives the MediaSession nothing to advertise, so
+     * next/previous were missing everywhere it matters — lockscreen,
+     * notification, Bluetooth headphones, car head unit, Android Auto.
+     *
+     * With a real playlist ExoPlayer advances natively and the session
+     * exposes seek-to-next/previous for free.
+     *
+     * Callers resolve URIs before calling (see [PlayableItem]) so the
+     * player stays ignorant of the NAS and the catalogs.
+     */
+    suspend fun playAlbum(items: List<PlayableItem>, startIndex: Int)
 }
+
+/**
+ * One fully-resolved entry in a playlist.
+ *
+ * "Resolved" is the point: [uri] is ready to hand to ExoPlayer, so the
+ * player never has to know that a `backup://` row means "ask NasClient
+ * for the URL". That resolution is cheap — NasClient.audioUrl() builds
+ * a string from settings and makes no network call — and the bearer
+ * token is attached at open time by MediaCache's host-scoped HTTP
+ * factory, so a whole album resolves without a single round-trip.
+ */
+data class PlayableItem(
+    val episodeId: Long,
+    val providerId: String,
+    val title: String,
+    val uri: String,
+    val artworkUrl: String? = null,
+    val description: String? = null,
+)
 
 /**
  * What the player is doing. Updated whenever a track loads or the

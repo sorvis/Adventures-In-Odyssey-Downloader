@@ -66,12 +66,16 @@ class EpisodePlayDispatcherTest {
     fun tearDown() = db.close()
 
     @Test
-    fun `an on-disk file plays locally, never as a stream`() = runBlocking {
+    fun `an on-disk file is queued as a file uri, not re-streamed`() = runBlocking {
         val ok = dispatcher.play(row(filePath = "/data/ep.mp3"))
 
         assertTrue(ok)
-        assertEquals(1, fake.localCalls.size)
-        assertTrue("must not also stream", fake.streamCalls.isEmpty())
+        val (items, startIndex) = fake.albumCalls.single()
+        val started = items[startIndex]
+        assertTrue(
+            "a downloaded episode must play from disk, not the network (got ${started.uri})",
+            started.uri.startsWith("file://"),
+        )
     }
 
     @Test
@@ -84,8 +88,13 @@ class EpisodePlayDispatcherTest {
         )
 
         assertTrue(ok)
-        assertEquals(1, fake.streamCalls.size)
-        assertEquals("ysh", fake.streamCalls.single().providerId)
+        val (items, startIndex) = fake.albumCalls.single()
+        val started = items[startIndex]
+        assertEquals("ysh", started.providerId)
+        assertTrue(
+            "should carry the CDN url (got ${started.uri})",
+            started.uri.startsWith("https://cdn.example/"),
+        )
     }
 
     @Test
@@ -98,15 +107,73 @@ class EpisodePlayDispatcherTest {
             val ok = dispatcher.play(row(filePath = null, downloadUrl = "backup://123"))
 
             assertFalse(ok)
-            assertTrue(fake.localCalls.isEmpty())
-            assertTrue(fake.streamCalls.isEmpty())
+            assertTrue("nothing may be queued when audio cannot be resolved", fake.albumCalls.isEmpty())
         }
+
+    @Test
+    fun `playing one episode queues the whole album, in order, starting at that episode`() =
+        runBlocking {
+            // The point of the playlist change. Before it, the player held
+            // exactly one item, so the MediaSession had nothing to advertise
+            // and next/previous were missing on lockscreen, Bluetooth and
+            // car head units.
+            val album = "Bible Comes Alive - Album 3"
+            for ((i, name) in listOf("First", "Second", "Third").withIndex()) {
+                db.episodes().upsert(
+                    row(
+                        filePath = "/data/" + (i + 1) + ".mp3",
+                        providerId = "ysh",
+                        externalId = "ysh-sku-" + (i + 1),
+                        albumName = album,
+                        albumTrackOrder = i + 1,
+                    ).copy(title = name),
+                )
+            }
+
+            val started = db.episodes().byKey("ysh", "ysh-sku-2")!!
+            assertTrue(dispatcher.play(started))
+
+            val (items, startIndex) = fake.albumCalls.single()
+            // Titles carry albumTrackOrder 1..3, so this asserts the
+            // queue order directly rather than via id arithmetic.
+            assertEquals(listOf("First", "Second", "Third"), items.map { it.title })
+            assertEquals("must start on the tapped episode", started.episodeId, items[startIndex].episodeId)
+        }
+
+    @Test
+    fun `an album member whose audio cannot be resolved is dropped, not fatal`() = runBlocking {
+        // A pruned ghost with no reachable NAS shouldn't stop the rest of
+        // the album from playing — and dropping it must not shift
+        // startIndex onto the wrong track.
+        val album = "Bible Comes Alive - Album 3"
+        db.episodes().upsert(
+            row(
+                filePath = null, providerId = "ysh", externalId = "ysh-sku-1",
+                downloadUrl = "backup://1", albumName = album, albumTrackOrder = 1,
+            ),
+        )
+        db.episodes().upsert(
+            row(
+                filePath = "/data/2.mp3", providerId = "ysh", externalId = "ysh-sku-2",
+                albumName = album, albumTrackOrder = 2,
+            ),
+        )
+
+        val started = db.episodes().byKey("ysh", "ysh-sku-2")!!
+        assertTrue(dispatcher.play(started))
+
+        val (items, startIndex) = fake.albumCalls.single()
+        assertEquals("the unresolvable ghost is dropped", 1, items.size)
+        assertEquals(started.episodeId, items[startIndex].episodeId)
+    }
 
     private fun row(
         filePath: String?,
         providerId: String = "aio",
         externalId: String = "123",
         downloadUrl: String = "https://cdn.example/$externalId.mp3",
+        albumName: String? = null,
+        albumTrackOrder: Int? = null,
     ) = LocalEpisodeEntity(
         providerId = providerId,
         externalId = externalId,
@@ -120,10 +187,20 @@ class EpisodePlayDispatcherTest {
         durationMs = 0L,
         downloadedAt = null,
         archivedAt = null,
+        albumName = albumName,
+        albumTrackOrder = albumTrackOrder,
     )
 
     /** Records what the dispatcher asked the player to do, incl. providerId. */
     private class RecordingPlayer : EpisodePlayer {
+        /** Playlist loads. The dispatcher calls this instead of
+         *  playLocal/playStream since the album became a real
+         *  ExoPlayer playlist. */
+        val albumCalls = mutableListOf<Pair<List<PlayableItem>, Int>>()
+        override suspend fun playAlbum(items: List<PlayableItem>, startIndex: Int) {
+            albumCalls += items to startIndex
+        }
+
         data class StreamCall(val episodeId: Long, val url: String, val providerId: String)
         val localCalls = mutableListOf<LocalEpisodeEntity>()
         val streamCalls = mutableListOf<StreamCall>()

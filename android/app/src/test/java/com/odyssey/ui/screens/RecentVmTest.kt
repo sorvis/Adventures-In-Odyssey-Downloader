@@ -72,33 +72,36 @@ class RecentVmTest {
     }
 
     @Test
-    fun `play(downloaded) calls Player playLocal not playStream`() = runTest {
+    fun `play(downloaded) queues the on-disk file, not a stream url`() = runTest {
         val fakePlayer = FakePlayer()
         val vm = makeVm(fakePlayer)
 
         val ep = makeEp(filePath = "/data/odyssey/123.mp3")
         vm.play(ep)
 
-        assertEquals("playLocal must be called once", 1, fakePlayer.playLocalCalls.size)
-        assertEquals(ep, fakePlayer.playLocalCalls.single())
-        assertTrue("playStream must not fire for downloaded ep", fakePlayer.playStreamCalls.isEmpty())
+        val (items, startIndex) = fakePlayer.albumCalls.single()
+        val started = items[startIndex]
+        assertEquals(ep.episodeId, started.episodeId)
+        assertTrue(
+            "a downloaded episode must play from disk (got ${started.uri})",
+            started.uri.startsWith("file://"),
+        )
     }
 
     @Test
-    fun `play(undownloaded) calls Player playStream not playLocal`() = runTest {
+    fun `play(undownloaded) queues the stream url`() = runTest {
         val fakePlayer = FakePlayer()
         val vm = makeVm(fakePlayer)
 
         val ep = makeEp(filePath = null, downloadUrl = "https://cdn.example/123.mp3")
         vm.play(ep)
 
-        assertEquals("playStream must be called once", 1, fakePlayer.playStreamCalls.size)
-        with(fakePlayer.playStreamCalls.single()) {
+        val (items, startIndex) = fakePlayer.albumCalls.single()
+        with(items[startIndex]) {
             assertEquals(ep.episodeId, episodeId)
-            assertEquals(ep.downloadUrl, streamUrl)
+            assertEquals(ep.downloadUrl, uri)
             assertEquals(ep.title, title)
         }
-        assertTrue("playLocal must not fire for undownloaded ep", fakePlayer.playLocalCalls.isEmpty())
     }
 
     @Test
@@ -132,8 +135,11 @@ class RecentVmTest {
 
         vm.play(ep)
 
+        // The resume-vs-reload decision itself now lives in
+        // PlayerController.playAlbum (decidePlayAction); from here the
+        // contract is just "dispatch a play, don't pause".
         assertEquals(0, fakePlayer.pauseCalls)
-        assertEquals(1, fakePlayer.playLocalCalls.size)
+        assertEquals(1, fakePlayer.albumCalls.size)
     }
 
     @Test
@@ -439,7 +445,7 @@ class RecentVmTest {
         // itself, not asserted here.)
         vm.play(makeEp(filePath = "/data/odyssey/123.mp3"))
 
-        assertEquals(1, fakePlayer.playLocalCalls.size)
+        assertEquals(1, fakePlayer.albumCalls.size)
     }
 
     // -- Recent screen data wiring (2026-09-28 white-screen report) --------
@@ -583,6 +589,15 @@ class RecentVmTest {
         private val throwOnStream: Boolean = false,
         initialState: com.odyssey.player.PlayerStateSnapshot = com.odyssey.player.PlayerStateSnapshot.IDLE,
     ) : EpisodePlayer {
+        /** Playlist loads. The dispatcher calls this instead of
+         *  playLocal/playStream since the album became a real
+         *  ExoPlayer playlist. */
+        val albumCalls = mutableListOf<Pair<List<com.odyssey.player.PlayableItem>, Int>>()
+        override suspend fun playAlbum(items: List<com.odyssey.player.PlayableItem>, startIndex: Int) {
+            albumCalls += items to startIndex
+            if (throwOnLocal) error("simulated playAlbum failure")
+        }
+
         val playLocalCalls = mutableListOf<LocalEpisodeEntity>()
         data class StreamCall(val episodeId: Long, val streamUrl: String, val title: String)
         val playStreamCalls = mutableListOf<StreamCall>()

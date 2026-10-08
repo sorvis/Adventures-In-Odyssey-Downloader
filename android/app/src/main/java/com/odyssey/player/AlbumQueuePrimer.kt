@@ -47,6 +47,24 @@ class AlbumQueuePrimer @Inject constructor(
 ) {
 
     /**
+     * The episodes of [ep]'s album, in play order, or empty when no
+     * album resolves.
+     *
+     * Exposed separately from [primeFor] because the player now loads
+     * the album as a real playlist — EpisodePlayDispatcher needs the
+     * rows themselves, not just a side-effect on the queue singleton.
+     */
+    suspend fun orderedAlbumFor(ep: LocalEpisodeEntity): List<LocalEpisodeEntity> {
+        val target = resolver.targetFor(ep) ?: return emptyList()
+        val siblings = episodes.observeAll().first().filter { it.providerId == ep.providerId }
+        return when (ep.providerId) {
+            "aio" -> orderAio(siblings, target.albumName)
+            "ysh" -> orderYsh(siblings, target.albumName)
+            else -> emptyList()
+        }
+    }
+
+    /**
      * Build + install the queue for [ep]'s album. Returns how many
      * entries were installed (0 when the album can't be resolved).
      *
@@ -56,30 +74,30 @@ class AlbumQueuePrimer @Inject constructor(
      * harmless — but an explicit clear keeps "what's queued" honest for
      * anything that observes it.
      */
-    suspend fun primeFor(ep: LocalEpisodeEntity): Int {
-        val target = resolver.targetFor(ep)
-        if (target == null) {
+    suspend fun primeFor(
+        ep: LocalEpisodeEntity,
+        ordered: List<LocalEpisodeEntity>? = null,
+    ): Int {
+        // Callers that already computed the order (the dispatcher, which
+        // needs the rows to build a playlist) pass it in so we don't read
+        // the episode table twice for one tap.
+        val list = ordered ?: orderedAlbumFor(ep)
+        if (list.isEmpty()) {
             DebugLogger.d(
                 "AlbumQueuePrimer",
-                "no album for ${ep.providerId}:${ep.externalId} \"${ep.title}\" — queue cleared",
+                "no album for ${ep.providerId}:${ep.externalId} \"${ep.title}\" - queue cleared",
             )
             albumQueue.setQueue(emptyList())
             return 0
         }
-        val siblings = episodes.observeAll().first().filter { it.providerId == ep.providerId }
-        val ordered = when (ep.providerId) {
-            "aio" -> orderAio(siblings, target.albumName)
-            "ysh" -> orderYsh(siblings, target.albumName)
-            else -> emptyList()
-        }
         albumQueue.setQueue(
-            ordered.map { AlbumQueueEntry(it.episodeId, it.providerId, it.externalId) },
+            list.map { AlbumQueueEntry(it.episodeId, it.providerId, it.externalId) },
         )
         DebugLogger.d(
             "AlbumQueuePrimer",
-            "primed queue size=${ordered.size} start=${ep.episodeId} album=\"${target.albumName}\"",
+            "primed queue size=${list.size} start=${ep.episodeId}",
         )
-        return ordered.size
+        return list.size
     }
 
     /**

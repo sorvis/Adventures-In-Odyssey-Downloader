@@ -153,6 +153,14 @@ class DownloadedVmTest {
         private val throwOnLocal: Boolean = false,
         initialState: com.odyssey.player.PlayerStateSnapshot = com.odyssey.player.PlayerStateSnapshot.IDLE,
     ) : EpisodePlayer {
+        /** Playlist loads. The dispatcher calls this instead of
+         *  playLocal/playStream since the album became a real
+         *  ExoPlayer playlist. */
+        val albumCalls = mutableListOf<Pair<List<com.odyssey.player.PlayableItem>, Int>>()
+        override suspend fun playAlbum(items: List<com.odyssey.player.PlayableItem>, startIndex: Int) {
+            albumCalls += items to startIndex
+        }
+
         val playLocalCalls = mutableListOf<LocalEpisodeEntity>()
         data class StreamCall(val episodeId: Long, val streamUrl: String, val title: String)
         val playStreamCalls = mutableListOf<StreamCall>()

@@ -314,6 +314,23 @@ class PlayerController @Inject constructor(
                 // without waiting for the next isPlaying tick.
                 val id = mediaItem?.mediaId?.toLongOrNull()
                 _state.value = _state.value.copy(currentEpisodeId = id)
+                // Auto-advance lands on the next item at position 0.
+                // Seek it to its own saved offset so rolling into a
+                // part-heard episode behaves the same as tapping it
+                // directly. A completed episode stores 0 (see
+                // positionToPersist), so finished tracks still restart.
+                if (id != null && reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO) {
+                    CoroutineScope(Dispatchers.Main).launch {
+                        val saved = withContext(Dispatchers.IO) {
+                            runCatching { playback.get(id)?.positionMs }.getOrNull()
+                        }
+                        val start = resumeStartPositionMs(saved)
+                        if (start > 0L) {
+                            DebugLogger.d("PlayerController", "auto-advance — seeking $id to ${start}ms")
+                            runCatching { c.seekTo(start) }
+                        }
+                    }
+                }
             }
         })
     }
@@ -350,6 +367,81 @@ class PlayerController @Inject constructor(
             intervalMs = SAVE_INTERVAL_MS,
         ) { persist(c) }
     }
+
+    override suspend fun playAlbum(items: List<PlayableItem>, startIndex: Int) {
+        if (items.isEmpty()) {
+            DebugLogger.w("PlayerController", "playAlbum — empty item list, nothing to load")
+            return
+        }
+        val idx = startIndex.coerceIn(0, items.lastIndex)
+        val target = items[idx]
+        DebugLogger.i(
+            "PlayerController",
+            "playAlbum(${target.episodeId}) — ${items.size} item(s), startIndex=$idx",
+        )
+        val c = try {
+            connect()
+        } catch (t: Throwable) {
+            DebugLogger.e("PlayerController", "playAlbum — connect() threw", t)
+            return
+        }
+        // Same NoOp/Resume/LoadFresh contract the single-item paths use,
+        // so tapping the row of the episode already playing still
+        // resumes in place instead of reloading the whole album.
+        when (decidePlayAction(c.currentMediaItem?.mediaId, c.isPlaying, target.episodeId.toString())) {
+            PlayAction.NoOp -> {
+                DebugLogger.d("PlayerController", "playAlbum — already playing ${target.episodeId}, no-op")
+                return
+            }
+            PlayAction.Resume -> {
+                DebugLogger.d("PlayerController", "playAlbum — resuming ${target.episodeId}")
+                c.playWhenReady = true
+                return
+            }
+            PlayAction.LoadFresh -> capturePreviousPositionIfSwitching(c, target.episodeId)
+        }
+        val mediaItems = items.map(::buildMediaItem)
+        val resumeMs = resumeStartPositionMs(playback.get(target.episodeId)?.positionMs)
+        runCatching {
+            c.setMediaItems(mediaItems, idx, resumeMs)
+            c.prepare()
+            c.playWhenReady = true
+            _state.value = PlayerStateSnapshot(currentEpisodeId = target.episodeId, isPlaying = true)
+            DebugLogger.d(
+                "PlayerController",
+                "playAlbum — prepare+playWhenReady issued (resume@${resumeMs}ms)",
+            )
+        }.onFailure {
+            DebugLogger.e("PlayerController", "playAlbum — controller call threw", it)
+        }
+    }
+
+    /**
+     * MediaItem for one already-resolved playlist entry.
+     *
+     * customCacheKey is pinned to the episode id for the same reason
+     * playStream does it: oneplace's mp3 URLs carry rotating query
+     * params, so keying the cache on the URL would miss on every token
+     * refresh. Harmless for local files, which bypass the cache layer.
+     */
+    private fun buildMediaItem(item: PlayableItem): MediaItem =
+        MediaItem.Builder()
+            .setMediaId(item.episodeId.toString())
+            .setUri(item.uri)
+            .setCustomCacheKey(item.episodeId.toString())
+            .setMediaMetadata(
+                MediaMetadata.Builder()
+                    .setTitle(item.title)
+                    .setArtist(providers.artistFor(item.providerId))
+                    .apply {
+                        item.description?.takeIf { it.isNotBlank() }
+                            ?.let { setDescription(it) }
+                        item.artworkUrl?.takeIf { it.isNotBlank() }
+                            ?.let { setArtworkUri(android.net.Uri.parse(it)) }
+                    }
+                    .build(),
+            )
+            .build()
 
     private fun persist(c: MediaController) {
         // Must be called on Main — see startSaveLoop comment.

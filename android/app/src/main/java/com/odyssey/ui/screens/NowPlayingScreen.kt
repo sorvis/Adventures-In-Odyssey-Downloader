@@ -63,6 +63,15 @@ class NowPlayingVm @Inject constructor(
     var description by mutableStateOf(""); private set
     var artworkUri by mutableStateOf<Uri?>(null); private set
 
+    /**
+     * Whether the loaded playlist has anything either side of the
+     * current track. Drives the skip buttons' enabled state so the
+     * user can see when they're at the edge of the album instead of
+     * tapping a control that does nothing.
+     */
+    var hasNext by mutableStateOf(false); private set
+    var hasPrevious by mutableStateOf(false); private set
+
     /** mediaId of the current item (= episodeId), null when nothing loaded. */
     private val currentEpisodeId = MutableStateFlow<Long?>(null)
 
@@ -126,6 +135,8 @@ class NowPlayingVm @Inject constructor(
                     description = item.mediaMetadata.description?.toString().orEmpty()
                     artworkUri = item.mediaMetadata.artworkUri
                     currentEpisodeId.value = item.mediaId.toLongOrNull()
+                    hasNext = c.hasNextMediaItem()
+                    hasPrevious = c.hasPreviousMediaItem()
                 } else {
                     // Nothing loaded: either a genuinely fresh install or
                     // — far more often — the service was killed while
@@ -143,6 +154,8 @@ class NowPlayingVm @Inject constructor(
                         description = ""
                         artworkUri = null
                         currentEpisodeId.value = null
+                        hasNext = false
+                        hasPrevious = false
                     } else {
                         val (ep, pos) = fallback
                         positionMs = pos.positionMs
@@ -152,6 +165,10 @@ class NowPlayingVm @Inject constructor(
                         description = ep.description.orEmpty()
                         artworkUri = dispatcher.artworkFor(ep)?.let(Uri::parse)
                         currentEpisodeId.value = ep.episodeId
+                        // Nothing is loaded, so there is no playlist to
+                        // skip within until the user presses play.
+                        hasNext = false
+                        hasPrevious = false
                     }
                 }
                 delay(500)
@@ -176,6 +193,16 @@ class NowPlayingVm @Inject constructor(
     }
     fun back30()     { controller?.let { it.seekTo((it.currentPosition - 30_000).coerceAtLeast(0)) } }
     fun fwd30()      { controller?.let { it.seekTo((it.currentPosition + 30_000).coerceAtMost(it.duration)) } }
+
+    /**
+     * Previous / next track within the loaded album.
+     *
+     * These only do anything because the player now holds a real
+     * playlist; with the old one-item-at-a-time model there was
+     * nothing to skip to.
+     */
+    fun previous() { controller?.takeIf { it.hasPreviousMediaItem() }?.seekToPreviousMediaItem() }
+    fun next()     { controller?.takeIf { it.hasNextMediaItem() }?.seekToNextMediaItem() }
     fun seekTo(ms: Long) {
         controller?.let { c ->
             val dur = c.duration.coerceAtLeast(0)
@@ -439,8 +466,15 @@ fun NowPlayingScreen(
             // Transport controls.
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(24.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
+                IconButton(
+                    onClick = vm::previous,
+                    enabled = vm.hasPrevious,
+                    modifier = Modifier.testTag("skip-previous"),
+                ) {
+                    Icon(Icons.Default.SkipPrevious, "Previous episode", modifier = Modifier.size(32.dp))
+                }
                 IconButton(onClick = vm::back30, modifier = Modifier.testTag("back-30")) {
                     Icon(Icons.Default.Replay, "−30s", modifier = Modifier.size(32.dp))
                 }
@@ -456,6 +490,13 @@ fun NowPlayingScreen(
                 }
                 IconButton(onClick = vm::fwd30, modifier = Modifier.testTag("fwd-30")) {
                     Icon(Icons.Default.Forward30, "+30s", modifier = Modifier.size(32.dp))
+                }
+                IconButton(
+                    onClick = vm::next,
+                    enabled = vm.hasNext,
+                    modifier = Modifier.testTag("skip-next"),
+                ) {
+                    Icon(Icons.Default.SkipNext, "Next episode", modifier = Modifier.size(32.dp))
                 }
             }
             Spacer(Modifier.height(16.dp))

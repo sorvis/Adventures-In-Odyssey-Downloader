@@ -173,6 +173,14 @@ class AutoAdvanceControllerTest {
 
     /** Records every play* invocation for assertion. */
     private class RecordingPlayer : EpisodePlayer {
+        /** Playlist loads. The dispatcher calls this instead of
+         *  playLocal/playStream since the album became a real
+         *  ExoPlayer playlist. */
+        val albumCalls = mutableListOf<Pair<List<PlayableItem>, Int>>()
+        override suspend fun playAlbum(items: List<PlayableItem>, startIndex: Int) {
+            albumCalls += items to startIndex
+        }
+
         sealed interface Call {
             data class PlayLocal(val ep: LocalEpisodeEntity, val artworkUrl: String?) : Call
             data class PlayStream(
