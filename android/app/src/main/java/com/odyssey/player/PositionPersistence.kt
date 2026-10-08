@@ -81,3 +81,23 @@ fun resumeStartPositionMs(savedPositionMs: Long?): Long {
     val pos = savedPositionMs ?: return 0L
     return if (pos > MIN_PERSIST_POSITION_MS) pos else 0L
 }
+
+/**
+ * The position to actually save for an episode at [positionMs] of
+ * [durationMs].
+ *
+ * A completed episode saves **0**, not its end position. Storing the
+ * end position made "resume" meaningless: tapping a finished episode
+ * seeked to ~8 ms before the end, played that, and stopped (observed
+ * 2026-09-28 with episode 354 — READY then ENDED 8 ms later). It got
+ * worse once auto-advance landed, because that non-play now
+ * immediately skips to the next track.
+ *
+ * Clearing the position rather than special-casing playback keeps the
+ * stored data honest: "finished" means "starts from the beginning".
+ * [PlaybackPositionEntity.completedAt] still records that it was
+ * finished, and the "✓ played" chips read that field, not the
+ * position — so nothing visible is lost.
+ */
+fun positionToPersist(positionMs: Long, durationMs: Long): Long =
+    if (shouldMarkComplete(positionMs, durationMs)) 0L else positionMs

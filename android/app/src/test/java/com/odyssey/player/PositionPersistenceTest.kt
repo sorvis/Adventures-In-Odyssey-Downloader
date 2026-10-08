@@ -176,4 +176,44 @@ class PositionPersistenceTest {
         // Just above threshold: honored.
         assertNotEquals(0L, resumeStartPositionMs(MIN_PERSIST_POSITION_MS + 1))
     }
+    // -- clearing the position on completion (2026-09-28 / 2026-10-05) -----
+
+    @Test
+    fun `a completed episode persists position zero, not its end position`() {
+        // Storing the end position made resume meaningless: tapping a
+        // finished episode seeked to just before the end, played a few
+        // milliseconds and stopped. With auto-advance live it is worse —
+        // that non-play immediately skips to the next track.
+        assertEquals(0L, positionToPersist(positionMs = 1_529_532L, durationMs = 1_530_000L))
+    }
+
+    @Test
+    fun `a part-played episode persists its real position`() {
+        // The ordinary case must be untouched — this is what makes
+        // "Continue listening" work at all.
+        assertEquals(600_000L, positionToPersist(positionMs = 600_000L, durationMs = 1_500_000L))
+    }
+
+    @Test
+    fun `the completion boundary matches shouldMarkComplete exactly`() {
+        // One rule, not two. If these ever diverge an episode could be
+        // flagged complete while keeping its end position, resurrecting
+        // the original bug for that row.
+        val dur = 1_000_000L
+        val atThreshold = (dur * 0.95).toLong()
+        assertTrue(shouldMarkComplete(atThreshold, dur))
+        assertEquals(0L, positionToPersist(atThreshold, dur))
+
+        val justUnder = atThreshold - 1
+        assertFalse(shouldMarkComplete(justUnder, dur))
+        assertEquals(justUnder, positionToPersist(justUnder, dur))
+    }
+
+    @Test
+    fun `unknown duration keeps the position rather than wiping it`() {
+        // duration 0 means "not known yet" (pre-prepare, or a stream
+        // that hasn't reported). Treating that as complete would clear
+        // a real position on every such write.
+        assertEquals(42_000L, positionToPersist(positionMs = 42_000L, durationMs = 0L))
+    }
 }

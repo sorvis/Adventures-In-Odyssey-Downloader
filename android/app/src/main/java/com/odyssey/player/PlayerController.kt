@@ -377,7 +377,13 @@ class PlayerController @Inject constructor(
                 // assumes a bare Long. YSH playback paths land alongside
                 // the show-switcher UI in step 9, and at that point we
                 // switch to decoded `(providerId, externalId)` keys.
-                playback.upsert(PlaybackPositionEntity("aio", id.toString(), pos, dur, System.currentTimeMillis(), complete))
+                playback.upsert(
+                    PlaybackPositionEntity(
+                        "aio", id.toString(),
+                        positionToPersist(pos, dur), dur,
+                        System.currentTimeMillis(), complete,
+                    ),
+                )
             }.onFailure { DebugLogger.w("PlayerController", "persist — playback.upsert failed", it) }
         }
     }
@@ -411,7 +417,7 @@ class PlayerController @Inject constructor(
                 playback.upsert(
                     PlaybackPositionEntity(
                         "aio", snap.episodeId.toString(),
-                        snap.positionMs, snap.durationMs,
+                        positionToPersist(snap.positionMs, snap.durationMs), snap.durationMs,
                         System.currentTimeMillis(), complete,
                     ),
                 )
