@@ -17,4 +17,12 @@ abstract class PlayerModule {
     @Binds
     @Singleton
     abstract fun bindEpisodePlayer(impl: PlayerController): EpisodePlayer
+
+    /**
+     * The up-next chime. Bound rather than constructed inside
+     * UpNextAnnouncer so the announcer stays free of Android types and
+     * keeps running in the bare-kotlinc test lane.
+     */
+    @Binds
+    abstract fun bindChime(impl: ToneChime): Chime
 }

@@ -141,6 +141,7 @@ quietly kotlinc \
   android/app/src/main/java/com/odyssey/player/RecoveryDecision.kt \
   android/app/src/main/java/com/odyssey/player/PlayAction.kt \
   android/app/src/main/java/com/odyssey/player/PositionPersistence.kt \
+  android/app/src/main/java/com/odyssey/player/UpNextAnnouncer.kt \
   android/app/src/main/java/com/odyssey/player/SeekTarget.kt \
   android/app/src/main/java/com/odyssey/player/FocusRewind.kt \
   android/app/src/main/java/com/odyssey/catalog/AioCatalog.kt \
@@ -166,6 +167,7 @@ quietly kotlinc \
   android/app/src/test/java/com/odyssey/player/RecoveryDecisionTest.kt \
   android/app/src/test/java/com/odyssey/player/PlayActionTest.kt \
   android/app/src/test/java/com/odyssey/player/PositionPersistenceTest.kt \
+  android/app/src/test/java/com/odyssey/player/UpNextAnnouncerTest.kt \
   android/app/src/test/java/com/odyssey/player/SeekTargetTest.kt \
   android/app/src/test/java/com/odyssey/player/FocusRewindTest.kt \
   android/app/src/test/java/com/odyssey/catalog/AioCatalogMatchTest.kt \
@@ -204,6 +206,7 @@ java \
   com.odyssey.player.RecoveryDecisionTest \
   com.odyssey.player.PlayActionTest \
   com.odyssey.player.PositionPersistenceTest \
+  com.odyssey.player.UpNextAnnouncerTest \
   com.odyssey.player.SeekTargetTest \
   com.odyssey.player.RewindTargetMsTest \
   com.odyssey.player.FocusPauseTrackerTest \

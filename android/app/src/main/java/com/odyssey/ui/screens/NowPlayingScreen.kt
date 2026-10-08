@@ -32,6 +32,8 @@ import com.odyssey.data.local.PlaybackDao
 import com.odyssey.data.local.PlaybackPositionEntity
 import com.odyssey.player.EpisodePlayDispatcher
 import com.odyssey.player.PlayerController
+import com.odyssey.player.UpNextAnnouncer
+import com.odyssey.player.UpNextPrompt
 import com.odyssey.player.seekTargetMs
 import com.odyssey.show.YshCatalog
 import com.odyssey.ui.AlbumNavResolver
@@ -52,6 +54,7 @@ class NowPlayingVm @Inject constructor(
     private val episodes: EpisodeDao,
     private val playback: PlaybackDao,
     private val dispatcher: EpisodePlayDispatcher,
+    private val upNext: UpNextAnnouncer,
     albumResolver: AlbumNavResolver,
     yshCatalog: YshCatalog,
 ) : ViewModel() {
@@ -183,6 +186,10 @@ class NowPlayingVm @Inject constructor(
      * where it was most needed.
      */
     fun togglePlay() {
+        // Any manual transport action supersedes an open hand-off
+        // window. Leaving it running would have the countdown call
+        // play() on a player the user had just paused.
+        upNext.cancel()
         val c = controller
         if (c?.currentMediaItem != null) {
             if (c.isPlaying) c.pause() else c.play()
@@ -191,6 +198,15 @@ class NowPlayingVm @Inject constructor(
         val ep = lastPlayed.value?.first ?: return
         viewModelScope.launch { dispatcher.play(ep, tag = "NowPlayingVm") }
     }
+
+    /**
+     * The "Up next" prompt shown between two episodes of an album, or
+     * null when no hand-off is in flight.
+     */
+    val upNextPrompt: StateFlow<UpNextPrompt?> get() = upNext.prompt
+
+    /** The prompt's Cancel: stop rolling, leave the next episode cued. */
+    fun cancelUpNext() = upNext.cancel()
     fun back30()     { controller?.let { it.seekTo((it.currentPosition - 30_000).coerceAtLeast(0)) } }
     fun fwd30()      { controller?.let { it.seekTo((it.currentPosition + 30_000).coerceAtMost(it.duration)) } }
 
@@ -201,8 +217,14 @@ class NowPlayingVm @Inject constructor(
      * playlist; with the old one-item-at-a-time model there was
      * nothing to skip to.
      */
-    fun previous() { controller?.takeIf { it.hasPreviousMediaItem() }?.seekToPreviousMediaItem() }
-    fun next()     { controller?.takeIf { it.hasNextMediaItem() }?.seekToNextMediaItem() }
+    fun previous() {
+        upNext.cancel()
+        controller?.takeIf { it.hasPreviousMediaItem() }?.seekToPreviousMediaItem()
+    }
+    fun next() {
+        upNext.cancel()
+        controller?.takeIf { it.hasNextMediaItem() }?.seekToNextMediaItem()
+    }
     fun seekTo(ms: Long) {
         controller?.let { c ->
             val dur = c.duration.coerceAtLeast(0)
@@ -460,6 +482,51 @@ fun NowPlayingScreen(
                         style = MaterialTheme.typography.labelMedium,
                         modifier = Modifier.testTag("remaining"),
                     )
+                }
+            }
+
+            // The hand-off window between two episodes: the chime has
+            // sounded, the next episode is cued at its resume point but
+            // paused. Doing nothing lets it start when the countdown
+            // runs out; Cancel leaves it cued and silent.
+            val prompt by vm.upNextPrompt.collectAsState()
+            prompt?.let { p ->
+                Surface(
+                    tonalElevation = 2.dp,
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 8.dp)
+                        .testTag("up-next-banner"),
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(
+                            start = 12.dp,
+                            end = 4.dp,
+                            top = 6.dp,
+                            bottom = 6.dp,
+                        ),
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Up next in ${p.secondsRemaining}s",
+                                style = MaterialTheme.typography.labelMedium,
+                            )
+                            Text(
+                                text = p.title,
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.testTag("up-next-title"),
+                            )
+                        }
+                        TextButton(
+                            onClick = vm::cancelUpNext,
+                            modifier = Modifier.testTag("up-next-cancel"),
+                        ) { Text("Cancel") }
+                    }
                 }
             }
 

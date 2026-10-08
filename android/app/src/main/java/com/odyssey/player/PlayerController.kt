@@ -46,9 +46,18 @@ class PlayerController @Inject constructor(
     // STATE_ENDED fires, by which point both singletons exist.
     private val autoAdvance: Lazy<AutoAdvanceController>,
     private val settings: com.odyssey.app.SettingsRepo,
+    private val upNext: UpNextAnnouncer,
 ) : EpisodePlayer {
     private var controller: MediaController? = null
     private var saveJob: Job? = null
+
+    /**
+     * Scope for the gap between two episodes. A long-lived field rather
+     * than a fresh scope per transition: the window outlives the
+     * listener callback that opened it, and UpNextAnnouncer needs a
+     * scope that is still alive seconds later to count down in.
+     */
+    private val handoffScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
     private val _state = MutableStateFlow(PlayerStateSnapshot.IDLE)
     override val state: StateFlow<PlayerStateSnapshot> = _state.asStateFlow()
@@ -316,26 +325,26 @@ class PlayerController @Inject constructor(
                 // without waiting for the next isPlaying tick.
                 val id = mediaItem?.mediaId?.toLongOrNull()
                 _state.value = _state.value.copy(currentEpisodeId = id)
-                // Auto-advance lands on the next item at position 0.
-                // Seek it to its own saved offset so rolling into a
-                // part-heard episode behaves the same as tapping it
-                // directly. A completed episode stores 0 (see
-                // positionToPersist), so finished tracks still restart.
+                // Anything other than a natural roll-over — a skip, a new
+                // album loaded from another screen — supersedes an open
+                // hand-off window. Without this the stale countdown would
+                // fire play() on whatever the user had just chosen.
+                if (reason != Player.MEDIA_ITEM_TRANSITION_REASON_AUTO) {
+                    upNext.cancel()
+                }
                 if (id != null && reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO) {
-                    CoroutineScope(Dispatchers.Main).launch {
-                        val autoplay = withContext(Dispatchers.IO) {
-                            runCatching { settings.flow.first().autoplayNextEpisode }
-                                .getOrDefault(true)
-                        }
-                        // Autoplay off still ADVANCES — it just doesn't
-                        // start playing. The next episode sits cued at its
-                        // resume point, so one tap continues and the skip
-                        // buttons keep working. Refusing to advance at all
-                        // would mean tearing the playlist down.
-                        if (!autoplay) {
-                            DebugLogger.i("PlayerController", "autoplay off — pausing at $id")
-                            runCatching { c.pause() }
-                        }
+                    handoffScope.launch {
+                        // Hold playback first thing. ExoPlayer has already
+                        // started the next item by the time this fires, so
+                        // anything done before pausing — reading settings,
+                        // touching the DB — is audible as the opening
+                        // seconds of the episode.
+                        runCatching { c.pause() }
+                        // Auto-advance lands on the next item at position 0.
+                        // Seek it to its own saved offset so rolling into a
+                        // part-heard episode behaves the same as tapping it
+                        // directly. A completed episode stores 0 (see
+                        // positionToPersist), so finished tracks still restart.
                         val saved = withContext(Dispatchers.IO) {
                             runCatching { playback.get(id)?.positionMs }.getOrNull()
                         }
@@ -344,6 +353,29 @@ class PlayerController @Inject constructor(
                             DebugLogger.d("PlayerController", "auto-advance — seeking $id to ${start}ms")
                             runCatching { c.seekTo(start) }
                         }
+                        val autoplay = withContext(Dispatchers.IO) {
+                            runCatching { settings.flow.first().autoplayNextEpisode }
+                                .getOrDefault(true)
+                        }
+                        if (!autoplay) {
+                            // Autoplay off still ADVANCES — it just doesn't
+                            // start playing. The next episode sits cued at its
+                            // resume point, so one tap continues and the skip
+                            // buttons keep working. Refusing to advance at all
+                            // would mean tearing the playlist down.
+                            DebugLogger.i("PlayerController", "autoplay off — holding at $id")
+                            return@launch
+                        }
+                        // Chime, then an "Up next" window the user can cancel
+                        // before anything plays.
+                        upNext.announce(
+                            scope = handoffScope,
+                            episodeId = id,
+                            title = upNextTitle(mediaItem?.mediaMetadata?.title),
+                        ) {
+                            DebugLogger.i("PlayerController", "up-next window elapsed — playing $id")
+                            runCatching { c.play() }
+                        }
                     }
                 }
             }
@@ -351,6 +383,9 @@ class PlayerController @Inject constructor(
     }
 
     override suspend fun pause() {
+        // A deliberate pause closes the window too — see the comment in
+        // NowPlayingVm.togglePlay() for why this matters.
+        upNext.cancel()
         // MediaController has main-thread affinity (see save-loop comment).
         val c = controller ?: return
         withContext(Dispatchers.Main) {
