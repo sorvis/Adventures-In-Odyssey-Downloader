@@ -205,6 +205,9 @@ class SettingsVm @Inject constructor(
      * before deleting the local copy. Off-by-design only if the user
      * explicitly trusts archivedAt and wants the extra HTTP call gone.
      */
+    fun setAutoplayNextEpisode(enabled: Boolean) =
+        viewModelScope.launch { settings.setAutoplayNextEpisode(enabled) }
+
     fun setVerifyBackupBeforePrune(enabled: Boolean) =
         viewModelScope.launch { settings.setVerifyBackupBeforePrune(enabled) }
 
@@ -584,6 +587,29 @@ fun SettingsScreen(
             // upload. Defaults ON — safer to skip a prune than lose
             // the only copy. Hidden when the NAS isn't configured
             // (irrelevant — without a NAS, retention always deletes).
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Play the next episode automatically")
+                    Text(
+                        if (current.autoplayNextEpisode)
+                            "On — when an episode ends, the next one in the album " +
+                                "starts on its own."
+                        else
+                            "Off — the next episode is cued up and waiting, but " +
+                                "won't start until you press play.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                Switch(
+                    checked = current.autoplayNextEpisode,
+                    onCheckedChange = vm::setAutoplayNextEpisode,
+                    modifier = Modifier.testTag("autoplay-toggle"),
+                )
+            }
+
             if (current.nasConfigured) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,

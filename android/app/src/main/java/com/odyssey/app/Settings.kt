@@ -57,6 +57,15 @@ private object Keys {
      * the onSuccess branch of ArchiveEpisodeWorker, so it cannot lie.
      */
     val LAST_BACKUP_SUCCESS_AT = longPreferencesKey("last_backup_success_at_ms")
+
+    /**
+     * Roll into the next episode of the album when one finishes.
+     * Defaults ON — that is the behaviour shipped in v0.1.90 and the
+     * reason the album is loaded as a playlist at all. The toggle
+     * exists because unattended listening (bedtime, a car with sleeping
+     * kids) is exactly when an unprompted next episode is unwelcome.
+     */
+    val AUTOPLAY_NEXT = booleanPreferencesKey("autoplay_next_episode")
 }
 
 /**
@@ -119,6 +128,8 @@ data class Settings(
      * no backup has ever succeeded on this install.
      */
     val lastBackupSuccessAtMs: Long = 0L,
+    /** @see Keys.AUTOPLAY_NEXT */
+    val autoplayNextEpisode: Boolean = true,
 ) {
     val nasConfigured: Boolean get() = nasUrl.isNotBlank() && nasToken.isNotBlank()
     val cfAccessConfigured: Boolean
@@ -140,6 +151,7 @@ class SettingsRepo @Inject constructor(@ApplicationContext private val ctx: Cont
             cfAccessClientId = p[Keys.CF_CLIENT_ID].orEmpty(),
             cfAccessClientSecret = p[Keys.CF_CLIENT_SECRET].orEmpty(),
             lastBackupSuccessAtMs = p[Keys.LAST_BACKUP_SUCCESS_AT] ?: 0L,
+            autoplayNextEpisode = p[Keys.AUTOPLAY_NEXT] ?: true,
         )
     }
 
@@ -216,6 +228,9 @@ class SettingsRepo @Inject constructor(@ApplicationContext private val ctx: Cont
      * on a skip, so a stale value is genuine evidence that backups have
      * stopped working rather than that nothing was queued.
      */
+    suspend fun setAutoplayNextEpisode(enabled: Boolean) =
+        ctx.dataStore.edit { it[Keys.AUTOPLAY_NEXT] = enabled }
+
     suspend fun recordBackupSuccess(atMs: Long = System.currentTimeMillis()) =
         ctx.dataStore.edit { it[Keys.LAST_BACKUP_SUCCESS_AT] = atMs }
 

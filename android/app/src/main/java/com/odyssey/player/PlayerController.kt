@@ -22,6 +22,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -44,6 +45,7 @@ class PlayerController @Inject constructor(
     // Hilt's eager-construction cycle; Lazy.get() is called only when
     // STATE_ENDED fires, by which point both singletons exist.
     private val autoAdvance: Lazy<AutoAdvanceController>,
+    private val settings: com.odyssey.app.SettingsRepo,
 ) : EpisodePlayer {
     private var controller: MediaController? = null
     private var saveJob: Job? = null
@@ -321,6 +323,19 @@ class PlayerController @Inject constructor(
                 // positionToPersist), so finished tracks still restart.
                 if (id != null && reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO) {
                     CoroutineScope(Dispatchers.Main).launch {
+                        val autoplay = withContext(Dispatchers.IO) {
+                            runCatching { settings.flow.first().autoplayNextEpisode }
+                                .getOrDefault(true)
+                        }
+                        // Autoplay off still ADVANCES — it just doesn't
+                        // start playing. The next episode sits cued at its
+                        // resume point, so one tap continues and the skip
+                        // buttons keep working. Refusing to advance at all
+                        // would mean tearing the playlist down.
+                        if (!autoplay) {
+                            DebugLogger.i("PlayerController", "autoplay off — pausing at $id")
+                            runCatching { c.pause() }
+                        }
                         val saved = withContext(Dispatchers.IO) {
                             runCatching { playback.get(id)?.positionMs }.getOrNull()
                         }
