@@ -126,6 +126,10 @@ class YshAlbumDetailVm @Inject constructor(
                     artworkUrl = row.albumImageUrl ?: local.albumImageUrl,
                     providerId = "ysh",
                     description = local.description,
+                    // Without this the position lands under ("aio", <hash>)
+                    // and the play shows up in Adventures in Odyssey's
+                    // history instead of this show's.
+                    externalId = local.externalId,
                 )
             }
         }

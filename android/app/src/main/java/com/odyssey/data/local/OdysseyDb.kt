@@ -78,7 +78,7 @@ data class LocalEpisodeEntity(
      * naturally non-column without needing `@Ignore`.
      */
     val episodeId: Long
-        get() = externalId.toLongOrNull() ?: externalId.hashCode().toLong()
+        get() = derivedEpisodeId(externalId)
 }
 
 /**
@@ -116,7 +116,7 @@ data class PlaybackPositionEntity(
     /** Mirrors LocalEpisodeEntity.episodeId — never-throws getter
      *  with hash fallback for non-numeric YSH externalIds. */
     val episodeId: Long
-        get() = externalId.toLongOrNull() ?: externalId.hashCode().toLong()
+        get() = derivedEpisodeId(externalId)
 }
 
 @Dao

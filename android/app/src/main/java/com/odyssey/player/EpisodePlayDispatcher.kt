@@ -134,6 +134,7 @@ class EpisodePlayDispatcher @Inject constructor(
         return PlayableItem(
             episodeId = ep.episodeId,
             providerId = ep.providerId,
+            externalId = ep.externalId,
             title = ep.title,
             uri = uri,
             artworkUrl = artworkFor(ep),

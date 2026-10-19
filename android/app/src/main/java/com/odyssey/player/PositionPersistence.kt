@@ -1,5 +1,9 @@
 package com.odyssey.player
 
+import com.odyssey.data.local.EpisodeKey
+import com.odyssey.data.local.episodeIdFromMediaId
+import com.odyssey.data.local.storageKeyFor
+
 /**
  * Pure helpers for the "save resume position per episode" contract.
  * Two specific bugs they fix:
@@ -32,11 +36,12 @@ fun capturePreviousIfDifferent(
     currentDurationMs: Long,
     targetEpisodeId: Long,
 ): PositionSnapshot? {
-    val oldId = currentMediaId?.toLongOrNull() ?: return null
+    val oldId = episodeIdFromMediaId(currentMediaId) ?: return null
     if (oldId == targetEpisodeId) return null
     if (currentPositionMs <= MIN_PERSIST_POSITION_MS) return null
     return PositionSnapshot(
         episodeId = oldId,
+        key = storageKeyFor(currentMediaId, oldId),
         positionMs = currentPositionMs,
         durationMs = currentDurationMs.coerceAtLeast(0),
     )
@@ -52,6 +57,12 @@ fun shouldPersist(positionMs: Long): Boolean = positionMs > MIN_PERSIST_POSITION
 
 data class PositionSnapshot(
     val episodeId: Long,
+    /**
+     * Which show's episode this is. Carried alongside [episodeId]
+     * because the Long alone is shared between shows, and the caller
+     * writes to a table keyed on the pair.
+     */
+    val key: EpisodeKey,
     val positionMs: Long,
     val durationMs: Long,
 )

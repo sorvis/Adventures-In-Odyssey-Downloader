@@ -1,5 +1,7 @@
 package com.odyssey.player
 
+import com.odyssey.data.local.EpisodeKey
+import com.odyssey.data.local.encodeMediaId
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -34,9 +36,32 @@ class PositionPersistenceTest {
             targetEpisodeId = 1278377L,
         )
         assertEquals(
-            PositionSnapshot(episodeId = 1278383L, positionMs = 45_000L, durationMs = 1_530_000L),
+            PositionSnapshot(
+                episodeId = 1278383L,
+                // Bare-Long media id: no provider recoverable, so the
+                // AIO fallback applies (and reproduces the pre-v0.1.91
+                // row rather than inventing a new one).
+                key = EpisodeKey("aio", "1278383"),
+                positionMs = 45_000L,
+                durationMs = 1_530_000L,
+            ),
             snap,
         )
+    }
+
+    @Test
+    fun `captures the real provider key when switching away from a YSH episode`() {
+        // The regression this guards: the snapshot used to carry only a
+        // Long, and the caller filed it under "aio" unconditionally, so
+        // switching away from a Your Story Hour episode wrote its
+        // position into Adventures in Odyssey's history.
+        val snap = capturePreviousIfDifferent(
+            currentMediaId = encodeMediaId("ysh", "ysh-sku-1958"),
+            currentPositionMs = 45_000L,
+            currentDurationMs = 1_530_000L,
+            targetEpisodeId = 1278377L,
+        )
+        assertEquals(EpisodeKey("ysh", "ysh-sku-1958"), snap?.key)
     }
 
     @Test
@@ -46,6 +71,21 @@ class PositionPersistenceTest {
         assertNull(
             capturePreviousIfDifferent(
                 currentMediaId = "1278383",
+                currentPositionMs = 45_000L,
+                currentDurationMs = 1_530_000L,
+                targetEpisodeId = 1278383L,
+            )
+        )
+    }
+
+    @Test
+    fun `recognises an encoded media id as the same episode and does not capture`() {
+        // episodeIdFromMediaId must agree with the entity's derivation,
+        // or tapping Continue on the episode already playing would look
+        // like a switch and persist a redundant row.
+        assertNull(
+            capturePreviousIfDifferent(
+                currentMediaId = encodeMediaId("aio", "1278383"),
                 currentPositionMs = 45_000L,
                 currentDurationMs = 1_530_000L,
                 targetEpisodeId = 1278383L,

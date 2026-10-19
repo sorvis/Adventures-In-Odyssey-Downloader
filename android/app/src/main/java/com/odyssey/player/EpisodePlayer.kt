@@ -43,6 +43,15 @@ interface EpisodePlayer {
          * or blank the player screen just hides the description block.
          */
         description: String? = null,
+        /**
+         * The episode's real id within its provider. [episodeId] is a
+         * lossy projection of it — two shows share that Long namespace
+         * — and the playback-position table is keyed on
+         * (providerId, externalId), so a caller that omits this gets
+         * its positions filed under AIO. Defaults to the stringified
+         * [episodeId], which is correct for AIO only.
+         */
+        externalId: String? = null,
     )
 
     /**
@@ -91,6 +100,8 @@ interface EpisodePlayer {
 data class PlayableItem(
     val episodeId: Long,
     val providerId: String,
+    /** Real id within [providerId]; see the note on playStream. */
+    val externalId: String,
     val title: String,
     val uri: String,
     val artworkUrl: String? = null,

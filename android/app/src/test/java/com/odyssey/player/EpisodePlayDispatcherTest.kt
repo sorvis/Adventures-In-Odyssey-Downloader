@@ -217,6 +217,7 @@ class EpisodePlayDispatcherTest {
             artworkUrl: String?,
             providerId: String,
             description: String?,
+            externalId: String?,
         ) {
             streamCalls += StreamCall(episodeId, streamUrl, providerId)
         }

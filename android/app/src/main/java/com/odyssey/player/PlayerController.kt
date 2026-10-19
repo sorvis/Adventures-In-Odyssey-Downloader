@@ -9,7 +9,11 @@ import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.ListenableFuture
+import com.odyssey.data.local.EpisodeKey
 import com.odyssey.data.local.LocalEpisodeEntity
+import com.odyssey.data.local.encodeMediaId
+import com.odyssey.data.local.episodeIdFromMediaId
+import com.odyssey.data.local.storageKeyFor
 import com.odyssey.data.local.PlaybackDao
 import com.odyssey.data.local.PlaybackPositionEntity
 import com.odyssey.debug.DebugLogger
@@ -104,7 +108,8 @@ class PlayerController @Inject constructor(
             DebugLogger.w("PlayerController", "playLocal called with null filePath — bailing")
             return
         }
-        when (decidePlayAction(c.currentMediaItem?.mediaId, c.isPlaying, ep.episodeId.toString())) {
+        val mediaId = encodeMediaId(ep.providerId, ep.externalId)
+        when (decidePlayAction(c.currentMediaItem?.mediaId, c.isPlaying, mediaId)) {
             PlayAction.NoOp -> {
                 DebugLogger.d("PlayerController", "playLocal — already playing ${ep.episodeId}, no-op")
                 return
@@ -148,7 +153,7 @@ class PlayerController @Inject constructor(
         }
         val art = artworkUrl ?: ep.imageUrl
         val item = MediaItem.Builder()
-            .setMediaId(ep.episodeId.toString())
+            .setMediaId(mediaId)
             .setUri(android.net.Uri.fromFile(java.io.File(path)))
             .setMediaMetadata(
                 MediaMetadata.Builder()
@@ -168,7 +173,9 @@ class PlayerController @Inject constructor(
         // to race: the player would briefly play from 0 before our seek
         // landed (or drop the seek entirely if prepare hadn't built the
         // timeline yet).
-        val resumeMs = resumeStartPositionMs(playback.get(ep.episodeId)?.positionMs)
+        val resumeMs = resumeStartPositionMs(
+            playback.getByKey(ep.providerId, ep.externalId)?.positionMs,
+        )
         runCatching {
             c.setMediaItem(item, resumeMs)
             c.prepare()
@@ -190,15 +197,23 @@ class PlayerController @Inject constructor(
         artworkUrl: String?,
         providerId: String,
         description: String?,
+        externalId: String?,
     ) {
         DebugLogger.i("PlayerController", "playStream($episodeId) url=$streamUrl")
+        // episodeId is a LOSSY projection of the real key, so callers
+        // that know the external id must pass it. Defaulting to the
+        // stringified Long is correct for AIO (where the two are the
+        // same value) and is the best available guess for a caller that
+        // has not been migrated yet.
+        val extId = externalId ?: episodeId.toString()
+        val mediaId = encodeMediaId(providerId, extId)
         val c = try {
             connect()
         } catch (t: Throwable) {
             DebugLogger.e("PlayerController", "playStream — connect() threw", t)
             return
         }
-        when (decidePlayAction(c.currentMediaItem?.mediaId, c.isPlaying, episodeId.toString())) {
+        when (decidePlayAction(c.currentMediaItem?.mediaId, c.isPlaying, mediaId)) {
             PlayAction.NoOp -> {
                 DebugLogger.d("PlayerController", "playStream — already playing $episodeId, no-op")
                 return
@@ -213,7 +228,7 @@ class PlayerController @Inject constructor(
             }
         }
         val item = MediaItem.Builder()
-            .setMediaId(episodeId.toString())
+            .setMediaId(mediaId)
             .setUri(streamUrl)
             // Pin cache key to the episode ID so MediaCache hits survive
             // CDN-token rotation in the streamUrl (oneplace's mp3 URLs
@@ -232,7 +247,7 @@ class PlayerController @Inject constructor(
                     .build()
             )
             .build()
-        val resumeMs = resumeStartPositionMs(playback.get(episodeId)?.positionMs)
+        val resumeMs = resumeStartPositionMs(playback.getByKey(providerId, extId)?.positionMs)
         runCatching {
             c.setMediaItem(item, resumeMs)
             c.prepare()
@@ -252,7 +267,7 @@ class PlayerController @Inject constructor(
                 if (isPlaying) startSaveLoop(c) else { saveJob?.cancel(); persist(c) }
                 // Keep the row-level "is this the currently-playing episode"
                 // flag fresh. mediaId is the episodeId stringified.
-                val id = c.currentMediaItem?.mediaId?.toLongOrNull()
+                val id = episodeIdFromMediaId(c.currentMediaItem?.mediaId)
                 _state.value = PlayerStateSnapshot(currentEpisodeId = id, isPlaying = isPlaying)
             }
 
@@ -274,7 +289,7 @@ class PlayerController @Inject constructor(
                 // wasn't in any queue (Recent-tab plays, Now-Playing
                 // standalone, etc.), so no opt-out needed.
                 if (playbackState == Player.STATE_ENDED) {
-                    val endedId = c.currentMediaItem?.mediaId?.toLongOrNull()
+                    val endedId = episodeIdFromMediaId(c.currentMediaItem?.mediaId)
                     if (endedId != null) {
                         CoroutineScope(Dispatchers.IO).launch {
                             runCatching { autoAdvance.get().onTrackEnded(endedId) }
@@ -307,7 +322,7 @@ class PlayerController @Inject constructor(
                 if (error.errorCode == PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED ||
                     error.errorCode == PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED
                 ) {
-                    val episodeId = c.currentMediaItem?.mediaId?.toLongOrNull()
+                    val episodeId = episodeIdFromMediaId(c.currentMediaItem?.mediaId)
                     if (episodeId != null) {
                         CoroutineScope(Dispatchers.IO).launch {
                             recovery.handleParseError(episodeId)
@@ -323,7 +338,7 @@ class PlayerController @Inject constructor(
                 )
                 // Reflect the new media id immediately so row UIs update
                 // without waiting for the next isPlaying tick.
-                val id = mediaItem?.mediaId?.toLongOrNull()
+                val id = episodeIdFromMediaId(mediaItem?.mediaId)
                 _state.value = _state.value.copy(currentEpisodeId = id)
                 // Anything other than a natural roll-over — a skip, a new
                 // album loaded from another screen — supersedes an open
@@ -345,8 +360,11 @@ class PlayerController @Inject constructor(
                         // part-heard episode behaves the same as tapping it
                         // directly. A completed episode stores 0 (see
                         // positionToPersist), so finished tracks still restart.
+                        val key = storageKeyFor(mediaItem?.mediaId, id)
                         val saved = withContext(Dispatchers.IO) {
-                            runCatching { playback.get(id)?.positionMs }.getOrNull()
+                            runCatching {
+                                playback.getByKey(key.providerId, key.externalId)?.positionMs
+                            }.getOrNull()
                         }
                         val start = resumeStartPositionMs(saved)
                         if (start > 0L) {
@@ -438,7 +456,11 @@ class PlayerController @Inject constructor(
         // Same NoOp/Resume/LoadFresh contract the single-item paths use,
         // so tapping the row of the episode already playing still
         // resumes in place instead of reloading the whole album.
-        when (decidePlayAction(c.currentMediaItem?.mediaId, c.isPlaying, target.episodeId.toString())) {
+        when (decidePlayAction(
+                c.currentMediaItem?.mediaId,
+                c.isPlaying,
+                encodeMediaId(target.providerId, target.externalId),
+        )) {
             PlayAction.NoOp -> {
                 DebugLogger.d("PlayerController", "playAlbum — already playing ${target.episodeId}, no-op")
                 return
@@ -451,7 +473,9 @@ class PlayerController @Inject constructor(
             PlayAction.LoadFresh -> capturePreviousPositionIfSwitching(c, target.episodeId)
         }
         val mediaItems = items.map(::buildMediaItem)
-        val resumeMs = resumeStartPositionMs(playback.get(target.episodeId)?.positionMs)
+        val resumeMs = resumeStartPositionMs(
+            playback.getByKey(target.providerId, target.externalId)?.positionMs,
+        )
         runCatching {
             c.setMediaItems(mediaItems, idx, resumeMs)
             c.prepare()
@@ -476,7 +500,7 @@ class PlayerController @Inject constructor(
      */
     private fun buildMediaItem(item: PlayableItem): MediaItem =
         MediaItem.Builder()
-            .setMediaId(item.episodeId.toString())
+            .setMediaId(encodeMediaId(item.providerId, item.externalId))
             .setUri(item.uri)
             .setCustomCacheKey(item.episodeId.toString())
             .setMediaMetadata(
@@ -498,8 +522,11 @@ class PlayerController @Inject constructor(
         val id: Long
         val pos: Long
         val dur: Long
+        val key: EpisodeKey
         try {
-            id = c.currentMediaItem?.mediaId?.toLongOrNull() ?: return
+            val mediaId = c.currentMediaItem?.mediaId
+            id = episodeIdFromMediaId(mediaId) ?: return
+            key = storageKeyFor(mediaId, id)
             pos = c.currentPosition
             dur = c.duration.coerceAtLeast(0)
         } catch (t: Throwable) {
@@ -515,13 +542,9 @@ class PlayerController @Inject constructor(
         val complete = if (shouldMarkComplete(pos, dur)) System.currentTimeMillis() else null
         CoroutineScope(Dispatchers.IO).launch {
             runCatching {
-                // PlayerController is AIO-only today — the mediaId parsing
-                // assumes a bare Long. YSH playback paths land alongside
-                // the show-switcher UI in step 9, and at that point we
-                // switch to decoded `(providerId, externalId)` keys.
                 playback.upsert(
                     PlaybackPositionEntity(
-                        "aio", id.toString(),
+                        key.providerId, key.externalId,
                         positionToPersist(pos, dur), dur,
                         System.currentTimeMillis(), complete,
                     ),
@@ -558,7 +581,7 @@ class PlayerController @Inject constructor(
             runCatching {
                 playback.upsert(
                     PlaybackPositionEntity(
-                        "aio", snap.episodeId.toString(),
+                        snap.key.providerId, snap.key.externalId,
                         positionToPersist(snap.positionMs, snap.durationMs), snap.durationMs,
                         System.currentTimeMillis(), complete,
                     ),
