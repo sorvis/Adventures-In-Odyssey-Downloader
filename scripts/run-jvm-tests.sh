@@ -141,6 +141,7 @@ quietly kotlinc \
   android/app/src/main/java/com/odyssey/player/RecoveryDecision.kt \
   android/app/src/main/java/com/odyssey/player/PlayAction.kt \
   android/app/src/main/java/com/odyssey/data/local/EpisodeKey.kt \
+  android/app/src/main/java/com/odyssey/data/local/PlaybackKeyRepair.kt \
   android/app/src/main/java/com/odyssey/player/PositionPersistence.kt \
   android/app/src/main/java/com/odyssey/player/UpNextAnnouncer.kt \
   android/app/src/main/java/com/odyssey/player/SeekTarget.kt \
@@ -168,6 +169,7 @@ quietly kotlinc \
   android/app/src/test/java/com/odyssey/player/RecoveryDecisionTest.kt \
   android/app/src/test/java/com/odyssey/player/PlayActionTest.kt \
   android/app/src/test/java/com/odyssey/data/local/EpisodeKeyTest.kt \
+  android/app/src/test/java/com/odyssey/data/local/PlaybackKeyRepairTest.kt \
   android/app/src/test/java/com/odyssey/player/PositionPersistenceTest.kt \
   android/app/src/test/java/com/odyssey/player/UpNextAnnouncerTest.kt \
   android/app/src/test/java/com/odyssey/player/SeekTargetTest.kt \
@@ -208,6 +210,7 @@ java \
   com.odyssey.player.RecoveryDecisionTest \
   com.odyssey.player.PlayActionTest \
   com.odyssey.data.local.EpisodeKeyTest \
+  com.odyssey.data.local.PlaybackKeyRepairTest \
   com.odyssey.player.PositionPersistenceTest \
   com.odyssey.player.UpNextAnnouncerTest \
   com.odyssey.player.SeekTargetTest \

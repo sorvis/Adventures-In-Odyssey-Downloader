@@ -663,5 +663,7 @@ class RecentVmTest {
         override fun observeCompletedIds(): Flow<List<Long>> = flowOf(emptyList())
         override fun observeAllPositions(): Flow<List<PlaybackPositionEntity>> = flowOf(emptyList())
         override suspend fun upsert(p: PlaybackPositionEntity) {}
+        override suspend fun allPositions(): List<PlaybackPositionEntity> = emptyList()
+        override suspend fun deleteByKey(providerId: String, externalId: String) {}
     }
 }

@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.hilt.work.HiltWorkerFactory
 import androidx.work.Configuration
 import com.odyssey.data.local.EpisodeDao
+import com.odyssey.data.local.PlaybackKeyRepairer
 import com.odyssey.download.DiskLayoutMigrator
 import com.odyssey.download.DownloadReconciler
 import com.odyssey.nas.NasMirror
@@ -30,6 +31,7 @@ class OdysseyApp : Application(), Configuration.Provider {
     @Inject lateinit var nasMirror: NasMirror
     @Inject lateinit var episodes: EpisodeDao
     @Inject lateinit var archiveNetworkKicker: ArchiveNetworkKicker
+    @Inject lateinit var playbackKeyRepairer: PlaybackKeyRepairer
 
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder().setWorkerFactory(workerFactory).build()
@@ -77,6 +79,14 @@ class OdysseyApp : Application(), Configuration.Provider {
             // before the AioOneplaceProvider showId filter landed.
             // Idempotent; no-ops on a clean DB.
             downloadReconciler.cleanupCrossShowContamination()
+            // Re-file playback positions that pre-v0.1.91 builds wrote
+            // under ("aio", <long>) regardless of which show was
+            // playing, which put the whole YSH listening history into
+            // AIO's Recently-played and Recent History. Sentinel-gated
+            // and conservative: a row is only moved when it provably
+            // belongs to YSH. Runs after the YSH album backfill above
+            // so the ysh rows it matches against are present.
+            playbackKeyRepairer.repairIfNeeded()
             // Opportunistic NAS mirror so the local DB reflects the
             // full backup catalog without forcing the user to open
             // Sync first (v0.1.67). Albums' "on backup" counts and

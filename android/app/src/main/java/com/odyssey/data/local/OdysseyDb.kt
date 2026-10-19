@@ -416,6 +416,18 @@ interface PlaybackDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(p: PlaybackPositionEntity)
+
+    /**
+     * Snapshot of the whole table. Used by the one-shot
+     * [com.odyssey.data.local.planPlaybackKeyRepair] pass at launch,
+     * which needs a fixed list rather than a stream it would react to
+     * while mutating.
+     */
+    @Query("SELECT * FROM playback_positions")
+    suspend fun allPositions(): List<PlaybackPositionEntity>
+
+    @Query("DELETE FROM playback_positions WHERE providerId = :providerId AND externalId = :externalId")
+    suspend fun deleteByKey(providerId: String, externalId: String)
 }
 
 @Dao

@@ -66,6 +66,13 @@ private object Keys {
      * kids) is exactly when an unprompted next episode is unwelcome.
      */
     val AUTOPLAY_NEXT = booleanPreferencesKey("autoplay_next_episode")
+
+    /**
+     * One-shot sentinel for the v0.1.91 playback-key repair. Set
+     * only once the repair has actually succeeded, so a transient DB
+     * error does not skip it permanently.
+     */
+    val PLAYBACK_KEYS_REPAIRED = booleanPreferencesKey("playback_keys_repaired")
 }
 
 /**
@@ -130,6 +137,8 @@ data class Settings(
     val lastBackupSuccessAtMs: Long = 0L,
     /** @see Keys.AUTOPLAY_NEXT */
     val autoplayNextEpisode: Boolean = true,
+    /** @see Keys.PLAYBACK_KEYS_REPAIRED */
+    val playbackKeysRepaired: Boolean = false,
 ) {
     val nasConfigured: Boolean get() = nasUrl.isNotBlank() && nasToken.isNotBlank()
     val cfAccessConfigured: Boolean
@@ -152,6 +161,7 @@ class SettingsRepo @Inject constructor(@ApplicationContext private val ctx: Cont
             cfAccessClientSecret = p[Keys.CF_CLIENT_SECRET].orEmpty(),
             lastBackupSuccessAtMs = p[Keys.LAST_BACKUP_SUCCESS_AT] ?: 0L,
             autoplayNextEpisode = p[Keys.AUTOPLAY_NEXT] ?: true,
+            playbackKeysRepaired = p[Keys.PLAYBACK_KEYS_REPAIRED] ?: false,
         )
     }
 
@@ -230,6 +240,9 @@ class SettingsRepo @Inject constructor(@ApplicationContext private val ctx: Cont
      */
     suspend fun setAutoplayNextEpisode(enabled: Boolean) =
         ctx.dataStore.edit { it[Keys.AUTOPLAY_NEXT] = enabled }
+
+    suspend fun setPlaybackKeysRepaired(done: Boolean) =
+        ctx.dataStore.edit { it[Keys.PLAYBACK_KEYS_REPAIRED] = done }
 
     suspend fun recordBackupSuccess(atMs: Long = System.currentTimeMillis()) =
         ctx.dataStore.edit { it[Keys.LAST_BACKUP_SUCCESS_AT] = atMs }
