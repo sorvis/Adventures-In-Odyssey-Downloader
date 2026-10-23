@@ -7,6 +7,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -31,6 +32,8 @@ import com.odyssey.app.SettingsRepo
 import com.odyssey.data.local.EpisodeDao
 import com.odyssey.data.local.LocalEpisodeEntity
 import com.odyssey.debug.DebugLogger
+import com.odyssey.download.DownloadProgressTracker
+import com.odyssey.download.EpisodeAcquirer
 import com.odyssey.player.AlbumQueueController
 import com.odyssey.player.AlbumQueueEntry
 import com.odyssey.player.EpisodePlayer
@@ -58,6 +61,8 @@ class YshAlbumDetailVm @Inject constructor(
     private val scheduler: WorkScheduler,
     private val settings: SettingsRepo,
     private val albumQueue: AlbumQueueController,
+    private val acquirer: EpisodeAcquirer,
+    downloadProgress: DownloadProgressTracker,
     savedState: SavedStateHandle,
 ) : ViewModel() {
     private val albumName: String = savedState.get<String>(YSH_ALBUM_DETAIL_ARG).orEmpty()
@@ -136,6 +141,31 @@ class YshAlbumDetailVm @Inject constructor(
     }
 
     /**
+     * In-flight download ids, so a row can show a bar the moment it is
+     * tapped. The acquirer seeds the tracker synchronously for exactly
+     * this reason.
+     */
+    val downloadingIds: kotlinx.coroutines.flow.StateFlow<Set<Long>> =
+        downloadProgress.progress
+            .map { it.keys }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptySet())
+
+    /**
+     * Download one track to the phone.
+     *
+     * This screen had no per-row download at all until 2026-10-23 —
+     * only the header's bulk pull-from-backup — which is what
+     * "download to device does not exist for ysh" meant. It routes
+     * through the shared [EpisodeAcquirer], so a free-pool track the
+     * NAS has never seen downloads from the CDN instead of silently
+     * doing nothing.
+     */
+    fun download(row: YshAlbumDetailRow) {
+        val local = row.localRow ?: return
+        acquirer.acquire(viewModelScope, local, tag = "YshAlbumDetailVm")
+    }
+
+    /**
      * Bulk pin offline: iterate every row in this album whose local
      * entity is on backup but not on the phone, enqueue a YSH-shaped
      * RestoreEpisodeWorker (via the v2 key path) per row. Mirrors
@@ -194,6 +224,7 @@ fun YshAlbumDetailScreen(
 ) {
     val rows by vm.rows.collectAsState()
     val pinAllCount by vm.pinAllCandidateCount.collectAsState()
+    val downloadingIds by vm.downloadingIds.collectAsState()
     val coverUrl = rows.firstOrNull { !it.albumImageUrl.isNullOrBlank() }?.albumImageUrl
 
     Scaffold(
@@ -249,7 +280,12 @@ fun YshAlbumDetailScreen(
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 items(rows, key = { it.skuId }) { row ->
-                    YshTrackRow(row, onPlay = { vm.play(row) })
+                    YshTrackRow(
+                        row = row,
+                        onPlay = { vm.play(row) },
+                        downloading = row.localRow?.episodeId in downloadingIds,
+                        onDownload = { vm.download(row) },
+                    )
                 }
             }
         }
@@ -257,7 +293,12 @@ fun YshAlbumDetailScreen(
 }
 
 @Composable
-internal fun YshTrackRow(row: YshAlbumDetailRow, onPlay: () -> Unit) {
+internal fun YshTrackRow(
+    row: YshAlbumDetailRow,
+    onPlay: () -> Unit,
+    downloading: Boolean = false,
+    onDownload: () -> Unit = {},
+) {
     // UNAVAILABLE tracks: catalog knows the title but we have no DB
     // row, so streaming/playing would have no URL. Render faded, no
     // tap target, no play button. Matches AIO's catalog-only episode
@@ -287,7 +328,25 @@ internal fun YshTrackRow(row: YshAlbumDetailRow, onPlay: () -> Unit) {
                 IconButton(onClick = onPlay, modifier = Modifier.testTag("ysh-track-play-$tagId")) {
                     Icon(Icons.Default.PlayArrow, contentDescription = "Play ${row.title}")
                 }
+                // Only STREAMABLE rows can be fetched: DOWNLOADED is
+                // already on disk, and UNAVAILABLE has no DB row, so no
+                // URL to fetch from.
+                if (row.ownership == YshTrackOwnership.STREAMABLE && !downloading) {
+                    IconButton(
+                        onClick = onDownload,
+                        modifier = Modifier.testTag("ysh-track-download-$tagId"),
+                    ) {
+                        Icon(Icons.Default.Download, contentDescription = "Download ${row.title}")
+                    }
+                }
             }
+        }
+        if (downloading) {
+            LinearProgressIndicator(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("ysh-track-progress-$tagId"),
+            )
         }
     }
 }

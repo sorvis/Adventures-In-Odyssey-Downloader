@@ -79,6 +79,8 @@ class AlbumDetailVm @Inject constructor(
     private val scheduler: WorkScheduler,
     private val settings: SettingsRepo,
     private val restores: RestoreProgressTracker,
+    private val downloads: com.odyssey.download.DownloadProgressTracker,
+    private val acquirer: com.odyssey.download.EpisodeAcquirer,
     private val albumQueue: com.odyssey.player.AlbumQueueController,
 ) : ViewModel() {
 
@@ -134,11 +136,17 @@ class AlbumDetailVm @Inject constructor(
      */
     val restoreStatus: kotlinx.coroutines.flow.StateFlow<Map<Long, RestoreUiStatus>> = combine(
         pendingRestores,
+        // BOTH trackers: a tap now routes through EpisodeAcquirer, which
+        // picks the NAS or the CDN per episode. Watching only the
+        // restore tracker would leave the bar stuck on "Queued" for
+        // every CDN download.
         restores.progress,
+        downloads.progress,
         episodes.observeAll().map { eps ->
             eps.asSequence().filter { it.filePath != null }.map { it.episodeId }.toSet()
         },
-    ) { pending, active, downloaded ->
+    ) { pending, restoring, downloading, downloaded ->
+        val active = restoring + downloading
         val out = mutableMapOf<Long, RestoreUiStatus>()
         // ACTIVE rows: live byte counter from the worker. Skip
         // already-on-disk ids defensively (the tracker should clear
@@ -299,16 +307,13 @@ class AlbumDetailVm @Inject constructor(
         // Mark queued FIRST so the bar appears immediately on tap.
         // The tracker takes over when the worker starts streaming.
         pendingRestores.value = pendingRestores.value + local.episodeId
-        val allowMetered = settings.flow.first().allowMeteredDownloads
-        scheduler.enqueueRestore(
-            episodeId = local.episodeId,
-            title = local.title,
-            airDate = local.airDate,
-            album = null, // server-side enrichment handles album
-            description = local.description,
-            durationSecs = local.durationMs / 1000,
-            allowMetered = allowMetered,
-        )
+        // Routes through the shared acquirer rather than enqueueing a
+        // restore unconditionally. The old call used the AIO-only
+        // enqueueRestore(Long) overload with no NAS check, so tapping
+        // Download on an episode the server had never archived — or
+        // with no NAS configured at all — queued a restore with nothing
+        // to restore from, and looked like the button did nothing.
+        acquirer.acquire(viewModelScope, local, tag = "AlbumDetailVm")
     }
 }
 

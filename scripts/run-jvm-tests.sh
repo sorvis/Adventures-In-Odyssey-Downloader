@@ -152,6 +152,7 @@ quietly kotlinc \
   android/app/src/main/java/com/odyssey/ui/screens/RecentListing.kt \
   android/app/src/main/java/com/odyssey/debug/DebugLog.kt \
   android/app/src/main/java/com/odyssey/download/DownloadProgress.kt \
+  android/app/src/main/java/com/odyssey/download/EpisodeAcquisition.kt \
   android/app/src/main/java/com/odyssey/download/TransferRow.kt \
   android/app/src/main/java/com/odyssey/qr/ServerQrCodec.kt
 
@@ -179,6 +180,7 @@ quietly kotlinc \
   android/app/src/test/java/com/odyssey/ui/screens/RecentListingTest.kt \
   android/app/src/test/java/com/odyssey/debug/DebugLogTest.kt \
   android/app/src/test/java/com/odyssey/download/DownloadProgressTest.kt \
+  android/app/src/test/java/com/odyssey/download/EpisodeAcquisitionTest.kt \
   android/app/src/test/java/com/odyssey/download/TransferRowTest.kt \
   android/app/src/test/java/com/odyssey/qr/ServerQrCodecTest.kt
 
@@ -221,6 +223,7 @@ java \
   com.odyssey.ui.screens.RecentListingTest \
   com.odyssey.debug.DebugLogTest \
   com.odyssey.download.DownloadProgressTest \
+  com.odyssey.download.EpisodeAcquisitionTest \
   com.odyssey.download.TransferRowTest \
   com.odyssey.qr.ServerQrCodecTest \
   >"$JUNIT_LOG" 2>&1

@@ -86,6 +86,7 @@ class RecentVm @Inject constructor(
     private val albumResolver: com.odyssey.ui.AlbumNavResolver,
     private val queuePrimer: com.odyssey.player.AlbumQueuePrimer,
     private val dispatcher: com.odyssey.player.EpisodePlayDispatcher,
+    private val acquirer: com.odyssey.download.EpisodeAcquirer,
 ) : ViewModel() {
 
     /**
@@ -328,55 +329,10 @@ class RecentVm @Inject constructor(
     fun consumePinMessage() { pinMessages.value = null }
 
     fun download(ep: LocalEpisodeEntity) {
-        if (ep.filePath != null) return
-        DebugLogger.i("RecentVm", "download(${ep.providerId}:${ep.externalId}) — enqueueing")
-        // Seed the progress tracker IMMEDIATELY (before the suspend
-        // boundary below) so the row shows an indeterminate "queued"
-        // bar the instant the user taps pin. The worker overrides the
-        // placeholder with real bytes when it starts, and clears the
-        // entry on success/failure. Reported via user screenshot
-        // 2026-05-13: "pin doesn't show a progress bar on YSH rows."
-        downloadProgress.queue(ep.episodeId)
-        viewModelScope.launch {
-            val s = settings.flow.first()
-            val allowMetered = s.allowMeteredDownloads
-            // Prefer the NAS over the public CDN when (a) the server
-            // has it (archivedAt set) AND (b) NAS is configured.
-            // LAN/Tailscale beats internet bandwidth, and the NAS is
-            // the canonical archive — CDN copies can rotate off.
-            // User ask 2026-05-23: "if recents has a server version
-            // always prefer the server to download from."
-            // v0.1.73 drops the AIO-only guard — RestoreEpisodeWorker
-            // now accepts (providerId, externalId) so YSH restores
-            // route through the same path.
-            val canRestore = ep.archivedAt != null && s.nasConfigured
-            if (canRestore) {
-                scheduler.enqueueRestoreByKey(
-                    providerId = ep.providerId,
-                    externalId = ep.externalId,
-                    title = ep.title,
-                    airDate = ep.airDate,
-                    album = ep.albumName,
-                    description = ep.description,
-                    durationSecs = ep.durationMs / 1000,
-                    allowMetered = allowMetered,
-                )
-                val onWifi = !isOnMeteredNetwork()
-                pinMessages.value = when {
-                    onWifi || allowMetered -> "Pulling from backup: ${ep.title}"
-                    else -> "Pull queued — will start on WiFi"
-                }
-                return@launch
-            }
-            // Fallback: provider-aware CDN download so YSH rows route
-            // correctly and AIO rows without a NAS copy still work.
-            scheduler.enqueueDownload(ep.providerId, ep.externalId, allowMetered = allowMetered)
-            val onWifi = !isOnMeteredNetwork()
-            pinMessages.value = when {
-                onWifi || allowMetered -> "Download started: ${ep.title}"
-                else -> "Download queued — will start on WiFi"
-            }
-        }
+        // All of this used to be inlined here, and it was the only
+        // correct copy in the app — see EpisodeAcquirer's header for
+        // what the other surfaces did instead.
+        acquirer.acquire(viewModelScope, ep, tag = "RecentVm") { pinMessages.value = it }
     }
 
     /**

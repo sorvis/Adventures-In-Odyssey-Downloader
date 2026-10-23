@@ -560,6 +560,15 @@ class RecentVmTest {
                 com.odyssey.player.AlbumQueueController(),
             ),
         ),
+        // Shares `tracker` so the "queued placeholder appears on tap"
+        // assertions still observe the same map the acquirer seeds.
+        acquirer = com.odyssey.download.EpisodeAcquirer(
+            ApplicationProvider.getApplicationContext(),
+            WorkScheduler(ApplicationProvider.getApplicationContext()),
+            WorkScheduler(ApplicationProvider.getApplicationContext()),
+            SettingsRepo(ApplicationProvider.getApplicationContext()),
+            tracker,
+        ),
     )
 
     private fun makeEp(
