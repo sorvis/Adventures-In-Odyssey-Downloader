@@ -41,15 +41,11 @@ import com.odyssey.data.local.EpisodeDao
 import com.odyssey.data.local.LocalEpisodeEntity
 import com.odyssey.data.local.PlaybackDao
 import com.odyssey.download.RestoreProgressTracker
-import com.odyssey.nas.NasClient
 import com.odyssey.work.WorkScheduler
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import com.odyssey.debug.DebugLogger
-import com.odyssey.player.EpisodePlayer
-import com.odyssey.player.PlaySource
-import com.odyssey.player.playSourceFor
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.map
@@ -74,14 +70,12 @@ class AlbumDetailVm @Inject constructor(
     private val episodes: EpisodeDao,
     private val playback: PlaybackDao,
     private val catalog: AioCatalogRepo,
-    private val player: EpisodePlayer,
-    private val nas: NasClient,
     private val scheduler: WorkScheduler,
     private val settings: SettingsRepo,
     private val restores: RestoreProgressTracker,
     private val downloads: com.odyssey.download.DownloadProgressTracker,
     private val acquirer: com.odyssey.download.EpisodeAcquirer,
-    private val albumQueue: com.odyssey.player.AlbumQueueController,
+    private val dispatcher: com.odyssey.player.EpisodePlayDispatcher,
 ) : ViewModel() {
 
     /**
@@ -171,50 +165,19 @@ class AlbumDetailVm @Inject constructor(
             DebugLogger.w("AlbumDetailVm", "play() — no local row for ${row.catalogEp.name}")
             return
         }
-        // v0.1.76 prime auto-advance queue: include every row with a
-        // playable local entity (DOWNLOADED or STREAMABLE), preserving
-        // catalog order so "next" matches what the user sees on screen.
-        // UNAVAILABLE rows are skipped — they'd just dead-end the queue.
-        primeQueue(local.episodeId)
-        // Album detail already has a high-quality catalog thumbnail —
-        // pass it through to the player so MiniPlayer + NowPlayingScreen
-        // get the right per-episode art on lockscreen.
-        val artwork = row.catalogEp.thumbnailMedium ?: row.catalogEp.thumbnailSmall ?: local.imageUrl
         DebugLogger.i("AlbumDetailVm", "play(${local.episodeId}) from album detail")
-        viewModelScope.launch {
-            try {
-                when {
-                    // On-disk file — playLocal beats every other path.
-                    local.filePath != null -> player.playLocal(local, artwork)
-                    // Server-mirrored row (downloadUrl is "backup://N").
-                    // Resolve the real audio URL via NasClient and stream
-                    // — auth header is injected by MediaCache's HTTP
-                    // factory so the bearer-token-protected /audio
-                    // endpoint accepts the request.
-                    local.downloadUrl.startsWith("backup://") -> {
-                        val audio = nas.audioUrl(local.episodeId).getOrNull()
-                        if (audio == null) {
-                            DebugLogger.w("AlbumDetailVm", "play(${local.episodeId}) — backup URL but NAS not configured")
-                            return@launch
-                        }
-                        player.playStream(
-                            local.episodeId, audio.url, local.title, artwork,
-                            description = local.description, externalId = local.externalId,
-                        )
-                    }
-                    // Oneplace download URL — public, no auth needed.
-                    else -> when (playSourceFor(local.filePath, local.downloadUrl)) {
-                        is PlaySource.Local -> player.playLocal(local, artwork)
-                        is PlaySource.Stream -> player.playStream(
-                            local.episodeId, local.downloadUrl, local.title, artwork,
-                            description = local.description, externalId = local.externalId,
-                        )
-                    }
-                }
-            } catch (t: Throwable) {
-                DebugLogger.e("AlbumDetailVm", "play threw", t)
-            }
-        }
+        // Dispatches through EpisodePlayDispatcher like Recent and Now
+        // Playing, which loads the whole album as a real ExoPlayer
+        // playlist. The hand-written source resolution and queue
+        // priming that used to live here only ever loaded ONE item, so
+        // this screen got no next/previous on the lockscreen, no skip
+        // buttons and no up-next window.
+        //
+        // The catalog artwork this used to pass explicitly is not lost:
+        // the dispatcher's artworkFor() resolves
+        // AioCatalogMatch.thumbnailUrl, which is itself
+        // thumbnailMedium ?: thumbnailSmall — the same value.
+        viewModelScope.launch { dispatcher.play(local, tag = "AlbumDetailVm") }
     }
 
     /**
@@ -269,28 +232,7 @@ class AlbumDetailVm @Inject constructor(
         }
     }
 
-    /**
-     * Build + install the auto-advance queue for this album. Includes
-     * every row whose local entity exists (DOWNLOADED or STREAMABLE);
-     * UNAVAILABLE rows are filtered because the worker has no URL to
-     * play. Order is catalog-order (matches `a.episodes`).
-     */
-    private fun primeQueue(startEpisodeId: Long) {
-        val a = album.value ?: return
-        val entries = a.episodes.mapNotNull { row ->
-            val local = row.localEpisode as? LocalEpisodeEntity ?: return@mapNotNull null
-            com.odyssey.player.AlbumQueueEntry(
-                episodeId = local.episodeId,
-                providerId = local.providerId,
-                externalId = local.externalId,
-            )
-        }
-        albumQueue.setQueue(entries)
-        DebugLogger.d(
-            "AlbumDetailVm",
-            "primed queue size=${entries.size} start=$startEpisodeId album=\"${a.album.name}\"",
-        )
-    }
+
 
     /**
      * Pin a server-only episode onto the phone for offline play.

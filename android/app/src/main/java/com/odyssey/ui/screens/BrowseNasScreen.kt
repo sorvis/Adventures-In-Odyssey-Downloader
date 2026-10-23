@@ -56,6 +56,7 @@ class BrowseVm @Inject constructor(
     private val scheduler: WorkScheduler,
     private val aioCatalog: AioCatalogRepo,
     private val mirror: NasMirror,
+    private val dispatcher: com.odyssey.player.EpisodePlayDispatcher,
     downloads: DownloadProgressTracker,
     uploads: ArchiveProgressTracker,
     restores: RestoreProgressTracker,
@@ -129,11 +130,32 @@ class BrowseVm @Inject constructor(
     }
 
     fun stream(ep: NasEpisode) = viewModelScope.launch {
+        // Prefer the mirrored local row so playback goes through the
+        // shared dispatcher and this screen gets the same album
+        // playlist, lockscreen next/previous and up-next window as
+        // everywhere else.
+        //
+        // "aio" is not an assumption: NasMirror writes every mirrored
+        // row with providerId = "aio" and externalId = episode_id, so
+        // the backup catalog is AIO-only by construction today.
+        val local = runCatching { episodes.byKey("aio", ep.episode_id.toString()) }
+            .onFailure { DebugLogger.w("BrowseVm", "local row lookup failed", it) }
+            .getOrNull()
+        if (local != null) {
+            dispatcher.play(local, tag = "BrowseVm")
+            return@launch
+        }
+        // Not mirrored yet — NasMirror runs opportunistically, so a row
+        // can be browsable before it exists locally. Stream it directly
+        // rather than refusing to play.
         nas.audioUrl(ep.episode_id).onSuccess {
-            // ExoPlayer DataSource auth handled at the OkHttp factory layer in
-            // production; for now we pass the bare URL and assume the token
-            // is appended via interceptor (TODO).
-            player.playStream(ep.episode_id, it.url, ep.title, description = ep.description)
+            player.playStream(
+                episodeId = ep.episode_id,
+                streamUrl = it.url,
+                title = ep.title,
+                description = ep.description,
+                externalId = ep.episode_id.toString(),
+            )
         }
     }
 

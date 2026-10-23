@@ -34,9 +34,6 @@ import com.odyssey.data.local.LocalEpisodeEntity
 import com.odyssey.debug.DebugLogger
 import com.odyssey.download.DownloadProgressTracker
 import com.odyssey.download.EpisodeAcquirer
-import com.odyssey.player.AlbumQueueController
-import com.odyssey.player.AlbumQueueEntry
-import com.odyssey.player.EpisodePlayer
 import com.odyssey.show.YshAlbumDetailRow
 import com.odyssey.show.YshCatalog
 import com.odyssey.show.YshTrackOwnership
@@ -57,10 +54,9 @@ const val YSH_ALBUM_DETAIL_ARG = "albumName"
 class YshAlbumDetailVm @Inject constructor(
     episodes: EpisodeDao,
     catalog: YshCatalog,
-    private val player: EpisodePlayer,
     private val scheduler: WorkScheduler,
     private val settings: SettingsRepo,
-    private val albumQueue: AlbumQueueController,
+    private val dispatcher: com.odyssey.player.EpisodePlayDispatcher,
     private val acquirer: EpisodeAcquirer,
     downloadProgress: DownloadProgressTracker,
     savedState: SavedStateHandle,
@@ -109,35 +105,11 @@ class YshAlbumDetailVm @Inject constructor(
 
     fun play(row: YshAlbumDetailRow) {
         val local = row.localRow ?: return  // UNAVAILABLE — UI disables tap, but defensive here too
-        // v0.1.76 prime auto-advance queue: include every row in this
-        // album that has a local entity (DOWNLOADED or STREAMABLE),
-        // in catalog orderIndex order. UNAVAILABLE rows are filtered.
-        primeQueue(local.episodeId)
-        viewModelScope.launch {
-            // YSH playback paths today: prefer the local file if we have
-            // it; otherwise stream from the original (yourstoryhour S3 or
-            // oneplace) downloadUrl.
-            if (local.filePath != null) {
-                player.playLocal(local, artworkUrl = row.albumImageUrl ?: local.albumImageUrl)
-            } else {
-                // v0.1.76: pass `local.episodeId` (computed hash fallback
-                // for YSH non-numeric externalIds) instead of the
-                // pre-v0.1.76 `0L` placeholder. The mediaId now matches
-                // the queue's entry id, so STATE_ENDED can advance.
-                player.playStream(
-                    episodeId = local.episodeId,
-                    streamUrl = local.downloadUrl,
-                    title = local.title,
-                    artworkUrl = row.albumImageUrl ?: local.albumImageUrl,
-                    providerId = "ysh",
-                    description = local.description,
-                    // Without this the position lands under ("aio", <hash>)
-                    // and the play shows up in Adventures in Odyssey's
-                    // history instead of this show's.
-                    externalId = local.externalId,
-                )
-            }
-        }
+        // Same dispatcher as every other surface, so YSH albums load as
+        // a playlist and get the lockscreen next/previous, skip buttons
+        // and up-next window that the hand-rolled single-item path here
+        // never provided.
+        viewModelScope.launch { dispatcher.play(local, tag = "YshAlbumDetailVm") }
     }
 
     /**
@@ -199,21 +171,7 @@ class YshAlbumDetailVm @Inject constructor(
         }
     }
 
-    private fun primeQueue(startEpisodeId: Long) {
-        val entries = rows.value.mapNotNull { r ->
-            val local = r.localRow ?: return@mapNotNull null
-            AlbumQueueEntry(
-                episodeId = local.episodeId,
-                providerId = local.providerId,
-                externalId = local.externalId,
-            )
-        }
-        albumQueue.setQueue(entries)
-        DebugLogger.d(
-            "YshAlbumDetailVm",
-            "primed queue size=${entries.size} start=$startEpisodeId album=\"$albumName\"",
-        )
-    }
+
 }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalComposeUiApi::class)

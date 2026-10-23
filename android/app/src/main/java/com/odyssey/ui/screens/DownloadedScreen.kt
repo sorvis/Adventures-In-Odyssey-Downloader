@@ -27,8 +27,6 @@ import com.odyssey.download.DownloadProgressTracker
 import com.odyssey.nas.NasMirror
 import com.odyssey.work.WorkScheduler
 import com.odyssey.player.EpisodePlayer
-import com.odyssey.player.PlaySource
-import com.odyssey.player.playSourceFor
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -62,7 +60,7 @@ class DownloadedVm @Inject constructor(
     private val mirror: NasMirror,
     private val yshCatalog: com.odyssey.show.YshCatalog,
     private val albumResolver: com.odyssey.ui.AlbumNavResolver,
-    private val queuePrimer: com.odyssey.player.AlbumQueuePrimer,
+    private val dispatcher: com.odyssey.player.EpisodePlayDispatcher,
 ) : ViewModel() {
 
     /** YSH cover fallback when a Library row's own imageUrl is null. */
@@ -124,40 +122,16 @@ class DownloadedVm @Inject constructor(
 
     fun play(ep: LocalEpisodeEntity) {
         // Pause-in-place when the row's button is tapped on a row that's
-        // already playing — same Play↔Pause toggle as Recent.
+        // already playing — same Play↔Pause toggle as Recent. Stays here
+        // rather than in the dispatcher: it is per-surface UI policy,
+        // and the dispatcher only starts things.
         val s = player.state.value
         if (s.currentEpisodeId == ep.episodeId && s.isPlaying) {
             DebugLogger.i("DownloadedVm", "play(${ep.episodeId}) — pausing in-place")
             viewModelScope.launch { runCatching { player.pause() } }
             return
         }
-        val src = playSourceFor(ep.filePath, ep.downloadUrl)
-        val artwork = catalog.match(ep.title)?.thumbnailUrl ?: ep.imageUrl
-        DebugLogger.i(
-            "DownloadedVm",
-            "play(${ep.episodeId}) — ${if (src is PlaySource.Local) "local" else "stream"}",
-        )
-        viewModelScope.launch {
-            // Same contract as RecentVm.play: install the album queue
-            // before dispatch so auto-advance has somewhere to go, and
-            // never let a priming failure stop playback.
-            runCatching { queuePrimer.primeFor(ep) }
-                .onFailure { DebugLogger.e("DownloadedVm", "queue prime failed", it) }
-            try {
-                when (src) {
-                    is PlaySource.Local -> player.playLocal(ep, artwork)
-                    is PlaySource.Stream -> player.playStream(
-                        ep.episodeId, ep.downloadUrl, ep.title, artwork,
-                        description = ep.description,
-                        // The library spans both shows, so the real key
-                        // matters here as much as on the YSH album screen.
-                        providerId = ep.providerId, externalId = ep.externalId,
-                    )
-                }
-            } catch (t: Throwable) {
-                DebugLogger.e("DownloadedVm", "play(${ep.episodeId}) — dispatch threw", t)
-            }
-        }
+        viewModelScope.launch { dispatcher.play(ep, tag = "DownloadedVm") }
     }
 
     /**

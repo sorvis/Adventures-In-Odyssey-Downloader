@@ -54,15 +54,22 @@ class DownloadedVmTest {
     @After fun tearDown() = Dispatchers.resetMain()
 
     @Test
-    fun `play(downloaded) calls Player playLocal`() = runTest {
+    fun `play(downloaded) loads a playlist pointing at the on-disk file`() = runTest {
+        // Dispatch moved to EpisodePlayDispatcher, which loads the
+        // album as a real playlist rather than a single item — that is
+        // what gives this screen lockscreen next/previous and the skip
+        // buttons. The DAO here is a no-op, so the album resolves to
+        // just this episode.
         val fakePlayer = FakeEpisodePlayer()
         val vm = buildVm(fakePlayer)
 
         val ep = makeEp(filePath = "/data/odyssey/123.mp3")
         vm.play(ep)
 
-        assertEquals(1, fakePlayer.playLocalCalls.size)
-        assertEquals(ep, fakePlayer.playLocalCalls.single())
+        val (items, startIndex) = fakePlayer.albumCalls.single()
+        assertEquals(0, startIndex)
+        assertEquals("file:///data/odyssey/123.mp3", items.single().uri)
+        assertTrue(fakePlayer.playLocalCalls.isEmpty())
         assertTrue(fakePlayer.playStreamCalls.isEmpty())
     }
 
@@ -77,18 +84,18 @@ class DownloadedVmTest {
         val ep = makeEp(filePath = null, downloadUrl = "https://cdn.example/123.mp3")
         vm.play(ep)
 
-        assertEquals(1, fakePlayer.playStreamCalls.size)
+        assertEquals("https://cdn.example/123.mp3", fakePlayer.albumCalls.single().first.single().uri)
         assertTrue(fakePlayer.playLocalCalls.isEmpty())
     }
 
     @Test
     fun `play swallows exceptions thrown by Player`() = runTest {
-        val fakePlayer = FakeEpisodePlayer(throwOnLocal = true)
+        val fakePlayer = FakeEpisodePlayer(throwOnAlbum = true)
         val vm = buildVm(fakePlayer)
 
         // Must not propagate — the user tapping play shouldn't crash.
         vm.play(makeEp(filePath = "/data/odyssey/123.mp3"))
-        assertEquals(1, fakePlayer.playLocalCalls.size)
+        assertEquals(1, fakePlayer.albumCalls.size)
     }
 
     private fun buildVm(fakePlayer: FakeEpisodePlayer): DownloadedVm {
@@ -120,15 +127,21 @@ class DownloadedVmTest {
                 catalog,
                 com.odyssey.show.YshCatalog(ctx, okhttp3.OkHttpClient()),
             ),
-            queuePrimer = com.odyssey.player.AlbumQueuePrimer(
-                dao,
-                com.odyssey.ui.AlbumNavResolver(
-                    catalog,
-                    com.odyssey.show.YshCatalog(ctx, okhttp3.OkHttpClient()),
-                ),
+            dispatcher = com.odyssey.player.EpisodePlayDispatcher(
+                fakePlayer,
+                nasClient,
                 catalog,
                 com.odyssey.show.YshCatalog(ctx, okhttp3.OkHttpClient()),
-                com.odyssey.player.AlbumQueueController(),
+                com.odyssey.player.AlbumQueuePrimer(
+                    dao,
+                    com.odyssey.ui.AlbumNavResolver(
+                        catalog,
+                        com.odyssey.show.YshCatalog(ctx, okhttp3.OkHttpClient()),
+                    ),
+                    catalog,
+                    com.odyssey.show.YshCatalog(ctx, okhttp3.OkHttpClient()),
+                    com.odyssey.player.AlbumQueueController(),
+                ),
             ),
         )
     }
@@ -151,6 +164,7 @@ class DownloadedVmTest {
 
     private class FakeEpisodePlayer(
         private val throwOnLocal: Boolean = false,
+        private val throwOnAlbum: Boolean = false,
         initialState: com.odyssey.player.PlayerStateSnapshot = com.odyssey.player.PlayerStateSnapshot.IDLE,
     ) : EpisodePlayer {
         /** Playlist loads. The dispatcher calls this instead of
@@ -159,6 +173,7 @@ class DownloadedVmTest {
         val albumCalls = mutableListOf<Pair<List<com.odyssey.player.PlayableItem>, Int>>()
         override suspend fun playAlbum(items: List<com.odyssey.player.PlayableItem>, startIndex: Int) {
             albumCalls += items to startIndex
+            if (throwOnAlbum) error("simulated playAlbum failure")
         }
 
         val playLocalCalls = mutableListOf<LocalEpisodeEntity>()
