@@ -111,7 +111,8 @@ class DownloadedVm @Inject constructor(
             )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    val completedIds = playback.observeCompletedIds()
+    val completedIds = playback.observeCompleted()
+        .map { rows -> rows.map { it.episodeId } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList<Long>())
 
     val positions = playback.observeAllPositions()
@@ -158,7 +159,7 @@ class DownloadedVm @Inject constructor(
         viewModelScope.launch {
             runCatching { java.io.File(path).delete() }
                 .onFailure { DebugLogger.w("DownloadedVm", "File.delete failed for $path", it) }
-            episodes.markUndownloaded(ep.episodeId)
+            episodes.markUndownloadedByKey(ep.providerId, ep.externalId)
         }
     }
 }

@@ -94,21 +94,18 @@ class DownloadEpisodeWorker @AssistedInject constructor(
                 }
             }
             progressTracker.clear(progressKey)
-            // markDownloaded is still AIO-only legacy. For YSH rows go
-            // through the composite-key update path (a new DAO helper
-            // would be cleaner; for now, upsert the existing entity
-            // with the new file fields filled in).
-            if (ep.providerId == "aio") {
-                episodes.markDownloaded(ep.externalId.toLong(), out.absolutePath, size, System.currentTimeMillis())
-            } else {
-                episodes.upsert(
-                    ep.copy(
-                        filePath = out.absolutePath,
-                        fileSize = size,
-                        downloadedAt = System.currentTimeMillis(),
-                    ),
-                )
-            }
+            // One composite-key update for both shows. This used to
+            // branch on providerId == "aio" and read-modify-write the
+            // whole entity for YSH, which could clobber concurrent
+            // field updates; markDownloadedByKey is the DAO helper that
+            // comment asked for.
+            episodes.markDownloadedByKey(
+                providerId = ep.providerId,
+                externalId = ep.externalId,
+                path = out.absolutePath,
+                size = size,
+                ts = System.currentTimeMillis(),
+            )
             // v0.1.72: enqueue archive for BOTH providers via the
             // provider-aware key path. The archive-service accepts YSH
             // uploads via `POST /providers/ysh/episodes` so YSH no

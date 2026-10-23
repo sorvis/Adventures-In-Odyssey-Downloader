@@ -210,8 +210,13 @@ class DownloadedVmTest {
         override suspend fun existingIds(ids: List<Long>): List<Long> = emptyList()
         override suspend fun existingKeys(providerId: String, externalIds: List<String>): List<String> = emptyList()
         override suspend fun upsert(e: LocalEpisodeEntity) {}
-        override suspend fun markDownloaded(id: Long, path: String, size: Long, ts: Long) {}
-        override suspend fun markUndownloaded(id: Long) {}
+        override suspend fun markDownloadedByKey(
+            providerId: String,
+            externalId: String,
+            path: String,
+            size: Long,
+            ts: Long,
+        ) {}
         override suspend fun markUndownloadedByKey(providerId: String, externalId: String) {}
         override suspend fun incrementRedownloadAttempts(providerId: String, externalId: String) {}
         override suspend fun resetRedownloadAttempts(providerId: String, externalId: String) {}
@@ -231,13 +236,12 @@ class DownloadedVmTest {
     }
 
     private class NoopPlaybackDao : PlaybackDao {
-        override suspend fun get(id: Long): PlaybackPositionEntity? = null
         override suspend fun getByKey(providerId: String, externalId: String): PlaybackPositionEntity? = null
         override fun observeMostRecent(): Flow<PlaybackPositionEntity?> = flowOf(null)
         override fun observeRecentlyPlayed(limit: Int): Flow<List<PlaybackPositionEntity>> = flowOf(emptyList())
         override fun observeRecentlyPlayedFor(providerId: String, limit: Int): Flow<List<PlaybackPositionEntity>> = flowOf(emptyList())
         override fun observePlayHistoryFor(providerId: String): Flow<List<PlaybackPositionEntity>> = flowOf(emptyList())
-        override fun observeCompletedIds(): Flow<List<Long>> = flowOf(emptyList())
+        override fun observeCompleted(): Flow<List<PlaybackPositionEntity>> = flowOf(emptyList())
         override fun observeAllPositions(): Flow<List<PlaybackPositionEntity>> = flowOf(emptyList())
         override suspend fun upsert(p: PlaybackPositionEntity) {}
         override suspend fun allPositions(): List<PlaybackPositionEntity> = emptyList()

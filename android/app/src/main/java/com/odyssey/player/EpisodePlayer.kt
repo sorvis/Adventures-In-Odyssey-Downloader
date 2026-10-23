@@ -31,11 +31,13 @@ interface EpisodePlayer {
         /**
          * Which provider this stream belongs to. Drives the artist
          * string in MediaMetadata so lockscreens display the correct
-         * show name. Defaults to AIO so existing AIO-only call sites
-         * (BrowseNasScreen, AlbumDetailScreen, RecentScreen,
-         * DownloadedScreen) keep working unchanged.
+         * show name, and the provider half of the media id.
+         *
+         * No default: it used to default to "aio", which is how a
+         * shared API quietly became AIO-biased. Every caller now states
+         * which show it is playing.
          */
-        providerId: String = "aio",
+        providerId: String,
         /**
          * Episode synopsis surfaced by NowPlayingScreen. Optional —
          * not every call site has it (NAS browse rows that haven't

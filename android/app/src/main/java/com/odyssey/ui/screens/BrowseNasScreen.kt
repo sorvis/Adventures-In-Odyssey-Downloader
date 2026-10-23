@@ -154,6 +154,9 @@ class BrowseVm @Inject constructor(
                 streamUrl = it.url,
                 title = ep.title,
                 description = ep.description,
+                // AIO by construction: NasMirror writes every mirrored
+                // row as ("aio", episode_id).
+                providerId = "aio",
                 externalId = ep.episode_id.toString(),
             )
         }

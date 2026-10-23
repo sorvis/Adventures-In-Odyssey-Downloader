@@ -72,7 +72,7 @@ class ResumeAfterRelaunchTest {
 
         // ---- Session 2: user reopens app, taps the row, hits play ----
         val db2 = openDb()
-        val saved = db2.playback().get(episodeId)
+        val saved = db2.playback().getByKey("aio", episodeId.toString())
         assertNotNull("position must come back after relaunch", saved)
         assertEquals(
             "resume position must be exactly what we saved",
@@ -100,7 +100,7 @@ class ResumeAfterRelaunchTest {
     @Test
     fun `episode never played has no saved position so playback would start at zero`() = runBlocking {
         // Inverse of the above — no PlaybackPositionEntity exists, so
-        // PlayerController's `playback.get(id)?.let { seekTo(...) }`
+        // PlayerController's `playback.getByKey(..)?.let { seekTo(...) }`
         // does nothing, and playback starts at 0.
         val episodeId = 999_999L
 
@@ -109,7 +109,7 @@ class ResumeAfterRelaunchTest {
         db1.close()
 
         val db2 = openDb()
-        val saved = db2.playback().get(episodeId)
+        val saved = db2.playback().getByKey("aio", episodeId.toString())
         assertEquals(null, saved)
         // PlayerController feeds the (null) offset into the helper —
         // the resume target must be 0 so playback starts at the top.
@@ -139,7 +139,7 @@ class ResumeAfterRelaunchTest {
         db1.close()
 
         val db2 = openDb()
-        val saved = db2.playback().get(episodeId)!!
+        val saved = db2.playback().getByKey("aio", episodeId.toString())!!
         assertEquals(mostRecentMs, saved.positionMs)
         assertEquals(mostRecentMs, resumeStartPositionMs(saved.positionMs))
         db2.close()

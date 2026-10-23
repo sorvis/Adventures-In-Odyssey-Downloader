@@ -142,7 +142,8 @@ class RecentVm @Inject constructor(
     // Episodes the user has finished (≥95% per OdysseyPlaybackService). Used
     // to render the "✓ played" trailing chip on the Recent list.
     val completedIds =
-        playback.observeCompletedIds()
+        playback.observeCompleted()
+            .map { rows -> rows.map { it.episodeId } }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList<Long>())
 
     /** episodeId → saved playback position. Drives the "X min left" chip. */
@@ -355,7 +356,7 @@ class RecentVm @Inject constructor(
         viewModelScope.launch {
             runCatching { java.io.File(path).delete() }
                 .onFailure { DebugLogger.w("RecentVm", "File.delete failed for $path", it) }
-            episodes.markUndownloaded(ep.episodeId)
+            episodes.markUndownloadedByKey(ep.providerId, ep.externalId)
         }
     }
 }

@@ -164,16 +164,22 @@ interface EpisodeDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(e: LocalEpisodeEntity)
 
-    @Query("UPDATE local_episodes SET filePath = :path, fileSize = :size, downloadedAt = :ts WHERE externalId = :id AND providerId = 'aio'")
-    suspend fun markDownloaded(id: Long, path: String, size: Long, ts: Long)
+    @Query("""UPDATE local_episodes SET filePath = :path, fileSize = :size, downloadedAt = :ts
+              WHERE providerId = :providerId AND externalId = :externalId""")
+    suspend fun markDownloadedByKey(
+        providerId: String,
+        externalId: String,
+        path: String,
+        size: Long,
+        ts: Long,
+    )
 
     /**
      * Reverse of markDownloaded: clear filePath/fileSize/downloadedAt so
      * the row falls back to streamable. Used by PlaybackRecovery when a
      * downloaded file fails ExoPlayer's parser.
      */
-    @Query("UPDATE local_episodes SET filePath = NULL, fileSize = 0, downloadedAt = NULL WHERE externalId = :id AND providerId = 'aio'")
-    suspend fun markUndownloaded(id: Long)
+
 
     /**
      * Provider-aware version of markUndownloaded (v0.1.74). Used by
@@ -353,13 +359,6 @@ interface EpisodeDao {
 
 @Dao
 interface PlaybackDao {
-    /**
-     * AIO-only legacy lookup keyed by oneplace CMS id (Long). YSH-aware
-     * callers should use `getByKey(providerId, externalId)`.
-     */
-    @Query("SELECT * FROM playback_positions WHERE externalId = :id AND providerId = 'aio'")
-    suspend fun get(id: Long): PlaybackPositionEntity?
-
     @Query("SELECT * FROM playback_positions WHERE providerId = :providerId AND externalId = :externalId")
     suspend fun getByKey(providerId: String, externalId: String): PlaybackPositionEntity?
 
@@ -402,12 +401,18 @@ interface PlaybackDao {
     fun observePlayHistoryFor(providerId: String): Flow<List<PlaybackPositionEntity>>
 
     /**
-     * Completed-ids stream. AIO-only legacy shape — coerces externalId
-     * to Long (always works for AIO; YSH externalIds aren't numeric and
-     * are filtered out by the WHERE clause).
+     * Every finished episode, any show. Drives the "✓ played" chips.
+     *
+     * Returns rows rather than ids: the old shape was
+     * `SELECT CAST(externalId AS INTEGER) ... AND providerId = 'aio'`,
+     * which silently excluded every YSH episode (their external ids are
+     * not numeric, and the WHERE clause dropped them anyway) — so a
+     * finished Your Story Hour episode never showed as played. Callers
+     * map to [PlaybackPositionEntity.episodeId], which derives the same
+     * Long the row UIs key on.
      */
-    @Query("SELECT CAST(externalId AS INTEGER) FROM playback_positions WHERE completedAt IS NOT NULL AND providerId = 'aio'")
-    fun observeCompletedIds(): Flow<List<Long>>
+    @Query("SELECT * FROM playback_positions WHERE completedAt IS NOT NULL")
+    fun observeCompleted(): Flow<List<PlaybackPositionEntity>>
 
     /** Used by the row UI to show "X min left" on episodes the user
      *  has started but not finished. */

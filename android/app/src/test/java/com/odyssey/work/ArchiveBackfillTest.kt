@@ -230,8 +230,13 @@ class ArchiveBackfillTest {
         override suspend fun existingIds(ids: List<Long>): List<Long> = emptyList()
         override suspend fun existingKeys(providerId: String, externalIds: List<String>): List<String> = emptyList()
         override suspend fun upsert(e: LocalEpisodeEntity) {}
-        override suspend fun markDownloaded(id: Long, path: String, size: Long, ts: Long) {}
-        override suspend fun markUndownloaded(id: Long) {}
+        override suspend fun markDownloadedByKey(
+            providerId: String,
+            externalId: String,
+            path: String,
+            size: Long,
+            ts: Long,
+        ) {}
         override suspend fun markUndownloadedByKey(providerId: String, externalId: String) {}
         override suspend fun incrementRedownloadAttempts(providerId: String, externalId: String) {}
         override suspend fun resetRedownloadAttempts(providerId: String, externalId: String) {}

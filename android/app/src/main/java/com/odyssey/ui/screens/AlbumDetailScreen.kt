@@ -108,8 +108,8 @@ class AlbumDetailVm @Inject constructor(
      * the album detail rows so a user mid-binge can quickly see
      * what's left.
      */
-    val completedIds = playback.observeCompletedIds()
-        .map { it.toSet() }
+    val completedIds = playback.observeCompleted()
+        .map { rows -> rows.mapTo(mutableSetOf()) { it.episodeId } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptySet())
 
     /**
