@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Odyssey — Recently aired mockup</title>
+<style>
+  :root{
+    --bg:#f6f4f2; --surf:#fffbff; --on:#1c1b1e; --on-var:#49454e;
+    --prim:#4b5c92; --prim-c:#dce1ff; --on-prim-c:#001944;
+    --outline:#cac4cf; --err:#ba1a1a;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:32px 20px 64px;background:var(--bg);color:var(--on);
+       font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  h1{font-size:22px;margin:0 0 4px}
+  .sub{color:var(--on-var);margin:0 0 28px;max-width:70ch}
+  .row{display:flex;gap:28px;flex-wrap:wrap;align-items:flex-start}
+  .col{flex:0 0 auto}
+  .cap{font-weight:600;margin:0 0 2px}
+  .capsub{color:var(--on-var);font-size:13px;margin:0 0 10px;max-width:34ch}
+  .phone{width:340px;height:700px;background:var(--surf);border:1px solid var(--outline);
+         border-radius:26px;overflow:hidden;display:flex;flex-direction:column;
+         box-shadow:0 2px 10px rgba(0,0,0,.09)}
+  .appbar{padding:14px 16px;font-size:20px;font-weight:600;display:flex;
+          justify-content:space-between;align-items:center;border-bottom:1px solid var(--outline)}
+  .appbar .acts{font-size:13px;color:var(--prim);font-weight:500;display:flex;gap:14px}
+  .back{font-weight:400;color:var(--on-var);margin-right:8px}
+  .scroll{flex:1;overflow:hidden;padding:8px 0}
+  .sect{padding:10px 16px 6px;font-size:13px;font-weight:600;color:var(--on-var);
+        display:flex;justify-content:space-between;align-items:baseline}
+  .seeall{color:var(--prim);font-weight:600;font-size:13px}
+  .card{margin:6px 12px;padding:12px 14px;border-radius:14px;background:var(--surf);
+        border:1px solid var(--outline)}
+  .card.hero{background:var(--prim-c);border-color:transparent}
+  .over{font-size:11px;letter-spacing:.4px;text-transform:uppercase;color:var(--on-prim-c);
+        opacity:.75;margin-bottom:3px}
+  .title{font-weight:600;margin-bottom:3px}
+  .meta{font-size:13px;color:var(--on-var);display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .hero .meta,.hero .title{color:var(--on-prim-c)}
+  .chip{font-size:11px;padding:2px 8px;border-radius:999px;background:#eceef4;
+        color:var(--on-var);border:1px solid var(--outline)}
+  .chip.done{background:#d7f0d9;border-color:#b6dcbb;color:#14521d}
+  .chip.show{background:#efe2f7;border-color:#dcc8e8;color:#4a2a57}
+  .bar{height:3px;border-radius:2px;background:var(--outline);margin-top:9px;overflow:hidden}
+  .bar > i{display:block;height:100%;background:var(--prim)}
+  .nav{display:flex;border-top:1px solid var(--outline);padding:7px 0 10px;background:var(--surf)}
+  .nav div{flex:1;text-align:center;font-size:11px;color:var(--on-var)}
+  .nav div.on{color:var(--prim);font-weight:600}
+  .nav .ic{display:block;font-size:17px;margin-bottom:2px}
+  .empty{padding:60px 28px;text-align:center}
+  .empty .eh{font-size:17px;font-weight:600;margin-bottom:8px}
+  .empty .eb{color:var(--on-var);font-size:14px}
+  .daysep{padding:12px 16px 4px;font-size:12px;font-weight:700;color:var(--on-var);
+          letter-spacing:.3px}
+  .note{margin-top:10px;font-size:12px;color:var(--on-var);max-width:34ch}
+  .note b{color:var(--on)}
+</style>
+<style>
+  .seg{display:flex;margin:10px 12px 4px;border:1px solid var(--outline);border-radius:999px;overflow:hidden}
+  .seg div{flex:1;text-align:center;padding:7px 0;font-size:13px;font-weight:600;color:var(--on-var)}
+  .seg div.on{background:var(--prim-c);color:var(--on-prim-c)}
+  .dl{float:right;color:var(--prim);font-weight:700;font-size:17px;line-height:1}
+  .chip.new{background:#ffe3c2;border-color:#f0c48d;color:#6b3b00}
+  .reco{display:inline-block;margin-left:6px;font-size:11px;font-weight:700;
+        padding:2px 8px;border-radius:999px;background:#d7f0d9;color:#14521d;
+        border:1px solid #b6dcbb;vertical-align:middle}
+</style>
+</head>
+<body>
+<h1>Odyssey &mdash; "recently aired" screen</h1>
+<p class="sub">The data already exists: the Recent tab's main list is every episode of the
+active show sorted by parsed air date, newly-ingested rows included. The problem is that it is
+topped by Continue-listening and a Recently-played strip, and the list below mixes this week's
+ingests with the whole back catalogue &mdash; so "what aired recently" is not distinguishable.
+There are already <b>five</b> bottom tabs and five is the practical maximum, so none of these
+options adds a sixth.</p>
+<div class="row">
+<div class="col"><p class="cap">A &middot; Segmented toggle in Recent<span class="reco">recommended</span></p><p class="capsub">One tab, two explicit views. Aired is the default.</p><div class="phone"><div class="appbar">Recent<span class="acts">AIO &#9662;</span></div><div class="scroll"><div class="card hero"><div class="over">Continue listening</div><div class="title">Episode 942</div><div class="meta">12:04 left &middot; Album 71</div><div class="bar"><i style="width:52%"></i></div></div><div class="seg"><div class="on">Aired</div><div>Played</div></div><div class="daysep">THIS WEEK</div><div class="card"><span class="dl">&#8595;</span><div class="title">Episode 948</div><div class="meta">Nov 14, 2026<span class="chip new">new</span></div></div><div class="card"><span class="dl">&#8595;</span><div class="title">Episode 947</div><div class="meta">Nov 12, 2026<span class="chip new">new</span></div></div><div class="daysep">EARLIER THIS MONTH</div><div class="card"><div class="title">Episode 946</div><div class="meta">Nov 7, 2026<span class="chip done">&#10003; played</span></div></div><div class="card"><span class="dl">&#8595;</span><div class="title">Episode 945</div><div class="meta">Nov 5, 2026</div><div class="bar"><i style="width:38%"></i></div></div><div class="card"><div class="title">Episode 944</div><div class="meta">Nov 1, 2026</div></div></div><div class="nav"><div class="on"><span class="ic">&#8962;</span>Recent</div><div class=""><span class="ic">&#9834;</span>Albums</div><div class=""><span class="ic">&#8595;</span>Library</div><div class=""><span class="ic">&#9729;</span>Sync</div><div class=""><span class="ic">&#9881;</span>Settings</div></div></div><p class="note"><b>Why:</b> makes the distinction you were missing explicit, costs no tab, and keeps Continue-listening one tap away. <b>Cost:</b> the Played view duplicates the existing Recent History screen &mdash; that screen would become the toggle's Played view rather than a separate destination.</p></div>
+<div class="col"><p class="cap">B &middot; Recent tab becomes "New"</p><p class="capsub">Pure air-date list. History moves behind a top-bar icon.</p><div class="phone"><div class="appbar">New<span class="acts">&#8986; History &nbsp; AIO &#9662;</span></div><div class="scroll"><div class="card hero"><div class="over">Continue listening</div><div class="title">Episode 942</div><div class="meta">12:04 left &middot; Album 71</div><div class="bar"><i style="width:52%"></i></div></div><div class="daysep">THIS WEEK</div><div class="card"><span class="dl">&#8595;</span><div class="title">Episode 948</div><div class="meta">Nov 14, 2026<span class="chip new">new</span></div></div><div class="card"><span class="dl">&#8595;</span><div class="title">Episode 947</div><div class="meta">Nov 12, 2026<span class="chip new">new</span></div></div><div class="daysep">EARLIER THIS MONTH</div><div class="card"><div class="title">Episode 946</div><div class="meta">Nov 7, 2026<span class="chip done">&#10003; played</span></div></div><div class="card"><span class="dl">&#8595;</span><div class="title">Episode 945</div><div class="meta">Nov 5, 2026</div><div class="bar"><i style="width:38%"></i></div></div><div class="card"><div class="title">Episode 944</div><div class="meta">Nov 1, 2026</div></div></div><div class="nav"><div class="on"><span class="ic">&#8962;</span>Recent</div><div class=""><span class="ic">&#9834;</span>Albums</div><div class=""><span class="ic">&#8595;</span>Library</div><div class=""><span class="ic">&#9729;</span>Sync</div><div class=""><span class="ic">&#9881;</span>Settings</div></div></div><p class="note"><b>Why:</b> the cleanest home screen &mdash; the tab means one thing. <b>Cost:</b> play history goes from always-visible to one tap behind an icon, and the Recently-played strip you asked for on 2026-06-14 leaves the home tab.</p></div>
+<div class="col"><p class="cap">C &middot; Separate sub-screen</p><p class="capsub">Recent stays exactly as it is; new screen opens from it.</p><div class="phone"><div class="appbar"><span><span class="back">&#8592;</span>Recently aired</span><span class="acts">AIO &#9662;</span></div><div class="scroll"><div class="daysep">THIS WEEK</div><div class="card"><span class="dl">&#8595;</span><div class="title">Episode 948</div><div class="meta">Nov 14, 2026<span class="chip new">new</span></div></div><div class="card"><span class="dl">&#8595;</span><div class="title">Episode 947</div><div class="meta">Nov 12, 2026<span class="chip new">new</span></div></div><div class="daysep">EARLIER THIS MONTH</div><div class="card"><div class="title">Episode 946</div><div class="meta">Nov 7, 2026<span class="chip done">&#10003; played</span></div></div><div class="card"><span class="dl">&#8595;</span><div class="title">Episode 945</div><div class="meta">Nov 5, 2026</div><div class="bar"><i style="width:38%"></i></div></div><div class="card"><div class="title">Episode 944</div><div class="meta">Nov 1, 2026</div></div></div></div><p class="note"><b>Why:</b> lowest risk, changes nothing you already rely on. <b>Cost:</b> the home tab still reads as history, which is the actual complaint &mdash; this adds a place to look rather than fixing where you looked first.</p></div>
+</div>
+<p class="sub" style="margin-top:26px">Shared across all three: episodes group under
+<b>THIS WEEK</b> / <b>EARLIER THIS MONTH</b> headers; an amber <b>new</b> chip marks episodes
+ingested since you last opened the view; the <b>&#8595;</b> affordance is the shared
+EpisodeAcquirer, so it pulls from the NAS when the server has it and the CDN otherwise.
+Episodes already on the phone keep their played chip and progress bar. Titles here are
+placeholders.</p>
+<p class="sub">One dependency worth flagging: this screen is only as good as ingest. If
+DailyCheckWorker is not pulling new episodes it will render empty whichever option we build,
+so it is worth confirming there are recent air dates in the DB before I write Compose.</p>
+</body></html>
