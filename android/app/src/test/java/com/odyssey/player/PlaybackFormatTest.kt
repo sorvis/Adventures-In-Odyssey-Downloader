@@ -148,4 +148,79 @@ class PlaybackFormatTest {
         assertEquals("1hr 5min", formatTotalDuration(65L * 60_000L))
         assertEquals("2hr 30min", formatTotalDuration((2L * 60L + 30L) * 60_000L))
     }
+
+    // ----- isPlayedThrough (regression guard, 2026-11-14) -------------
+
+    private val oneMinute = 60_000L
+
+    @Test
+    fun `a completed episode is played through even though it stores position zero`() {
+        // THE regression. Since v0.1.91 a finished episode persists
+        // position 0 rather than its end position, so the
+        // remaining-time rule alone computes remaining == the whole
+        // episode and never sweeps. PlayedThroughSweep then stopped
+        // freeing space, and new downloads stopped displacing played
+        // ones.
+        assertTrue(
+            isPlayedThrough(
+                completedAt = 1_700_000_000_000L,
+                positionMs = 0L,
+                durationMs = 25 * 60_000L,
+                thresholdMs = oneMinute,
+            ),
+        )
+    }
+
+    @Test
+    fun `completedAt wins even when the duration is unknown`() {
+        // A row flagged complete is complete; no arithmetic required.
+        assertTrue(
+            isPlayedThrough(
+                completedAt = 1L,
+                positionMs = 0L,
+                durationMs = 0L,
+                thresholdMs = oneMinute,
+            ),
+        )
+    }
+
+    @Test
+    fun `an un-flagged episode within the threshold still counts`() {
+        // Second chance for rows killed mid-episode before completedAt
+        // was written.
+        assertTrue(
+            isPlayedThrough(
+                completedAt = null,
+                positionMs = 25 * 60_000L - 30_000L,
+                durationMs = 25 * 60_000L,
+                thresholdMs = oneMinute,
+            ),
+        )
+    }
+
+    @Test
+    fun `an episode with real time left is not played through`() {
+        assertFalse(
+            isPlayedThrough(
+                completedAt = null,
+                positionMs = 10 * 60_000L,
+                durationMs = 25 * 60_000L,
+                thresholdMs = oneMinute,
+            ),
+        )
+    }
+
+    @Test
+    fun `unknown duration without a completed flag is not played through`() {
+        // Never sweep on the strength of arithmetic over a zero
+        // duration — that would ghost a just-started episode.
+        assertFalse(
+            isPlayedThrough(
+                completedAt = null,
+                positionMs = 0L,
+                durationMs = 0L,
+                thresholdMs = oneMinute,
+            ),
+        )
+    }
 }

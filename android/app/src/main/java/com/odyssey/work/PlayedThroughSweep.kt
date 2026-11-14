@@ -53,9 +53,16 @@ class PlayedThroughSweep @Inject constructor(
         var pruned = 0
         for (ep in candidates) {
             val pos = playback.getByKey(ep.providerId, ep.externalId) ?: continue
-            if (pos.durationMs <= 0L) continue
+            if (!com.odyssey.player.isPlayedThrough(
+                    completedAt = pos.completedAt,
+                    positionMs = pos.positionMs,
+                    durationMs = pos.durationMs,
+                    thresholdMs = thresholdMs,
+                )
+            ) {
+                continue
+            }
             val remaining = pos.durationMs - pos.positionMs
-            if (remaining > thresholdMs) continue
 
             DebugLogger.i(
                 TAG,

@@ -40,6 +40,42 @@ fun shouldMarkComplete(
 ): Boolean = durationMs > 0 && positionMs >= durationMs * threshold
 
 /**
+ * Has the user effectively finished this episode, such that its local
+ * audio can be freed (the row stays streamable from the NAS)?
+ *
+ * [completedAt] is checked FIRST and is the authoritative signal. The
+ * remaining-time rule below cannot stand alone any more: since v0.1.91
+ * a completed episode persists position 0 rather than its end position
+ * (see positionToPersist), so `durationMs - positionMs` for a finished
+ * episode is the WHOLE episode, never within the threshold. That broke
+ * PlayedThroughSweep silently — finished episodes stopped being swept,
+ * so new downloads no longer displaced played ones. Reported
+ * 2026-11-14: "new episodes don't bump out older played episodes that
+ * are backed up."
+ *
+ * The remaining-time rule is kept as a second chance for rows that
+ * stopped just short of the completion threshold, or whose completedAt
+ * was never written (a kill mid-episode).
+ *
+ * Note this makes the sweep slightly more eager than the original
+ * 60-second design intent, because completedAt fires at 95% — about
+ * 75 s from the end of a 25-minute episode. That is a deliberate
+ * trade: the audio remains on the NAS and one tap away, so the cost of
+ * sweeping a minute early is far lower than the cost of never
+ * sweeping at all.
+ */
+fun isPlayedThrough(
+    completedAt: Long?,
+    positionMs: Long,
+    durationMs: Long,
+    thresholdMs: Long,
+): Boolean {
+    if (completedAt != null) return true
+    if (durationMs <= 0L) return false
+    return durationMs - positionMs <= thresholdMs
+}
+
+/**
  * Total episode length for the row trailing slot when the user
  * hasn't started playing yet — "25 min", "1hr 12min", or null when
  * duration isn't known. Pairs with formatRemaining: that one shows
