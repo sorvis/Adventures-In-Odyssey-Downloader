@@ -6,6 +6,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import com.odyssey.data.local.PlaybackPositionEntity
+import com.odyssey.data.local.LocalEpisodeEntity
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ElevatedCard
@@ -98,57 +101,80 @@ fun RecentHistoryScreen(
                 .padding(padding)
                 .testTag("history-list"),
         ) {
-            for ((bucket, rows) in grouped) {
-                item(key = "hdr-${bucket.name}") {
-                    Text(
-                        text = bucket.label,
-                        style = MaterialTheme.typography.titleSmall,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                    )
-                }
-                items(rows, key = { "h-${it.first.providerId}-${it.first.externalId}" }) { (ep, pos) ->
-                    val isDone = ep.episodeId in completed || pos.completedAt != null
-                    ElevatedCard(
-                        onClick = { vm.play(ep) },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 4.dp)
-                            .testTag("history-row-${ep.externalId}"),
-                    ) {
-                        ListItem(
-                            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                            headlineContent = { Text(ep.title) },
-                            supportingContent = {
-                                Text(
-                                    text = buildString {
-                                        append(formatRelativePlayedAt(pos.updatedAt, now))
-                                        append(" · ")
-                                        append(
-                                            if (isDone) {
-                                                "played"
-                                            } else {
-                                                formatResumeSubtitle(pos.positionMs, pos.durationMs)
-                                            },
-                                        )
+            playHistorySection(
+                grouped = grouped,
+                completed = completed,
+                nowMs = now,
+                onPlay = { vm.play(it) },
+            )
+        }
+    }
+}
+
+/**
+ * The grouped play-history rows, as a LazyListScope section.
+ *
+ * Extracted so the Recent tab's "Played" view and this standalone
+ * screen render the same list from one implementation. Before the
+ * Aired/Played toggle landed, the Recent tab had its own cut-down
+ * "Recently played" strip instead, which was a third rendering of the
+ * same data.
+ */
+internal fun LazyListScope.playHistorySection(
+    grouped: List<Pair<PlayedBucket, List<Pair<LocalEpisodeEntity, PlaybackPositionEntity>>>>,
+    completed: Set<Long>,
+    nowMs: Long,
+    onPlay: (LocalEpisodeEntity) -> Unit,
+) {
+    for ((bucket, rows) in grouped) {
+        item(key = "hdr-${bucket.name}") {
+            Text(
+                text = bucket.label,
+                style = MaterialTheme.typography.titleSmall,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            )
+        }
+        items(rows, key = { "h-${it.first.providerId}-${it.first.externalId}" }) { (ep, pos) ->
+            val isDone = ep.episodeId in completed || pos.completedAt != null
+            ElevatedCard(
+                onClick = { onPlay(ep) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 4.dp)
+                    .testTag("history-row-${ep.externalId}"),
+            ) {
+                ListItem(
+                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                    headlineContent = { Text(ep.title) },
+                    supportingContent = {
+                        Text(
+                            text = buildString {
+                                append(formatRelativePlayedAt(pos.updatedAt, nowMs))
+                                append(" \u00b7 ")
+                                append(
+                                    if (isDone) {
+                                        "played"
+                                    } else {
+                                        formatResumeSubtitle(pos.positionMs, pos.durationMs)
                                     },
                                 )
                             },
                         )
-                        // Only meaningful mid-episode; a finished row's bar
-                        // pinned at 100% is noise.
-                        if (!isDone && pos.durationMs > 0L) {
-                            LinearProgressIndicator(
-                                progress = {
-                                    (pos.positionMs.toFloat() / pos.durationMs.toFloat())
-                                        .coerceIn(0f, 1f)
-                                },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 16.dp)
-                                    .height(3.dp),
-                            )
-                        }
-                    }
+                    },
+                )
+                // Only meaningful mid-episode; a finished row's bar
+                // pinned at 100% is noise.
+                if (!isDone && pos.durationMs > 0L) {
+                    LinearProgressIndicator(
+                        progress = {
+                            (pos.positionMs.toFloat() / pos.durationMs.toFloat())
+                                .coerceIn(0f, 1f)
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp)
+                            .height(3.dp),
+                    )
                 }
             }
         }

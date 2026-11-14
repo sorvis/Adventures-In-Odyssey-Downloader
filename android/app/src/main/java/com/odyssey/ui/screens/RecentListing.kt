@@ -225,3 +225,85 @@ fun <T> groupPlaysByDay(
         byBucket[bucket]?.let { bucket to it }
     }
 }
+
+/**
+ * Recency buckets for the Recent tab's "Aired" view.
+ *
+ * The complaint this answers (2026-11-14): the tab already listed every
+ * episode of the active show in air-date order, but with this week's
+ * ingests and the whole back catalogue in one undifferentiated scroll,
+ * "what aired recently" could not be picked out. Headers do that work.
+ */
+enum class AiredBucket(val label: String) {
+    THIS_WEEK("This week"),
+    THIS_MONTH("Earlier this month"),
+    EARLIER("Earlier"),
+}
+
+/**
+ * Which bucket an episode airing at [airDateMs] falls into.
+ *
+ * Calendar-based in [zone], like [playedBucket] — "this week" means the
+ * last seven calendar days, not 604800000 milliseconds, so an episode
+ * that aired seven mornings ago does not slide into the next bucket
+ * partway through today.
+ *
+ * A future air date (a provider publishing ahead of broadcast) counts
+ * as this week rather than falling through to EARLIER.
+ */
+fun airedBucket(
+    airDateMs: Long,
+    nowMs: Long,
+    // No default. A ZoneId.systemDefault() default is both untestable
+    // (its value differs per machine, and this dev box runs UTC while
+    // the user is Eastern) and invisible at the call site, which is a
+    // bad combination for date bucketing.
+    zone: ZoneId,
+): AiredBucket {
+    val today = Instant.ofEpochMilli(nowMs).atZone(zone).toLocalDate()
+    val aired = Instant.ofEpochMilli(airDateMs).atZone(zone).toLocalDate()
+    return when {
+        !aired.isBefore(today.minusDays(6)) -> AiredBucket.THIS_WEEK
+        aired.year == today.year && aired.month == today.month -> AiredBucket.THIS_MONTH
+        else -> AiredBucket.EARLIER
+    }
+}
+
+/**
+ * Group an already-air-date-sorted list under its buckets, preserving
+ * the incoming order and emitting only non-empty buckets.
+ *
+ * Episodes with an unparseable air date ([parseAirDateMillis] == 0)
+ * land in EARLIER rather than being dropped: a row with a bad date is
+ * still a real episode the user may own, and silently hiding it is how
+ * the old backup-ghost pile-up became confusing.
+ */
+fun <T> groupByAiredBucket(
+    items: List<T>,
+    airDateMs: (T) -> Long,
+    nowMs: Long,
+    zone: ZoneId,
+): List<Pair<AiredBucket, List<T>>> {
+    val byBucket = items.groupBy { item ->
+        val ms = airDateMs(item)
+        if (ms == 0L) AiredBucket.EARLIER else airedBucket(ms, nowMs, zone)
+    }
+    return AiredBucket.entries.mapNotNull { bucket ->
+        byBucket[bucket]?.takeIf { it.isNotEmpty() }?.let { bucket to it }
+    }
+}
+
+/**
+ * Whether an episode airing at [airDateMs] is new since the user last
+ * opened the Aired view at [seenAtMs].
+ *
+ * Keyed on air date rather than an ingest timestamp because the episode
+ * table has no "first seen" column — adding one would mean a schema
+ * migration, and "aired since I last looked" is the question the chip
+ * is actually answering anyway.
+ *
+ * A [seenAtMs] of 0 means "never opened it", which must NOT light up
+ * the entire back catalogue, so nothing is new on a first visit.
+ */
+fun isNewlyAired(airDateMs: Long, seenAtMs: Long): Boolean =
+    seenAtMs > 0L && airDateMs > seenAtMs

@@ -280,6 +280,27 @@ class SettingsRepo @Inject constructor(@ApplicationContext private val ctx: Cont
         ctx.dataStore.edit { it[lastSeenKey(providerId)] = externalId }
 
     // -----------------------------------------------------------------
+    // "New since you last looked" marker for the Recent tab's Aired
+    // view. Per provider, because flipping the show switcher changes
+    // what that view lists.
+    // -----------------------------------------------------------------
+
+    private fun airedSeenAtKey(providerId: String) =
+        longPreferencesKey("aired_seen_at_$providerId")
+
+    /**
+     * When the user last opened the Aired view for [providerId], or 0
+     * if never. Zero deliberately means "no chips": treating a first
+     * visit as "everything is new" would light up the whole back
+     * catalogue (see isNewlyAired).
+     */
+    fun airedSeenAtFor(providerId: String): Flow<Long> =
+        ctx.dataStore.data.map { it[airedSeenAtKey(providerId)] ?: 0L }
+
+    suspend fun setAiredSeenAt(providerId: String, atMs: Long) =
+        ctx.dataStore.edit { it[airedSeenAtKey(providerId)] = atMs }
+
+    // -----------------------------------------------------------------
     // Active-show + per-provider enable (step 9 of YSH plan).
     //
     // activeShow is purely UX state — which show the user is browsing

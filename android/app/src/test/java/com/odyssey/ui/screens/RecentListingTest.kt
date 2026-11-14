@@ -3,6 +3,7 @@ package com.odyssey.ui.screens
 import java.time.LocalDateTime
 import java.time.ZoneId
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -553,5 +554,119 @@ class RecentListingTest {
         )
         assertEquals(1, grouped.size)
         assertEquals(PlayedBucket.TODAY, grouped.single().first)
+    }
+
+    // ----- Aired view: recency buckets (2026-11-14) -------------------
+    //
+    // `utc` (declared above) is used throughout rather than
+    // systemDefault(): the dev box runs UTC while Steven is Eastern, so
+    // a test leaning on the default zone would pass or fail depending
+    // on where it ran.
+
+    /** Start-of-day epoch millis for an ISO date, in UTC. */
+    private fun startOfDay(iso: String): Long =
+        java.time.LocalDate.parse(iso).atStartOfDay(utc).toInstant().toEpochMilli()
+
+    @Test
+    fun `an episode airing today is in this week`() {
+        val today = startOfDay("2026-11-14")
+        assertEquals(AiredBucket.THIS_WEEK, airedBucket(today, today, utc))
+    }
+
+    @Test
+    fun `this week spans the last seven calendar days inclusive`() {
+        // Six days back is still "this week"; seven is not. Calendar
+        // days, so the boundary does not drift partway through today.
+        val ref = startOfDay("2026-11-14")
+        assertEquals(AiredBucket.THIS_WEEK, airedBucket(startOfDay("2026-11-08"), ref, utc))
+        assertEquals(AiredBucket.THIS_MONTH, airedBucket(startOfDay("2026-11-07"), ref, utc))
+    }
+
+    @Test
+    fun `a future air date counts as this week rather than falling through`() {
+        // Providers sometimes publish ahead of broadcast; such an
+        // episode belongs at the top, not in EARLIER.
+        val ref = startOfDay("2026-11-14")
+        assertEquals(AiredBucket.THIS_WEEK, airedBucket(startOfDay("2026-11-20"), ref, utc))
+    }
+
+    @Test
+    fun `earlier in the same month is its own bucket`() {
+        val ref = startOfDay("2026-11-14")
+        assertEquals(AiredBucket.THIS_MONTH, airedBucket(startOfDay("2026-11-01"), ref, utc))
+    }
+
+    @Test
+    fun `the previous month is earlier, even when only days away`() {
+        // Oct 31 is two weeks from Nov 14 but a different calendar
+        // month, so "earlier this month" would be a lie.
+        val ref = startOfDay("2026-11-14")
+        assertEquals(AiredBucket.EARLIER, airedBucket(startOfDay("2026-10-31"), ref, utc))
+        assertEquals(AiredBucket.EARLIER, airedBucket(startOfDay("2025-11-14"), ref, utc))
+    }
+
+    @Test
+    fun `aired grouping keeps incoming order and omits empty buckets`() {
+        val ref = startOfDay("2026-11-14")
+        val rows = listOf(
+            "a" to startOfDay("2026-11-14"),
+            "b" to startOfDay("2026-11-12"),
+            "c" to startOfDay("2026-10-02"),
+        )
+        val grouped = groupByAiredBucket(rows, airDateMs = { it.second }, nowMs = ref, zone = utc)
+
+        // No THIS_MONTH rows exist, so that bucket must not appear.
+        assertEquals(listOf(AiredBucket.THIS_WEEK, AiredBucket.EARLIER), grouped.map { it.first })
+        assertEquals(listOf("a", "b"), grouped.first().second.map { it.first })
+        assertEquals(listOf("c"), grouped.last().second.map { it.first })
+    }
+
+    @Test
+    fun `an unparseable air date lands in earlier rather than vanishing`() {
+        // parseAirDateMillis returns 0 for a date it cannot read. The
+        // row is still a real episode the user may own; dropping it
+        // silently is how the old backup-ghost pile-up got confusing.
+        val grouped = groupByAiredBucket(
+            listOf("bad" to 0L),
+            airDateMs = { it.second },
+            nowMs = startOfDay("2026-11-14"),
+            zone = utc,
+        )
+        assertEquals(listOf(AiredBucket.EARLIER), grouped.map { it.first })
+        assertEquals("bad", grouped.single().second.single().first)
+    }
+
+    @Test
+    fun `nothing is newly aired on a first ever visit`() {
+        // seenAt == 0 means the view has never been opened. Treating
+        // that as "everything is new" would light up the whole back
+        // catalogue, which is worse than no chips at all.
+        assertFalse(isNewlyAired(airDateMs = startOfDay("2026-11-14"), seenAtMs = 0L))
+    }
+
+    @Test
+    fun `an episode that aired after the last visit is new`() {
+        assertTrue(
+            isNewlyAired(
+                airDateMs = startOfDay("2026-11-14"),
+                seenAtMs = startOfDay("2026-11-10"),
+            ),
+        )
+    }
+
+    @Test
+    fun `an episode that aired before or at the last visit is not new`() {
+        assertFalse(
+            isNewlyAired(
+                airDateMs = startOfDay("2026-11-09"),
+                seenAtMs = startOfDay("2026-11-10"),
+            ),
+        )
+        assertFalse(
+            isNewlyAired(
+                airDateMs = startOfDay("2026-11-10"),
+                seenAtMs = startOfDay("2026-11-10"),
+            ),
+        )
     }
 }

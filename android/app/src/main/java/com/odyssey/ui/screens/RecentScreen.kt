@@ -21,6 +21,7 @@ import androidx.compose.material3.*
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.ui.Alignment
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.ExperimentalComposeUiApi
@@ -372,7 +373,6 @@ fun RecentScreen(
     val items by vm.items.collectAsState()
     val resume by vm.resume.collectAsState()
     val resumeEp by vm.resumeEpisode.collectAsState()
-    val recentlyPlayed by vm.recentlyPlayed.collectAsState()
     val completedIds by vm.completedIds.collectAsState()
     val positions by vm.positions.collectAsState()
     val showWarning by vm.showMeteredWarning.collectAsState()
@@ -382,6 +382,29 @@ fun RecentScreen(
     val dailyCheck by vm.dailyCheck.collectAsState()
     val isRefreshing = dailyCheck.active
     var expandedIds by remember { mutableStateOf(setOf<Long>()) }
+    val history by vm.playHistory.collectAsState()
+    // Survives rotation and process death so flipping to Played and
+    // backgrounding the app does not silently reset the view.
+    var showPlayed by rememberSaveable { mutableStateOf(false) }
+
+    // Sampled once per list render rather than per row, so every
+    // relative time and bucket boundary in one frame agrees.
+    val now = remember(items, history) { System.currentTimeMillis() }
+    // Passed explicitly rather than defaulted inside the bucketing
+    // helpers: a ZoneId.systemDefault() default is invisible at the call
+    // site and untestable (this dev box is UTC, the user is Eastern).
+    val zone = remember { java.time.ZoneId.systemDefault() }
+    val airedGroups = remember(items, now, zone) {
+        groupByAiredBucket(
+            items,
+            airDateMs = { parseAirDateMillis(it.airDate) },
+            nowMs = now,
+            zone = zone,
+        )
+    }
+    val playedGroups = remember(history, now, zone) {
+        groupPlaysByDay(history, playedAt = { it.second.updatedAt }, nowMs = now, zone = zone)
+    }
 
     // Visible confirmation that Refresh fired AND completed. The
     // PullToRefreshBox spinner above shows while the worker is running,
@@ -496,149 +519,129 @@ fun RecentScreen(
                     }
                 }
             }
-            // Inline "Recently played" strip. Appears between the
-            // Continue-listening card and the main daily-check list when
-            // the user has actually played something other than the
-            // single most-recent (which already lives in the card above).
-            // Scoped to the active show — the VM filters `eps` by
-            // `providerId == settings.activeShow` so flipping the
-            // dropdown to YSH never surfaces AIO plays here.
-            if (recentlyPlayed.isNotEmpty()) {
-                item {
-                    // "See all" opens the uncapped history. Gated on the
-                    // strip being non-empty, which is also the only state
-                    // where it could lead anywhere interesting — the strip
-                    // is the first 5 rows of the same list.
-                    Row(
+            // Aired / Played toggle.
+            //
+            // The tab used to stack a Continue-listening card, a
+            // "Recently played" strip and then an air-date list, which
+            // made the whole thing read as history: "recent is just a
+            // history of what I've played but I can't see the recently
+            // aired episodes" (2026-11-14). Two explicit views fix that
+            // without a sixth bottom tab, which the nav bar has no room
+            // for.
+            //
+            // The Played view REPLACES the old strip rather than sitting
+            // beside it — it is the same list the standalone Recent
+            // History screen renders (shared playHistorySection), with
+            // no row cap, so keeping both would be a third rendering of
+            // one dataset.
+            item(key = "recent-view-toggle") {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    FilterChip(
+                        selected = !showPlayed,
+                        onClick = { showPlayed = false },
+                        label = { Text("Aired") },
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 8.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            text = "Recently played",
-                            style = MaterialTheme.typography.titleSmall,
-                            modifier = Modifier.testTag("recently-played-header"),
-                        )
-                        TextButton(
-                            onClick = onOpenHistory,
-                            modifier = Modifier.testTag("recently-played-see-all"),
-                        ) { Text("See all") }
-                    }
-                }
-                items(recentlyPlayed, key = { "rp-${it.episodeId}" }) { ep ->
-                    val pos = positions[ep.episodeId]
-                    val now = remember(pos?.updatedAt) { System.currentTimeMillis() }
-                    ElevatedCard(
-                        onClick = { vm.play(ep) },
+                            .weight(1f)
+                            .testTag("recent-view-aired"),
+                    )
+                    FilterChip(
+                        selected = showPlayed,
+                        onClick = { showPlayed = true },
+                        label = { Text("Played") },
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 2.dp)
-                            .testTag("recently-played-row"),
-                    ) {
-                        ListItem(
-                            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                            leadingContent = {
-                                AsyncImage(
-                                    model = vm.catalog.match(ep.title)?.thumbnailUrl
-                                        ?: ep.imageUrl
-                                        ?: vm.yshAlbumArtworkFor(ep),
-                                    contentDescription = null,
-                                    contentScale = ContentScale.Crop,
-                                    modifier = Modifier
-                                        .size(40.dp)
-                                        .clip(RoundedCornerShape(4.dp)),
-                                )
-                            },
-                            headlineContent = {
-                                Text(
-                                    text = vm.catalog.match(ep.title)?.displayName ?: ep.title,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                            },
-                            supportingContent = {
-                                // Three states: in-progress with known
-                                // duration → "X min left"; completed →
-                                // "✓ played"; just-started/unknown → bare
-                                // position so the user still sees SOMEthing.
-                                val label = pos?.let {
-                                    formatRemaining(it.positionMs, it.durationMs)
-                                        ?: it.completedAt?.let { "✓ played" }
-                                        ?: formatResumeSubtitle(it.positionMs, it.durationMs)
-                                } ?: ""
-                                Text(
-                                    text = label,
-                                    style = MaterialTheme.typography.labelSmall,
-                                )
-                            },
-                            trailingContent = {
-                                pos?.updatedAt?.let { ts ->
-                                    Text(
-                                        text = formatRelativePlayedAt(ts, now),
-                                        style = MaterialTheme.typography.labelSmall,
-                                        modifier = Modifier.testTag("recently-played-when"),
-                                    )
-                                }
-                            },
-                        )
-                    }
+                            .weight(1f)
+                            .testTag("recent-view-played"),
+                    )
                 }
             }
 
             val completedSet = completedIds.toSet()
-            // Dedup: don't show the resume episode again in the main list
-            // (Continue listening card) NOR any row from the Recently
-            // played strip just above. excludeIds is the union of both.
-            val excludeIds = buildSet<Long> {
-                resumeEp?.episodeId?.let { add(it) }
-                recentlyPlayed.forEach { add(it.episodeId) }
-            }
-            val mainList = items.filterNot { it.episodeId in excludeIds }
 
-            // Empty state. Without this the LazyColumn renders NOTHING
-            // when all three sections are empty — a blank white screen
-            // with no explanation, which is what the user hit on
-            // 2026-09-28 ("it just shows as a white screen"). An empty
-            // Recent tab is a normal state (fresh install, a show with
-            // no ingests yet, or an orphaned resume position), so it
-            // needs copy rather than a void.
-            if (mainList.isEmpty() && recentlyPlayed.isEmpty() && resumeEp == null) {
-                item {
-                    RecentEmptyState(
-                        isRefreshing = isRefreshing,
-                        hasOrphanedResume = resume != null,
-                    )
+            if (showPlayed) {
+                if (playedGroups.isEmpty()) {
+                    item(key = "played-empty") {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 24.dp, vertical = 48.dp)
+                                .testTag("recent-played-empty"),
+                        ) {
+                            Text("Nothing played yet", style = MaterialTheme.typography.titleMedium)
+                            Text(
+                                text = "Episodes you play in this show show up here, " +
+                                    "newest first, so you can pick up where you left off.",
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                        }
+                    }
                 }
-            }
-            items(mainList, key = { it.episodeId }) { ep ->
-                ElevatedCard(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 4.dp),
-                ) {
-                    EpisodeRow(
-                        ep = ep,
-                        played = ep.episodeId in completedSet,
-                        expanded = ep.episodeId in expandedIds,
-                        downloadProgress = progress[ep.episodeId],
-                        archiveProgress = archive[ep.episodeId],
-                        match = vm.catalog.match(ep.title),
-                        playback = positions[ep.episodeId],
-                        isCurrentlyPlaying = playerState.currentEpisodeId == ep.episodeId &&
-                                playerState.isPlaying,
-                        fallbackArtwork = vm.yshAlbumArtworkFor(ep),
-                        albumNavName = vm.albumTargetFor(ep)?.albumName,
-                        onGoToAlbum = vm.albumTargetFor(ep)?.let { t -> { onOpenAlbum(t) } },
-                        onToggleExpand = {
-                            expandedIds = if (ep.episodeId in expandedIds) expandedIds - ep.episodeId
-                                          else expandedIds + ep.episodeId
-                        },
-                        onPlay = { vm.play(ep) },
-                        onDelete = { vm.delete(ep) },
-                        onDownload = { vm.download(ep) },
-                    )
+                playHistorySection(
+                    grouped = playedGroups,
+                    completed = completedSet,
+                    nowMs = now,
+                    onPlay = { vm.play(it) },
+                )
+            } else {
+                // Deliberately NOT deduped against the Continue-listening
+                // card, unlike the old main list: hiding the newest
+                // episode from an air-date view because you happened to
+                // start playing it is exactly the confusion this view
+                // exists to remove.
+                if (airedGroups.isEmpty()) {
+                    item(key = "aired-empty") {
+                        RecentEmptyState(
+                            isRefreshing = isRefreshing,
+                            hasOrphanedResume = resume != null,
+                        )
+                    }
+                }
+                for ((bucket, rows) in airedGroups) {
+                    item(key = "aired-hdr-${bucket.name}") {
+                        Text(
+                            text = bucket.label,
+                            style = MaterialTheme.typography.titleSmall,
+                            modifier = Modifier
+                                .padding(horizontal = 16.dp, vertical = 8.dp)
+                                .testTag("aired-header-${bucket.name}"),
+                        )
+                    }
+                    items(rows, key = { it.episodeId }) { ep ->
+                        ElevatedCard(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 4.dp),
+                        ) {
+                            EpisodeRow(
+                                ep = ep,
+                                played = ep.episodeId in completedSet,
+                                expanded = ep.episodeId in expandedIds,
+                                downloadProgress = progress[ep.episodeId],
+                                archiveProgress = archive[ep.episodeId],
+                                match = vm.catalog.match(ep.title),
+                                playback = positions[ep.episodeId],
+                                isCurrentlyPlaying = playerState.currentEpisodeId == ep.episodeId &&
+                                        playerState.isPlaying,
+                                fallbackArtwork = vm.yshAlbumArtworkFor(ep),
+                                albumNavName = vm.albumTargetFor(ep)?.albumName,
+                                onGoToAlbum = vm.albumTargetFor(ep)?.let { t -> { onOpenAlbum(t) } },
+                                onToggleExpand = {
+                                    expandedIds = if (ep.episodeId in expandedIds) {
+                                        expandedIds - ep.episodeId
+                                    } else {
+                                        expandedIds + ep.episodeId
+                                    }
+                                },
+                                onPlay = { vm.play(ep) },
+                                onDelete = { vm.delete(ep) },
+                                onDownload = { vm.download(ep) },
+                            )
+                        }
+                    }
                 }
             }
         }
