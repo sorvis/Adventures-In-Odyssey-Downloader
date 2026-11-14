@@ -61,10 +61,12 @@ import com.odyssey.work.WorkScheduler
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -109,6 +111,26 @@ class RecentVm @Inject constructor(
 
     val progress = downloadProgress.progress
     val archive = archiveProgress.progress
+
+    /**
+     * When the user last opened the Aired view for the active show.
+     *
+     * Read ONCE per show and immediately advanced, so the "New" badges
+     * stay put while you look at the list instead of clearing out from
+     * under you on the next recomposition. Re-snapshots when the show
+     * switcher changes, since the marker is per provider.
+     *
+     * Writing inside the flow is a side effect, which is not lovely —
+     * but the alternative (advance it from the UI) would fire on every
+     * recomposition of the view.
+     */
+    val airedSeenAt: StateFlow<Long> = settings.activeShow
+        .mapLatest { show ->
+            val previous = settings.airedSeenAtFor(show).first()
+            settings.setAiredSeenAt(show, System.currentTimeMillis())
+            previous
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0L)
     // Sort by parsed air-date desc, falling back to externalId desc.
     // The SQL ORDER BY in EpisodeDao.observeAll() sorts the airDate
     // string, which works in-year but breaks across year boundaries —
@@ -402,6 +424,7 @@ fun RecentScreen(
             zone = zone,
         )
     }
+    val airedSeenAt by vm.airedSeenAt.collectAsState()
     val playedGroups = remember(history, now, zone) {
         groupPlaysByDay(history, playedAt = { it.second.updatedAt }, nowMs = now, zone = zone)
     }
@@ -639,6 +662,10 @@ fun RecentScreen(
                                 onPlay = { vm.play(ep) },
                                 onDelete = { vm.delete(ep) },
                                 onDownload = { vm.download(ep) },
+                                isNew = isNewlyAired(
+                                    airDateMs = parseAirDateMillis(ep.airDate),
+                                    seenAtMs = airedSeenAt,
+                                ),
                             )
                         }
                     }
@@ -686,6 +713,13 @@ internal fun EpisodeRow(
      */
     albumNavName: String? = null,
     onGoToAlbum: (() -> Unit)? = null,
+    /**
+     * Aired since the user last opened the Aired view. Drives a "New"
+     * badge beside the title. Keyed on air date rather than an ingest
+     * timestamp because the episode table has no first-seen column —
+     * see isNewlyAired.
+     */
+    isNew: Boolean = false,
 ) {
     // Catalog enrichment overrides oneplace's data when we have a match:
     //   - Title becomes the canonical "#NNN: Title" (e.g. "#657: Clutter")
@@ -720,7 +754,30 @@ internal fun EpisodeRow(
             // Headline shows the canonical "#NNN: Title" when the AIO
             // catalog match exists; otherwise falls back to the bare
             // oneplace title.
-            headlineContent = { Text(displayTitle) },
+            headlineContent = {
+                if (isNew) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Text(displayTitle, modifier = Modifier.weight(1f, fill = false))
+                        Surface(
+                            color = MaterialTheme.colorScheme.tertiaryContainer,
+                            shape = RoundedCornerShape(50),
+                            modifier = Modifier.testTag("aired-new-badge"),
+                        ) {
+                            Text(
+                                text = "New",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 1.dp),
+                            )
+                        }
+                    }
+                } else {
+                    Text(displayTitle)
+                }
+            },
             supportingContent = {
                 Column {
                     Text(
