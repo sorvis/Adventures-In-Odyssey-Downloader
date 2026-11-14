@@ -54,7 +54,15 @@ class RetentionWorker @AssistedInject constructor(
 
     override suspend fun doWork(): Result {
         val s = settings.flow.first()
-        val downloaded = episodes.downloadedOldestFirst()
+        // Re-sorted because the DAO's ORDER BY compares the raw
+        // airDate string; take(excess) below acts on "the oldest N", so
+        // this is the difference between evicting the genuinely oldest
+        // episodes and evicting whichever month sorts first by name.
+        val downloaded = com.odyssey.ui.screens.oldestFirstByAirDate(
+            episodes.downloadedWithFiles(),
+            airDate = { it.airDate },
+            externalId = { it.externalId },
+        )
         if (downloaded.isEmpty()) return Result.success()
 
         val byProvider: Map<String, List<LocalEpisodeEntity>> = downloaded.groupBy { it.providerId }

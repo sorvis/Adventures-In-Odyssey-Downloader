@@ -25,18 +25,44 @@ fun <T> dedupResume(items: List<T>, resumeId: Long?, idOf: (T) -> Long): List<T>
  * stable chronological sort. Returns 0 for null/blank/unparseable input
  * — those sort to the bottom under DESC.
  *
- * The default DB sort is by airDate string DESC + episodeId DESC, which
- * works within a single year but breaks across year boundaries
- * ("December 31, 2025" sorts AFTER "January 1, 2026" alphabetically,
- * but should sort BEFORE chronologically). This helper fixes that.
+ * The DB sorts the airDate STRING, which for AIO's "MMMM d, yyyy" is
+ * alphabetical by month NAME — April < August < December < February <
+ * January < ... < September. That is wrong within a single year, not
+ * just across year boundaries as an earlier version of this comment
+ * claimed: ORDER BY airDate ASC puts "April 2, 2026" before
+ * "October 1, 2019". This helper fixes that, and anything relying on
+ * chronological order must use it (see oldestFirstByAirDate).
+ *
+ * YSH is unaffected — it stores ISO yyyy-MM-dd, which sorts correctly
+ * as a string.
  */
+private val ISO_DATE = Regex("""\d{4}-\d{2}-\d{2}""")
+
 fun parseAirDateMillis(airDate: String?): Long {
     if (airDate.isNullOrBlank()) return 0L
+    val trimmed = airDate.trim()
+    // YSH free-stream rows store ISO yyyy-MM-dd (createdAt.take(10)),
+    // AIO stores "MMMM d, yyyy". Before 2026-11-14 only the AIO shape
+    // parsed, so every YSH free-stream row scored 0 — which made them
+    // all sort as undated and bucket as "Earlier" in the Recent tab's
+    // Aired view, and tie at the front of retention's eviction order.
+    //
+    // The regex is deliberate: it must NOT match the year-only airDate
+    // ("2011") that backup-mirror ghosts carry, because recentItemsFor
+    // relies on those scoring 0 to filter them out of Recent.
+    if (ISO_DATE.matches(trimmed)) {
+        return runCatching {
+            java.time.LocalDate.parse(trimmed)
+                .atStartOfDay(ZoneId.systemDefault())
+                .toInstant()
+                .toEpochMilli()
+        }.getOrDefault(0L)
+    }
     return runCatching {
         // Locale.US is non-negotiable here — oneplace ships English month
         // names ("May", "December") and a device locale of e.g. fr_FR
         // would otherwise refuse to parse them.
-        SimpleDateFormat("MMMM d, yyyy", Locale.US).parse(airDate)?.time ?: 0L
+        SimpleDateFormat("MMMM d, yyyy", Locale.US).parse(trimmed)?.time ?: 0L
     }.getOrDefault(0L)
 }
 
@@ -307,3 +333,27 @@ fun <T> groupByAiredBucket(
  */
 fun isNewlyAired(airDateMs: Long, seenAtMs: Long): Boolean =
     seenAtMs > 0L && airDateMs > seenAtMs
+
+/**
+ * Oldest-first by true air date, for callers that act on "the oldest N"
+ * — eviction, mainly.
+ *
+ * The DAO can't do this: its ORDER BY compares the raw airDate string,
+ * which for AIO is alphabetical by month name (see parseAirDateMillis).
+ * RetentionWorker consumed that order directly and so evicted in
+ * essentially arbitrary order — it would prune an April 2026 episode
+ * before an October 2019 one. Reported 2026-11-14.
+ *
+ * Rows with an unparseable air date sort to the FRONT, i.e. they are
+ * treated as oldest and evicted first. That matches both the previous
+ * SQLite behaviour (NULLs sort first under ASC) and the risk profile:
+ * eviction only deletes local audio for rows already safe on the NAS,
+ * so being wrong about an undated row is cheap.
+ */
+fun <T> oldestFirstByAirDate(
+    rows: List<T>,
+    airDate: (T) -> String?,
+    externalId: (T) -> String,
+): List<T> = rows.sortedWith(
+    compareBy<T> { parseAirDateMillis(airDate(it)) }.thenBy(externalId),
+)

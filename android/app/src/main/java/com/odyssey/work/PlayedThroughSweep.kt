@@ -46,7 +46,7 @@ class PlayedThroughSweep @Inject constructor(
      * Returns the number of rows pruned.
      */
     suspend fun sweep(thresholdMs: Long = DEFAULT_THRESHOLD_MS): Int {
-        val candidates = episodes.downloadedOldestFirst()
+        val candidates = episodes.downloadedWithFiles()
             .filter { it.archivedAt != null && it.filePath != null }
         if (candidates.isEmpty()) return 0
 

@@ -74,7 +74,7 @@ class DiskLayoutMigrator @Inject constructor(
         // exactly; anything else (rows on cloud-only mirrors, rows
         // whose file was already deleted, etc.) is left alone.
         if (pathRewrites.isNotEmpty()) {
-            val downloaded = episodes.downloadedOldestFirst()
+            val downloaded = episodes.downloadedWithFiles()
             for (row in downloaded) {
                 val newPath = pathRewrites[row.filePath] ?: continue
                 episodes.upsert(row.copy(filePath = newPath))

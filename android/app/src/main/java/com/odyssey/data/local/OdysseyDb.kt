@@ -293,10 +293,22 @@ interface EpisodeDao {
     @Query("DELETE FROM local_episodes WHERE providerId = :providerId AND externalId = :externalId")
     suspend fun deleteByKey(providerId: String, externalId: String)
 
+    /**
+     * Every row with audio on disk.
+     *
+     * The ORDER BY is for determinism only — it is NOT chronological.
+     * AIO stores airDate as "MMMM d, yyyy", so comparing it as a string
+     * sorts alphabetically by month name and would place
+     * "April 2, 2026" before "October 1, 2019". Callers that mean
+     * "oldest first" must re-sort with
+     * com.odyssey.ui.screens.oldestFirstByAirDate. This method was
+     * called downloadedOldestFirst until 2026-11-14, and that name is
+     * exactly how RetentionWorker came to evict in alphabetical order.
+     */
     @Query("""SELECT * FROM local_episodes
               WHERE filePath IS NOT NULL
               ORDER BY airDate ASC, externalId ASC""")
-    suspend fun downloadedOldestFirst(): List<LocalEpisodeEntity>
+    suspend fun downloadedWithFiles(): List<LocalEpisodeEntity>
 
     /**
      * Episodes that exist on the phone but haven't been pushed to the

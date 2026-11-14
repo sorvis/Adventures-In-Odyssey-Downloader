@@ -90,8 +90,35 @@ class RecentListingTest {
     @Test
     fun `parseAirDateMillis returns 0 for unparseable string`() {
         assertEquals(0L, parseAirDateMillis("not a date"))
-        assertEquals(0L, parseAirDateMillis("2026-05-08"))      // ISO format — wrong shape
         assertEquals(0L, parseAirDateMillis("Mai 8, 2026"))     // German month name
+    }
+
+    @Test
+    fun `parseAirDateMillis parses the ISO shape YSH free-stream rows store`() {
+        // YshFreeStreamProvider writes createdAt.take(10), i.e.
+        // yyyy-MM-dd. This used to score 0 — asserted as correct by an
+        // earlier version of this test — which meant every YSH
+        // free-stream episode sorted as undated: all bucketed "Earlier"
+        // in the Recent tab's Aired view, and all tied at the front of
+        // retention's eviction order.
+        assertTrue(parseAirDateMillis("2026-05-08") > 0L)
+        assertTrue(
+            "ISO dates must order chronologically",
+            parseAirDateMillis("2026-05-08") < parseAirDateMillis("2026-05-09"),
+        )
+        assertTrue(
+            "ISO must order correctly across years too",
+            parseAirDateMillis("2025-12-31") < parseAirDateMillis("2026-01-01"),
+        )
+    }
+
+    @Test
+    fun `parseAirDateMillis still rejects a year-only date`() {
+        // Backup-mirror ghosts carry a year-only airDate ("2011"), and
+        // recentItemsFor relies on those scoring 0 to filter them out
+        // of Recent. The ISO branch must not loosen that.
+        assertEquals(0L, parseAirDateMillis("2011"))
+        assertEquals(0L, parseAirDateMillis("2011-13-45"))
     }
 
     @Test
@@ -668,5 +695,61 @@ class RecentListingTest {
                 seenAtMs = startOfDay("2026-11-10"),
             ),
         )
+    }
+
+    // ----- oldestFirstByAirDate (eviction order, 2026-11-14) ----------
+
+    private data class Row(val airDate: String?, val externalId: String)
+
+    private fun order(rows: List<Row>) =
+        oldestFirstByAirDate(rows, airDate = { it.airDate }, externalId = { it.externalId })
+            .map { it.externalId }
+
+    @Test
+    fun `oldest first is chronological, not alphabetical by month name`() {
+        // The actual bug: ORDER BY airDate ASC on "MMMM d, yyyy" is a
+        // string compare, so it ranked April 2026 as older than
+        // October 2019 and RetentionWorker evicted accordingly.
+        val rows = listOf(
+            Row("April 2, 2026", "april26"),
+            Row("October 1, 2019", "oct19"),
+            Row("December 31, 2025", "dec25"),
+            Row("January 5, 2026", "jan26"),
+        )
+        assertEquals(listOf("oct19", "dec25", "jan26", "april26"), order(rows))
+    }
+
+    @Test
+    fun `the result differs from a plain lexicographic sort`() {
+        // Guards against anyone "simplifying" this back to the DB order.
+        val rows = listOf(
+            Row("April 2, 2026", "april26"),
+            Row("October 1, 2019", "oct19"),
+        )
+        val lexicographic = rows.sortedBy { it.airDate }.map { it.externalId }
+        assertEquals(listOf("april26", "oct19"), lexicographic)
+        assertEquals(listOf("oct19", "april26"), order(rows))
+    }
+
+    @Test
+    fun `an unparseable air date sorts oldest and is evicted first`() {
+        // Matches the old SQLite behaviour (NULLs first under ASC) and
+        // is cheap to get wrong: eviction only deletes local audio for
+        // rows already safe on the NAS.
+        val rows = listOf(
+            Row("January 5, 2026", "jan26"),
+            Row(null, "nodate"),
+            Row("not a date", "junk"),
+        )
+        assertEquals(listOf("junk", "nodate", "jan26"), order(rows))
+    }
+
+    @Test
+    fun `ties on the same air date fall back to externalId`() {
+        val rows = listOf(
+            Row("January 5, 2026", "b"),
+            Row("January 5, 2026", "a"),
+        )
+        assertEquals(listOf("a", "b"), order(rows))
     }
 }

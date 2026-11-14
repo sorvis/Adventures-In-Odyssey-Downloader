@@ -114,7 +114,7 @@ class PlaybackRecovery @Inject constructor(
      * bounded by the retention caps).
      */
     private suspend fun resolve(mediaId: Long): LocalEpisodeEntity? =
-        episodes.downloadedOldestFirst().firstOrNull { it.episodeId == mediaId }
+        episodes.downloadedWithFiles().firstOrNull { it.episodeId == mediaId }
 
     private fun firstBytesOf(path: String?): ByteArray {
         if (path == null) return ByteArray(0)

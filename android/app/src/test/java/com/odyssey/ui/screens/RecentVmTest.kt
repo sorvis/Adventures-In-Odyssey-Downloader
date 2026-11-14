@@ -660,7 +660,7 @@ class RecentVmTest {
         override suspend fun clearAllArchived(): Int = 0
         override suspend fun delete(id: Long) {}
         override suspend fun deleteByKey(providerId: String, externalId: String) {}
-        override suspend fun downloadedOldestFirst(): List<LocalEpisodeEntity> = emptyList()
+        override suspend fun downloadedWithFiles(): List<LocalEpisodeEntity> = emptyList()
         override fun observeUnarchivedDownloaded(): Flow<List<LocalEpisodeEntity>> = flowOf(emptyList())
         override suspend fun unarchivedDownloaded(): List<LocalEpisodeEntity> = emptyList()
         override suspend fun yshRowsMissingAlbum(): List<LocalEpisodeEntity> = emptyList()

@@ -446,7 +446,7 @@ class RetentionWorkerTest {
     @Test
     fun `bad-data -- DB full of ghost rows is a no-op (nothing eligible for pruning)`() = runBlocking {
         // Post-retention steady state: all rows are backup-mirror
-        // ghosts. RetentionWorker.downloadedOldestFirst() filters on
+        // ghosts. RetentionWorker.downloadedWithFiles() filters on
         // `filePath IS NOT NULL`, so ghost rows aren't returned —
         // there's literally nothing to prune. Worker must succeed
         // without touching the DB.
@@ -805,7 +805,7 @@ class RetentionWorkerTest {
 
     @Test
     fun `oldest-first tie-break falls back to externalId when airDate matches`() = runBlocking {
-        // downloadedOldestFirst() orders by `airDate ASC, externalId ASC`.
+        // downloadedWithFiles() orders by `airDate ASC, externalId ASC`.
         // Same-day episodes are common (two-parters air together), so
         // the tie-break decides which one dies — pin it.
         settings.setNas("http://nas.example", "token")
