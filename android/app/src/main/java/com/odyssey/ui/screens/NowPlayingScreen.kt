@@ -27,6 +27,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.media3.session.MediaController
 import coil.compose.AsyncImage
 import com.odyssey.data.local.EpisodeDao
+import com.odyssey.data.local.episodeIdFromMediaId
 import com.odyssey.data.local.LocalEpisodeEntity
 import com.odyssey.data.local.PlaybackDao
 import com.odyssey.data.local.PlaybackPositionEntity
@@ -137,7 +138,12 @@ class NowPlayingVm @Inject constructor(
                     title = item.mediaMetadata.title?.toString().orEmpty()
                     description = item.mediaMetadata.description?.toString().orEmpty()
                     artworkUri = item.mediaMetadata.artworkUri
-                    currentEpisodeId.value = item.mediaId.toLongOrNull()
+                    // NOT toLongOrNull(): since v0.1.91 a media id is
+                    // "<providerId>:<externalId>", so parsing it as a bare
+                    // Long returned null for every episode and silently
+                    // killed the "Go to album" affordance, which is the
+                    // only thing this field feeds. Reported 2026-11-16.
+                    currentEpisodeId.value = episodeIdFromMediaId(item.mediaId)
                     hasNext = c.hasNextMediaItem()
                     hasPrevious = c.hasPreviousMediaItem()
                 } else {
